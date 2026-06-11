@@ -1,0 +1,47 @@
+# Changelog
+
+## [2.1.0] - 2026-06-12
+### Security & System Hardening (ความปลอดภัยและเสถียรภาพ)
+**English:**
+- Implemented secure token-based authentication for the web dashboard.
+- Protected API endpoints (`/api/status`, `/api/trades`) with Bearer token authorization.
+- Fixed a critical state corruption bug where API timeouts would wipe Stop-Loss history.
+- Resolved SQLite database connection leaks by wrapping queries in `try...finally`.
+- Implemented atomic file writes for `bot_state.json` to eliminate frontend crash loops.
+- Added localized error handling in the main loop to prevent single-coin failures from crashing the entire trading cycle.
+
+**ภาษาไทย:**
+- เพิ่มระบบยืนยันตัวตนด้วยรหัสผ่านและ Token สำหรับหน้าเว็บ Dashboard ป้องกันการเข้าถึงโดยไม่ได้รับอนุญาต
+- ล็อคความปลอดภัยให้ API ป้องกันการถูกดึงข้อมูลยอดเงินและประวัติการเทรด
+- แก้ไขบั๊กร้ายแรง: ป้องกันบอทล้างข้อมูลจุดตัดขาดทุน (Stop-loss) หากระบบเน็ตเวิร์คของ Binance ขัดข้องชั่วคราว
+- อุดรอยรั่วการเชื่อมต่อฐานข้อมูล (Database Connection leaks) เพื่อให้รันบอทระยะยาวได้โดยไม่กินแรม
+- ปรับปรุงการอ่าน/เขียนไฟล์สถานะบอท (Atomic Write) เพื่อแก้ปัญหาหน้าเว็บค้างหรือ Error
+- เพิ่มระบบจัดการ Error แยกรายเหรียญ: หากระบบดึงข้อมูลเหรียญหนึ่งไม่สำเร็จ บอทจะยังคงเทรดเหรียญอื่นต่อไปได้โดยไม่หลุดวงจรการทำงาน
+
+## [2.0.0] - 2026-06-12
+### Added
+- Multi-coin support (BTC, ETH, XRP, SOL, BNB).
+- Live Binance Wallet Synchronization (Auto-Resume functionality).
+- SQLite Database (`trades.db`) for robust state recovery across reboots.
+- Premium Glassmorphism UI with real-time AI Status polling (2s intervals) and Live USDT tracking.
+- Dynamic Position Sizing (Compounding 5-Tranche system using 20% of total equity).
+
+### Changed
+- Strategy updated from Mean Reversion (RSI + BB) to Trend Following (MACD + SMA 200 on 1H timeframe) based on backtest results.
+- Moved away from simulated local memory balancing to fetching real API balances.
+
+## [1.0.0] - 2026-06-10
+### Initial Release (เวอร์ชันเริ่มต้น)
+**English:**
+- Initial prototype of the AI Crypto Bot.
+- Mean Reversion strategy using RSI and Bollinger Bands.
+- Single-coin trading support (BTC).
+- Simulated paper-trading logic using local memory variables.
+- Basic terminal-based logging.
+
+**ภาษาไทย:**
+- ปล่อยบอทเทรดคริปโตพลัง AI เวอร์ชันต้นแบบ
+- ใช้กลยุทธ์ Mean Reversion (RSI + Bollinger Bands)
+- รองรับการเทรดแบบเหรียญเดียว (BTC)
+- ใช้ระบบจำลองเงินกระเป๋าจำลอง (Paper Trading) เก็บข้อมูลไว้ในหน่วยความจำชั่วคราว
+- แสดงผลการทำงานผ่าน Terminal เบื้องต้น

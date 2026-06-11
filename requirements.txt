@@ -1,0 +1,9 @@
+python-binance
+pandas
+google-generativeai
+fastapi
+uvicorn
+websockets
+python-dotenv
+sqlalchemy
+requests

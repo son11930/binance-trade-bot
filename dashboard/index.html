@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity AI Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Outfit', 'sans-serif'] },
+                    colors: {
+                        deepBg: '#020617',
+                        glassBg: 'rgba(15, 23, 42, 0.65)',
+                        neonCyan: '#00F0FF',
+                        neonGreen: '#39FF14',
+                        neonRed: '#FF003C',
+                        glowAccent: '#3B82F6'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { 
+            background: radial-gradient(circle at top center, #0F172A, #020617);
+            color: #F8FAFC;
+            background-attachment: fixed;
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .glass-card:hover {
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
+        }
+        .text-glow { text-shadow: 0 0 12px rgba(57, 255, 20, 0.6); }
+        .border-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
+        
+        .ai-pulse {
+            animation: aiPulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes aiPulse {
+            0%, 100% { opacity: 1; text-shadow: 0 0 20px #00F0FF; }
+            50% { opacity: .5; text-shadow: 0 0 5px #00F0FF; }
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <!-- Login Modal -->
+    <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md">
+        <div class="glass-card p-10 rounded-3xl max-w-sm w-full border-glow relative overflow-hidden">
+            <div class="absolute -right-10 -top-10 w-32 h-32 bg-glowAccent/20 rounded-full blur-3xl"></div>
+            <h2 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-glowAccent mb-8 text-center tracking-wide">SYSTEM ACCESS</h2>
+            <form id="login-form" class="space-y-6 relative z-10">
+                <div>
+                    <label class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Username</label>
+                    <input type="text" id="username" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
+                </div>
+                <div>
+                    <label class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Password</label>
+                    <input type="password" id="password" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <input type="checkbox" id="remember" class="w-5 h-5 bg-slate-900 border-slate-700 rounded text-neonCyan focus:ring-neonCyan accent-neonCyan">
+                    <label for="remember" class="text-slate-300 text-sm font-semibold tracking-wide">Remember me</label>
+                </div>
+                <p id="login-error" class="text-neonRed text-sm font-bold hidden text-center">Invalid credentials. Access Denied.</p>
+                <button type="submit" class="w-full bg-gradient-to-r from-neonCyan/20 to-glowAccent/20 hover:from-neonCyan/40 hover:to-glowAccent/40 text-neonCyan font-extrabold tracking-widest py-4 px-4 rounded-xl border border-neonCyan/50 transition-all shadow-[0_0_15px_rgba(0,240,255,0.2)] hover:shadow-[0_0_25px_rgba(0,240,255,0.4)]">
+                    AUTHENTICATE
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app-container" class="max-w-6xl mx-auto space-y-8 relative z-10 hidden">
+        <header class="flex flex-col md:flex-row justify-between items-center glass-card p-6 rounded-2xl">
+            <div class="text-center md:text-left mb-4 md:mb-0">
+                <h1 class="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-glowAccent">
+                    AI Trading Engine
+                </h1>
+                <p class="text-slate-400 text-sm mt-1 font-light tracking-wide">Multi-Coin Auto Sync & MACD Strategy</p>
+            </div>
+            <div class="flex items-center space-x-6">
+                <div class="flex items-center space-x-2">
+                    <span class="relative flex h-3 w-3">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-neonGreen opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-3 w-3 bg-neonGreen"></span>
+                    </span>
+                    <span class="text-sm font-semibold tracking-wider text-neonGreen">SYSTEM LIVE</span>
+                </div>
+                <span id="mode-badge" class="px-4 py-1.5 rounded-full bg-blue-500/10 text-blue-400 text-sm font-bold border border-blue-500/30 uppercase tracking-widest">
+                    Loading Mode...
+                </span>
+                <button onclick="logout()" class="text-slate-400 hover:text-white text-xs font-bold uppercase tracking-widest transition-colors">
+                    Logout
+                </button>
+            </div>
+        </header>
+
+        <div class="glass-card p-6 rounded-2xl border-glow flex items-center space-x-6 relative overflow-hidden">
+            <div class="absolute inset-0 bg-gradient-to-r from-glowAccent/5 to-transparent pointer-events-none"></div>
+            <div id="ai-icon-container" class="relative">
+                <div id="ai-brain" class="text-5xl drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]">🤖</div>
+                <div id="ai-spinner" class="hidden text-neonCyan ai-pulse">
+                    <svg class="h-12 w-12" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                        <path class="opacity-100" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="flex-1">
+                <h3 class="text-neonCyan text-xs uppercase tracking-[0.2em] font-bold mb-1">Live AI Status</h3>
+                <p id="ai-status-text" class="text-xl md:text-2xl font-light text-slate-200">System initializing...</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="glass-card p-6 rounded-2xl">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>
+                <p class="text-lg font-bold text-white mt-2 leading-tight" id="symbol-display">Loading...</p>
+            </div>
+            
+            <div class="glass-card p-6 rounded-2xl relative overflow-hidden">
+                <div class="absolute -right-4 -top-4 w-24 h-24 bg-neonGreen/10 rounded-full blur-2xl"></div>
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Live USDT Balance</h3>
+                <div class="flex items-baseline space-x-1">
+                    <span class="text-slate-400 text-lg">$</span>
+                    <p class="text-3xl font-extrabold text-white tracking-tight" id="live-usdt">--</p>
+                </div>
+            </div>
+
+            <div class="glass-card p-6 rounded-2xl">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Total Executed Trades</h3>
+                <div class="flex items-end justify-between">
+                    <p class="text-4xl font-extrabold text-white" id="total-trades">0</p>
+                    <p class="text-sm text-slate-400 mb-1" id="last-risk">Risk: --</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-card rounded-2xl overflow-hidden">
+            <div class="p-6 border-b border-slate-800/50 bg-slate-900/30">
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">Execution Log</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-900/40">
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Timestamp</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Action</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Price</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-center">AI Risk</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Intelligence Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trade-table-body" class="divide-y divide-slate-800/50">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+        let pollingIntervals = [];
+
+        function startApp() {
+            document.getElementById('login-modal').classList.add('hidden');
+            document.getElementById('app-container').classList.remove('hidden');
+            
+            fetchStatus();
+            fetchTrades();
+            pollingIntervals.push(setInterval(fetchStatus, 2000));
+            pollingIntervals.push(setInterval(fetchTrades, 5000));
+        }
+
+        if (authToken) {
+            startApp();
+        }
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            const r = document.getElementById('remember').checked;
+            
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u, password: p})
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    authToken = data.token;
+                    if (r) localStorage.setItem('bot_token', authToken);
+                    else sessionStorage.setItem('bot_token', authToken);
+                    
+                    document.getElementById('login-error').classList.add('hidden');
+                    startApp();
+                } else {
+                    document.getElementById('login-error').classList.remove('hidden');
+                    document.getElementById('login-error').innerText = "Invalid credentials. Access Denied.";
+                }
+            } catch (err) {
+                document.getElementById('login-error').classList.remove('hidden');
+                document.getElementById('login-error').innerText = "Network Error. Is the backend running?";
+            }
+        });
+
+        function logout() {
+            localStorage.removeItem('bot_token');
+            sessionStorage.removeItem('bot_token');
+            window.location.reload();
+        }
+
+        async function apiFetch(url) {
+            const res = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (res.status === 401) {
+                logout();
+            }
+            return res;
+        }
+
+        async function fetchStatus() {
+            try {
+                const res = await apiFetch('/api/status');
+                if(!res || !res.ok) return;
+                const data = await res.json();
+                
+                document.getElementById('symbol-display').innerText = data.symbols ? data.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
+                
+                const isPaper = data.paper_trading === "True";
+                const modeBadge = document.getElementById('mode-badge');
+                if (isPaper) {
+                    modeBadge.innerText = "Simulated Paper Trading";
+                    modeBadge.className = "px-4 py-1.5 rounded-full bg-slate-500/20 text-slate-300 text-sm font-bold border border-slate-500/30 uppercase tracking-widest";
+                    document.getElementById('live-usdt').innerText = "SIMULATED";
+                    document.getElementById('live-usdt').classList.add('text-lg', 'text-slate-400');
+                } else {
+                    modeBadge.innerText = "LIVE EXCHANGE SYNC";
+                    modeBadge.className = "px-4 py-1.5 rounded-full bg-neonRed/10 text-neonRed text-sm font-bold border border-neonRed/30 uppercase tracking-widest animate-pulse";
+                    document.getElementById('live-usdt').innerText = data.live_usdt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    document.getElementById('live-usdt').classList.remove('text-lg', 'text-slate-400');
+                }
+                
+                const aiStatus = data.ai_status || {};
+                const statusTextEl = document.getElementById('ai-status-text');
+                statusTextEl.innerText = aiStatus.status_message || 'Waiting for bot cycle...';
+                
+                if (aiStatus.is_thinking) {
+                    document.getElementById('ai-spinner').classList.remove('hidden');
+                    document.getElementById('ai-brain').classList.add('hidden');
+                    statusTextEl.classList.add('text-neonCyan', 'ai-pulse');
+                    statusTextEl.classList.remove('text-slate-200');
+                } else {
+                    document.getElementById('ai-spinner').classList.add('hidden');
+                    document.getElementById('ai-brain').classList.remove('hidden');
+                    statusTextEl.classList.remove('text-neonCyan', 'ai-pulse');
+                    statusTextEl.classList.add('text-slate-200');
+                }
+            } catch (e) {
+                console.error("Status fetch error:", e);
+            }
+        }
+
+        async function fetchTrades() {
+            try {
+                const res = await apiFetch('/api/trades');
+                if(!res || !res.ok) return;
+                const trades = await res.json();
+                
+                document.getElementById('total-trades').innerText = trades.length;
+                
+                if (trades.length > 0 && trades[0].ai_risk_score !== null) {
+                    const risk = trades[0].ai_risk_score;
+                    document.getElementById('last-risk').innerText = `Last Risk: ${risk}/100`;
+                }
+
+                const tbody = document.getElementById('trade-table-body');
+                tbody.innerHTML = '';
+                
+                trades.forEach(trade => {
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-slate-800/30 transition-colors";
+                    
+                    const isBuy = trade.side === 'BUY';
+                    const sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
+                    
+                    const d = new Date(trade.timestamp);
+                    const dateStr = d.toLocaleDateString() + ' <span class="text-slate-500 ml-1">' + d.toLocaleTimeString() + '</span>';
+                    
+                    tr.innerHTML = `
+                        <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
+                        <td class="p-4 font-extrabold tracking-wider ${sideClass}">${trade.side} <span class="text-white text-xs ml-1">${trade.symbol.replace('USDT','')}</span></td>
+                        <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                        <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
+                        <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
+                        <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning || '--'}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Trade fetch error:", e);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.4.0] - 2026-06-13
+### Strategy Safe Mode & Risk Management (ปรับกลยุทธ์ให้ปลอดภัยและทำกำไรสม่ำเสมอ)
+**English:**
+- **RSI Filter:** Added RSI (< 65) to the `analyze_market` strategy to prevent buying at overbought peaks.
+- **Dynamic Risk Management:** Replaced fixed Stop Loss with dynamic ATR (Average True Range) calculations.
+- **Take Profit & Trailing Stop:** Added a strict Take Profit at 3% and a Trailing Stop trigger at 1.5% profit, locking in gains.
+- **Symbol-Specific AI Prompt:** Modified `analyze_sentiment` to evaluate news risk specifically for the target asset rather than generic Bitcoin sentiment.
+
+**Thai (ภาษาไทย):**
+- **เพิ่มตัวกรอง RSI:** บอทจะไม่ซื้อเหรียญถ้าราคาพุ่งจนตึงเกินไป (RSI > 65) ช่วยป้องกันปัญหาซื้อแล้วติดดอย
+- **จัดการความเสี่ยงด้วยความผันผวน (ATR):** เปลี่ยนระบบตัดขาดทุนแบบตายตัว ให้ยืดหยุ่นตามความผันผวนของตลาด
+- **ระบบแบ่งขายและเลื่อนจุดตัดขาดทุน (Take Profit & Trailing Stop):** บอทจะเริ่มเลื่อนจุดขายเมื่อกำไรถึง 1.5% และจะตั้งเป้าขายทำกำไรทันทีเมื่อถึง 3% เพื่อให้มีกำไรเก็บเข้าพอร์ตทุกวัน
+- **AI เจาะจงเหรียญ:** อัปเดตสมอง AI ให้เน้นอ่านข่าวเพื่อวิเคราะห์ความเสี่ยงของเหรียญนั้นๆ โดยเฉพาะ ไม่เอาข่าวรวมตลาดมาเหมาจ่าย
 ## [3.3.0] - 2026-06-13
 ### Architecture Upgrade & Live Positions (อัปเกรดระบบและตารางสถานะเรียลไทม์)
 **English:**

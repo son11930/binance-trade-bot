@@ -32,6 +32,7 @@ current_positions = {sym: 0.0 for sym in SYMBOLS}
 buy_prices = {sym: 0.0 for sym in SYMBOLS}
 last_trade_times = {sym: None for sym in SYMBOLS}
 last_prices = {sym: 0.0 for sym in SYMBOLS}
+highest_prices = {sym: 0.0 for sym in SYMBOLS}
 live_usdt_balance = 0.0
 
 def process_ticker_message(msg):
@@ -89,6 +90,7 @@ def sync_state_with_binance():
                 )
             current_positions[symbol] = 0.0
             buy_prices[symbol] = 0.0
+            highest_prices[symbol] = 0.0
         else:
             # We hold this coin
             current_positions[symbol] = real_bal
@@ -134,16 +136,39 @@ def update_bot_state(status_msg, thinking=False, symbol="System"):
     except Exception as e:
         pass
 
-def check_stop_loss(symbol, current_price):
+def check_risk_management(symbol, current_price, atr_value):
     pos = current_positions[symbol]
     bp = buy_prices[symbol]
+    
     if pos > 0 and bp > 0:
-        drop = (bp - current_price) / bp * 100
-        if drop >= STOP_LOSS_PERCENT:
-            return True
-    return False
+        # Update highest price seen since bought
+        if current_price > highest_prices[symbol]:
+            highest_prices[symbol] = current_price
+            
+        profit_percent = (current_price - bp) / bp * 100
+        hp_drop_percent = (highest_prices[symbol] - current_price) / highest_prices[symbol] * 100
+        
+        # 1. Strict Take Profit (e.g. 3.0%)
+        if profit_percent >= 3.0:
+            return "Take Profit 🎯"
+            
+        # 2. Trailing Stop (If we were up by at least 1.5%, sell if it drops 0.5% from peak)
+        max_profit_percent = (highest_prices[symbol] - bp) / bp * 100
+        if max_profit_percent >= 1.5 and hp_drop_percent >= 0.5:
+            return "Trailing Stop 🛡️"
+            
+        # 3. Dynamic Stop Loss using ATR (or fixed 2.5%, whichever is hit first)
+        # Assuming ATR gives absolute price movement. Convert to % 
+        atr_percent = (atr_value / current_price) * 100 if atr_value else 2.5
+        stop_loss_threshold = min(STOP_LOSS_PERCENT, atr_percent * 1.5) # Use 1.5x ATR as max stop
+        
+        if profit_percent <= -stop_loss_threshold:
+            return "Stop Loss 🚨"
+            
+    return None
 
 def run_bot_cycle():
+    global live_usdt_balance
     sync_state_with_binance()
     
     # Pre-calculate holding value to avoid O(N^2) API calls
@@ -166,12 +191,19 @@ def run_bot_cycle():
             current_price = df.iloc[-1]['close']
             last_prices[symbol] = current_price
             
-            # Check Stop Loss
-            if check_stop_loss(symbol, current_price):
-                log_msg("WARNING", f"🚨 STOP LOSS TRIGGERED for {symbol} at {current_price}!")
-                trade = execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="Stop Loss Triggered")
+            atr_value = df.iloc[-1].get('ATR', 0)
+            
+            # Check Risk Management (Take Profit, Trailing Stop, Stop Loss)
+            rm_signal = check_risk_management(symbol, current_price, atr_value)
+            if rm_signal:
+                log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!")
+                trade = execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason=rm_signal)
                 if trade:
+                    if not PAPER_TRADING:
+                        live_usdt_balance += current_positions[symbol] * current_price
                     current_positions[symbol] = 0.0
+                    highest_prices[symbol] = 0.0
+                    last_trade_times[symbol] = datetime.now(timezone.utc)
                 continue
 
             # Enforce Cooldown
@@ -182,7 +214,7 @@ def run_bot_cycle():
             if signal == "BUY" and current_positions[symbol] == 0:
                 update_bot_state(f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol)
                 news = fetch_crypto_news(5)
-                ai_result = analyze_sentiment(news)
+                ai_result = analyze_sentiment(news, symbol)
                 
                 # Input Validation & Sanitization
                 if not isinstance(ai_result, dict):
@@ -223,8 +255,11 @@ def run_bot_cycle():
                     qty = trade_amount / current_price 
                     trade = execute_trade(symbol, "BUY", qty, current_price, reason=reason, ai_risk=risk_score)
                     if trade:
+                        if not PAPER_TRADING:
+                            live_usdt_balance -= trade_amount
                         current_positions[symbol] = qty
                         buy_prices[symbol] = current_price
+                        highest_prices[symbol] = current_price
                         last_trade_times[symbol] = datetime.now(timezone.utc)
                 else:
                     log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
@@ -233,7 +268,10 @@ def run_bot_cycle():
                 log_msg("INFO", f"📉 SELL Signal for {symbol}. Executing...")
                 trade = execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="MACD Death Cross")
                 if trade:
+                    if not PAPER_TRADING:
+                        live_usdt_balance += current_positions[symbol] * current_price
                     current_positions[symbol] = 0.0
+                    highest_prices[symbol] = 0.0
                     last_trade_times[symbol] = datetime.now(timezone.utc)
                 
         except Exception as e:

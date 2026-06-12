@@ -32,9 +32,9 @@ def fetch_crypto_news(limit: int = 5) -> str:
         logging.exception("Error fetching news from CoinTelegraph")
         return "No recent news available due to error."
 
-def analyze_sentiment(news_text: str) -> dict:
+def analyze_sentiment(news_text: str, symbol: str) -> dict:
     """
-    Uses Gemini 3.5 Flash to analyze news sentiment and return a Risk Score.
+    Uses Gemini 3.5 Flash to analyze news sentiment and return a Risk Score for a specific asset.
     """
     if not news_text or news_text.startswith("No recent news"):
         return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis."}
@@ -42,11 +42,12 @@ def analyze_sentiment(news_text: str) -> dict:
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     
     prompt = f"""
-    You are an expert cryptocurrency trading AI. Analyze the following recent news headlines:
+    You are an expert cryptocurrency trading AI evaluating an impending trade for the asset {symbol}. 
+    Analyze the following recent news headlines:
     
     {news_text}
     
-    Based on these headlines, evaluate the risk of buying Bitcoin right now.
+    Based on these headlines, evaluate the risk of buying {symbol} right now.
     Consider major hacks, regulatory crackdowns, or macroeconomic crashes as high risk (>40).
     General positive or neutral news should be low risk (<40).
     

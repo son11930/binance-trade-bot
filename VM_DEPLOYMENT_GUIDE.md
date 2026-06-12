@@ -48,12 +48,33 @@
    pip3 install -r requirements.txt
    ```
    *(หมายเหตุ: หากไม่มีไฟล์ `requirements.txt` ให้ใช้ `pip3 install pandas numpy binance requests uvicorn fastapi google-genai python-dotenv`)*
-5. สร้างไฟล์ `.env` เพื่อใส่คีย์ API ของคุณ (Gemini, Binance, รหัสหน้าเว็บ) ด้วยคำสั่ง `nano .env`
-6. รันบอทด้วยไฟล์ที่ผมเตรียมไว้ให้:
+5. สร้างไฟล์ `.env` เพื่อใส่คีย์ API ของคุณด้วยคำสั่ง:
    ```bash
+   nano .env
+   ```
+   จากนั้นให้ก็อปปี้ข้อความด้านล่างนี้ไปวางในหน้าจอดำ (คลิกขวาเพื่อวาง) และแก้ค่าต่างๆ ให้เป็นของคุณเอง:
+   ```env
+   # Binance API Keys
+   BINANCE_API_KEY=ใส่_api_key_ของคุณตรงนี้
+   BINANCE_API_SECRET=ใส่_api_secret_ของคุณตรงนี้
+
+   # Gemini AI API Key
+   GEMINI_API_KEY=ใส่_gemini_key_ของคุณตรงนี้
+
+   # Dashboard Security (รหัสผ่านเข้าเว็บ)
+   DASHBOARD_USER=admin
+   DASHBOARD_PASS=รหัสผ่านเข้าเว็บของคุณ
+   DASHBOARD_SECRET_SALT=สุ่มตัวอักษรมั่วๆ_อะไรก็ได้_เพื่อความปลอดภัย
+   ```
+   เมื่อแก้เสร็จแล้ว กดปุ่ม `Ctrl + O` (ตัวโอ) แล้วกด `Enter` เพื่อเซฟ จากนั้นกด `Ctrl + X` เพื่อออกจากหน้าจอดำ
+6. เนื่องจากถ้าเราปิดหน้าจอดำ (SSH) ไป บอทอาจจะดับตามได้ เราจึงต้องรันใน `screen` เพื่อให้บอททำงานอยู่เบื้องหลังตลอดเวลาครับ:
+   ```bash
+   sudo apt install screen -y
    chmod +x start.sh
+   screen -S bot
    ./start.sh
    ```
+   *(หมายเหตุ: เมื่อรันบอทติดแล้ว คุณสามารถกด `Ctrl + A` แล้วตามด้วย `D` เพื่อพับหน้าจอ screen เก็บไว้ แล้วปิดเว็บบราวเซอร์ได้เลย บอทจะยังรันต่อ 24 ชม. ครับ)*
 
 ---
 

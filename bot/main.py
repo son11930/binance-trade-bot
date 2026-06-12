@@ -137,7 +137,7 @@ def update_bot_state(status_msg, thinking=False, symbol="System"):
 def check_stop_loss(symbol, current_price):
     pos = current_positions[symbol]
     bp = buy_prices[symbol]
-    if pos > 0:
+    if pos > 0 and bp > 0:
         drop = (bp - current_price) / bp * 100
         if drop >= STOP_LOSS_PERCENT:
             return True
@@ -245,7 +245,9 @@ def run_bot_cycle():
 def execute_trade(symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None):
     try:
         order = place_market_order(symbol, side, qty, is_paper=PAPER_TRADING)
-        avg_price = order.get('parsed_avg_price', price)
+        avg_price = order.get('parsed_avg_price')
+        if not avg_price:
+            avg_price = price
         exec_qty = order.get('parsed_exec_qty', qty)
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')

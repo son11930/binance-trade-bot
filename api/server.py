@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Dict
+from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 
 from bot.database import Trade, init_db, SystemLog, SessionLocal
@@ -119,8 +120,6 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="AI Trading Dashboard", lifespan=lifespan)
-
-from fastapi.concurrency import run_in_threadpool
 
 def get_db_updates():
     db = SessionLocal()

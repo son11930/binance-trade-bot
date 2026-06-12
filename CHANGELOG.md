@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.3.0] - 2026-06-13
+### Architecture Upgrade & Live Positions (อัปเกรดระบบและตารางสถานะเรียลไทม์)
+**English:**
+- **Event-Driven WebSocket Architecture:** The backend has been completely rewritten to an event-driven model.
+- **Direct Price Streaming:** `bot/main.py` now utilizes `ThreadedWebsocketManager` to stream live prices directly from Binance without hitting rate limits.
+- **Webhook Integration:** The bot core now communicates with `api/server.py` via an authenticated internal webhook (`POST /api/internal/broadcast`), replacing the legacy file polling method.
+- **Live Positions Dashboard:** The UI now includes a "Live Positions" table that dynamically displays real-time PNL ($ and %) using WebSocket updates.
+
+**Thai (ภาษาไทย):**
+- **สถาปัตยกรรม Event-Driven WebSocket:** อัปเกรดระบบหลังบ้านใหม่ทั้งหมดให้เป็นแบบ Event-Driven
+- **ดึงราคาแบบสตรีมมิ่ง:** `bot/main.py` เปลี่ยนมาใช้ `ThreadedWebsocketManager` เพื่อรับข้อมูลราคาแบบเรียลไทม์จาก Binance โดยตรง ช่วยแก้ปัญหาการติด Rate Limit
+- **เชื่อมต่อผ่าน Webhook:** บอทหลักสื่อสารกับเซิร์ฟเวอร์ `api/server.py` ผ่านทาง Webhook ภายใน (`POST /api/internal/broadcast`) แบบเข้ารหัส แทนที่การอ่านเขียนไฟล์แบบเก่า
+- **ตารางสถานะเหรียญแบบเรียลไทม์:** หน้าเว็บ Dashboard มีตาราง "Live Positions" ที่คอยอัปเดตตัวเลขกำไร/ขาดทุน (PNL) ทั้งแบบดอลลาร์และเปอร์เซ็นต์แบบสดๆ ผ่าน WebSocket
+
 ## [3.2.0] - 2026-06-12
 ### Features & Analytics (สถิติและข้อมูลการเทรด)
 **English:**

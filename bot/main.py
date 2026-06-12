@@ -1,10 +1,11 @@
 import os
-import json
 import time
+import requests
+import hashlib
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
-from .binance_client import get_historical_klines, place_market_order, get_current_price, get_live_asset_balance
+from .binance_client import get_historical_klines, place_market_order, get_current_price, get_live_asset_balance, twm
 from .strategy import apply_indicators, analyze_market
 from .ai_engine import fetch_crypto_news, analyze_sentiment
 from .database import TradeRepository, LogRepository
@@ -16,11 +17,32 @@ QUANTITY_USDT = float(os.getenv("TRADE_QUANTITY_USDT", "10.0"))
 PAPER_TRADING = os.getenv("PAPER_TRADING", "True").lower() == "true"
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "60"))
 STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.5"))
+WEBHOOK_URL = "http://127.0.0.1:8000/api/internal/broadcast"
+
+USER = os.getenv("DASHBOARD_USER")
+PASS = os.getenv("DASHBOARD_PASS")
+SECRET_SALT = os.getenv("DASHBOARD_SECRET_SALT")
+
+if not USER or not PASS or not SECRET_SALT:
+    raise ValueError("CRITICAL SECURITY ERROR: DASHBOARD_USER, DASHBOARD_PASS, and DASHBOARD_SECRET_SALT must be set in .env")
+
+AUTH_TOKEN = hashlib.sha256(f"{USER}:{PASS}:{SECRET_SALT}".encode()).hexdigest()
 
 current_positions = {sym: 0.0 for sym in SYMBOLS}
 buy_prices = {sym: 0.0 for sym in SYMBOLS}
 last_trade_times = {sym: None for sym in SYMBOLS}
+last_prices = {sym: 0.0 for sym in SYMBOLS}
 live_usdt_balance = 0.0
+
+def process_ticker_message(msg):
+    if msg.get('e') == '24hrTicker':
+        sym = msg['s']
+        if sym in last_prices:
+            last_prices[sym] = float(msg['c'])
+
+# Start websocket listeners
+for symbol in SYMBOLS:
+    twm.start_symbol_ticker_socket(callback=process_ticker_message, symbol=symbol)
 
 def log_msg(level: str, msg: str):
     print(msg)
@@ -51,10 +73,7 @@ def sync_state_with_binance():
             log_msg("WARNING", f"⚠️ Skipping sync for {symbol} due to API error.")
             continue
             
-        try:
-            current_price = get_current_price(symbol)
-        except Exception:
-            continue
+        current_price = last_prices[symbol] if last_prices[symbol] > 0 else get_current_price(symbol)
             
         # If value is less than $2, we consider it dust (sold)
         if real_bal * current_price < 2.0:
@@ -84,19 +103,36 @@ def sync_state_with_binance():
                     log_msg("WARNING", f"⚠️ Manual BUY detected for {symbol} or DB missing. Using current price as baseline.")
 
 def update_bot_state(status_msg, thinking=False, symbol="System"):
+    positions_data = []
+    for sym, pos in current_positions.items():
+        if pos > 0:
+            bp = buy_prices[sym]
+            cp = last_prices[sym]
+            pnl_amt = (cp - bp) * pos if cp > 0 else 0
+            pnl_pct = ((cp - bp) / bp * 100.0) if (bp > 0 and cp > 0) else 0
+            positions_data.append({
+                "symbol": sym,
+                "quantity": pos,
+                "buy_price": bp,
+                "current_price": cp,
+                "pnl_amount": pnl_amt,
+                "pnl_percent": pnl_pct
+            })
+
     state = {
         "status_message": status_msg,
         "is_thinking": thinking,
         "symbol_active": symbol,
         "live_usdt": live_usdt_balance,
+        "positions": positions_data,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+    
     try:
-        os.makedirs("tmp", exist_ok=True)
-        with open("tmp/bot_state.json", "w", encoding="utf-8") as f:
-            json.dump(state, f)
+        headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
+        requests.post(WEBHOOK_URL, json=state, headers=headers, timeout=2)
     except Exception as e:
-        log_msg("ERROR", f"⚠️ Failed to write bot_state.json: {e}")
+        pass
 
 def check_stop_loss(symbol, current_price):
     pos = current_positions[symbol]
@@ -114,10 +150,8 @@ def run_bot_cycle():
     current_holding_value = 0.0
     for sym, pos in current_positions.items():
         if pos > 0:
-            try:
-                current_holding_value += pos * get_current_price(sym)
-            except Exception:
-                current_holding_value += pos * buy_prices[sym]
+            cp = last_prices[sym] if last_prices[sym] > 0 else get_current_price(sym)
+            current_holding_value += pos * cp
     
     for symbol in SYMBOLS:
         try:
@@ -130,12 +164,14 @@ def run_bot_cycle():
             df = apply_indicators(df)
             signal = analyze_market(df)
             current_price = df.iloc[-1]['close']
+            last_prices[symbol] = current_price
             
             # Check Stop Loss
             if check_stop_loss(symbol, current_price):
                 log_msg("WARNING", f"🚨 STOP LOSS TRIGGERED for {symbol} at {current_price}!")
-                execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="Stop Loss Triggered")
-                current_positions[symbol] = 0.0
+                trade = execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="Stop Loss Triggered")
+                if trade:
+                    current_positions[symbol] = 0.0
                 continue
 
             # Enforce Cooldown
@@ -185,18 +221,20 @@ def run_bot_cycle():
                         trade_amount = QUANTITY_USDT
                         
                     qty = trade_amount / current_price 
-                    execute_trade(symbol, "BUY", qty, current_price, reason=reason, ai_risk=risk_score)
-                    current_positions[symbol] = qty
-                    buy_prices[symbol] = current_price
-                    last_trade_times[symbol] = datetime.now(timezone.utc)
+                    trade = execute_trade(symbol, "BUY", qty, current_price, reason=reason, ai_risk=risk_score)
+                    if trade:
+                        current_positions[symbol] = qty
+                        buy_prices[symbol] = current_price
+                        last_trade_times[symbol] = datetime.now(timezone.utc)
                 else:
                     log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
                     
             elif signal == "SELL" and current_positions[symbol] > 0:
                 log_msg("INFO", f"📉 SELL Signal for {symbol}. Executing...")
-                execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="MACD Death Cross")
-                current_positions[symbol] = 0.0
-                last_trade_times[symbol] = datetime.now(timezone.utc)
+                trade = execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="MACD Death Cross")
+                if trade:
+                    current_positions[symbol] = 0.0
+                    last_trade_times[symbol] = datetime.now(timezone.utc)
                 
         except Exception as e:
             log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
@@ -229,8 +267,10 @@ def execute_trade(symbol: str, side: str, qty: float, price: float, reason: str 
     )
     if trade:
         log_msg("INFO", f"✅ Trade logged: {side} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})")
+        return trade
     else:
         log_msg("ERROR", f"⚠️ Failed to save trade to database for {symbol}")
+        return None
 
 if __name__ == "__main__":
     log_msg("INFO", "Starting Multi-Coin MACD Trading Bot Loop...")

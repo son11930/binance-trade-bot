@@ -1,8 +1,11 @@
 import os
 import math
 import pandas as pd
+import time
 from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
+from binance import ThreadedWebsocketManager
+from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
 from .database import LogRepository
@@ -17,6 +20,8 @@ API_KEY = os.getenv("BINANCE_API_KEY")
 SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
 client = Client(API_KEY, SECRET_KEY)
+twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=SECRET_KEY)
+twm.start()
 
 def get_historical_klines(symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
     """

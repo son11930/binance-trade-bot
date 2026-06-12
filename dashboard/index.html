@@ -156,6 +156,28 @@
             </div>
         </div>
 
+        <div class="glass-card rounded-2xl overflow-hidden mb-8">
+            <div class="p-6 border-b border-slate-800/50 bg-slate-900/30 flex justify-between items-center">
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">Live Positions</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-900/40">
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Quantity</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Avg Buy Price</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Current Price</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-table-body" class="divide-y divide-slate-800/50">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="glass-card rounded-2xl overflow-hidden">
             <div class="p-6 border-b border-slate-800/50 bg-slate-900/30">
                 <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">Execution Log</h2>
@@ -233,7 +255,12 @@
                 }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
+                if (event.code === 1008) {
+                    console.error("Invalid token. Forcing logout.");
+                    logout();
+                    return;
+                }
                 console.log("WebSocket disconnected. Reconnecting in " + reconnectTimeout + "ms");
                 setTimeout(connectWebSocket, reconnectTimeout);
                 reconnectTimeout = Math.min(reconnectTimeout * 2, 30000); // Max 30s
@@ -317,6 +344,30 @@
                 document.getElementById('ai-brain').classList.remove('hidden');
                 statusTextEl.classList.remove('text-neonCyan', 'ai-pulse');
                 statusTextEl.classList.add('text-slate-200');
+            }
+            
+            const positionsBody = document.getElementById('positions-table-body');
+            positionsBody.innerHTML = '';
+            if (aiStatus.positions && aiStatus.positions.length > 0) {
+                aiStatus.positions.forEach(pos => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'hover:bg-slate-800/30 transition-colors';
+                    
+                    const pnlAmtColor = pos.pnl_amount > 0 ? 'text-neonGreen' : (pos.pnl_amount < 0 ? 'text-neonRed' : 'text-slate-300');
+                    const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen' : (pos.pnl_percent < 0 ? 'text-neonRed' : 'text-slate-300');
+                    
+                    tr.innerHTML = `
+                        <td class="p-4 font-medium text-slate-200">${pos.symbol}</td>
+                        <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
+                        <td class="p-4 text-right text-slate-300 font-mono">$${pos.buy_price.toFixed(4)}</td>
+                        <td class="p-4 text-right text-slate-300 font-mono">$${pos.current_price.toFixed(4)}</td>
+                        <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}$${pos.pnl_amount.toFixed(2)}</td>
+                        <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
+                    `;
+                    positionsBody.appendChild(tr);
+                });
+            } else {
+                positionsBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500 italic">No active positions.</td></tr>`;
             }
         }
 

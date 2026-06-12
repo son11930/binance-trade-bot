@@ -6,6 +6,12 @@ from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 from dotenv import load_dotenv
 
+from .database import LogRepository
+
+def log_msg(level: str, msg: str):
+    print(msg)
+    LogRepository.log_event(level, msg)
+
 load_dotenv()
 
 API_KEY = os.getenv("BINANCE_API_KEY")
@@ -41,7 +47,7 @@ def get_live_asset_balance(asset: str) -> float | None:
         balance = client.get_asset_balance(asset=asset)
         return float(balance['free']) if balance else 0.0
     except Exception as e:
-        logging.exception(f"Error fetching balance for {asset}")
+        log_msg("ERROR", f"Error fetching balance for {asset}: {e}")
         return None
 
 STEP_SIZE_CACHE = {}
@@ -57,7 +63,7 @@ def get_step_size(symbol: str) -> float:
                 STEP_SIZE_CACHE[symbol] = step_size
                 return step_size
     except Exception as e:
-        logging.exception(f"Error fetching step size for {symbol}")
+        log_msg("ERROR", f"Error fetching step size for {symbol}: {e}")
     return 0.00001 # safe fallback
 
 def round_step_size(quantity: float, step_size: float) -> float:
@@ -71,7 +77,7 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     """
     if is_paper:
         price = get_current_price(symbol)
-        print(f"[PAPER TRADE] {side} {quantity} of {symbol} at approx {price}")
+        log_msg("INFO", f"[PAPER TRADE] {side} {quantity} of {symbol} at approx {price}")
         return {
             "status": "FILLED", 
             "price": price, 

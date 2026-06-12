@@ -1,28 +1,21 @@
-# Project Plan: AI Trading Bot with 2-Layer Decision Engine
+# Project Plan: Debug UI & Bot Logging System
 
-## Objective
-Create a full-stack Python application that executes an automated crypto trading bot on Binance and hosts a modern HTML/CSS dashboard for live monitoring.
+## Goal
+Implement a real-time Debug UI on the web dashboard to monitor the trading bot's actions, errors, and Binance rejections.
 
 ## Architecture
-- **Backend & Trading Logic**: Python 3.11+, `python-binance`, `pandas_ta`, `google-generativeai`.
-- **API Server**: FastAPI + Uvicorn.
-- **Frontend Dashboard**: HTML5, Tailwind CSS, Chart.js.
+Since `bot/main.py` (the trading engine) and `api/server.py` (the dashboard backend) run in separate processes, we will use the shared SQLite database (`trades.db`) as the communication bridge.
+- **Bot**: Will log events (INFO, WARNING, ERROR) to a new `system_logs` table.
+- **API Server**: Will continuously poll the `system_logs` table and broadcast new entries to the frontend via WebSockets.
+- **Frontend**: Will display these logs in a dedicated "System Debug Log" terminal-like panel.
 
-## Trading Strategy (v2.0)
-1. **Layer 1 (Technical)**: Trend Following on 1H Chart. Buy on MACD Golden Cross if Price > SMA 200. Sell on MACD Death Cross.
-2. **Layer 2 (AI Sentiment)**: When Layer 1 triggers a buy, fetch news and analyze with Gemini Flash. If Risk Score > 40, abort buy.
-3. **Execution (5 Coins)**: Monitors BTC, ETH, XRP, SOL, BNB.
-4. **Position Sizing**: Live Binance Sync. Compounding 5-Tranches (20% of Real Equity per trade). 2.5% strict Stop Loss.
+## Phases
+1. **Data Layer**: Extend `bot/database.py` with a `SystemLog` table and a helper repository.
+2. **Bot Logging**: Route `print()` and `logging.error()` statements in `main.py` and `binance_client.py` to the database.
+3. **API Broadcasting**: Extend `api/server.py`'s background broadcaster to stream new logs to connected WebSocket clients.
+4. **UI Integration**: Add the Debug panel to `dashboard/index.html`.
 
-## Status & Evolution
-- Moved from Mean Reversion (RSI < 30) to Trend Following (MACD + SMA 200) after backtesting proved 15m/1H mean reversion generates net losses during strong bear trends.
-- Upgraded to Live Binance Wallet Sync (State Recovery via SQLite `trades.db`) to ensure the bot can safely resume after VM reboots without losing position state.
-- Upgraded Frontend to Glassmorphism UI with Live USDT tracking and auto-polling AI status.
-
-## Execution Steps
-- [x] **Phase 1**: Scaffold project, create `requirements.txt` and `.env`.
-- [x] **Phase 2**: Build `binance_client.py` and Layer 1 indicator logic (`strategy.py`).
-- [x] **Phase 3**: Integrate `google-generativeai` for Layer 2 (`ai_engine.py`).
-- [x] **Phase 4**: Build FastAPI backend (`server.py`) and SQLite database.
-- [x] **Phase 5**: Develop modern Premium Glassmorphism dashboard (`index.html`).
-- [x] **Phase 6**: Live Wallet Sync, State Recovery, and Compounding Position Sizing.
+## Constraints & Rules
+- Minimal performance overhead: Logs should be fetched efficiently (LIMIT 100).
+- Robust error handling: DB insertions must not crash the bot.
+- Real-time updates: Must use the existing WebSocket connection.

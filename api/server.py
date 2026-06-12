@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import List, Dict
 from dotenv import load_dotenv
 
-from bot.database import get_db, Trade, init_db
+from bot.database import get_db, Trade, init_db, SystemLog, SessionLocal
 
 load_dotenv()
 
@@ -50,11 +50,16 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def get_bot_status():
-    bot_state = {"status_message": "Waiting for bot to start...", "is_thinking": False, "live_usdt": 0.0}
+    bot_state = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0}
     try:
+        import time
         if os.path.exists("tmp/bot_state.json"):
-            with open("tmp/bot_state.json", "r", encoding="utf-8") as f:
-                bot_state = json.load(f)
+            # Check if file is older than 3 minutes (180 seconds)
+            if time.time() - os.path.getmtime("tmp/bot_state.json") < 180:
+                with open("tmp/bot_state.json", "r", encoding="utf-8") as f:
+                    bot_state = json.load(f)
+            else:
+                bot_state["status_message"] = "Bot is offline (Not running)"
     except (OSError, json.JSONDecodeError):
         pass
         
@@ -69,6 +74,7 @@ def get_bot_status():
 async def background_broadcaster():
     last_mtime = 0
     last_trade_id = -1
+    last_log_id = -1
     
     while True:
         try:
@@ -80,22 +86,14 @@ async def background_broadcaster():
             if os.path.exists("tmp/bot_state.json"):
                 current_mtime = os.path.getmtime("tmp/bot_state.json")
             
-            db = next(get_db())
+            db = SessionLocal()
             try:
                 trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(50).all()
-            finally:
-                db.close()
+                logs = db.query(SystemLog).order_by(SystemLog.timestamp.desc()).limit(50).all()
                 
-            current_trade_id = trades[0].id if trades else 0
-            
-            # Broadcast if status changed
-            if current_mtime != last_mtime:
-                last_mtime = current_mtime
-                await manager.broadcast({"type": "status_update", "data": get_bot_status()})
+                current_trade_id = trades[0].id if trades else 0
+                current_log_id = logs[0].id if logs else 0
                 
-            # Broadcast if trades changed
-            if current_trade_id != last_trade_id:
-                last_trade_id = current_trade_id
                 trades_data = []
                 for t in trades:
                     trades_data.append({
@@ -109,7 +107,32 @@ async def background_broadcaster():
                         "ai_reasoning": t.ai_reasoning,
                         "paper_trade": t.paper_trade
                     })
+                    
+                logs_data = []
+                for l in logs:
+                    logs_data.append({
+                        "id": l.id,
+                        "timestamp": l.timestamp.isoformat() if hasattr(l.timestamp, 'isoformat') else l.timestamp,
+                        "level": l.level,
+                        "message": l.message
+                    })
+            finally:
+                db.close()
+                
+            # Broadcast if status changed
+            if current_mtime != last_mtime:
+                last_mtime = current_mtime
+                await manager.broadcast({"type": "status_update", "data": get_bot_status()})
+                
+            # Broadcast if trades changed
+            if current_trade_id != last_trade_id:
+                last_trade_id = current_trade_id
                 await manager.broadcast({"type": "trades_update", "data": trades_data})
+                
+            # Broadcast if logs changed
+            if current_log_id != last_log_id:
+                last_log_id = current_log_id
+                await manager.broadcast({"type": "logs_update", "data": logs_data})
             
         except Exception:
             logging.exception("Background broadcaster error")
@@ -151,26 +174,38 @@ async def websocket_endpoint(websocket: WebSocket):
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
         if auth_msg.get("type") == "auth" and await manager.authenticate(websocket, auth_msg.get("token")):
             await websocket.send_json({"type": "status_update", "data": get_bot_status()})
-            db = next(get_db())
+            db = SessionLocal()
             try:
                 trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(50).all()
+                logs = db.query(SystemLog).order_by(SystemLog.timestamp.desc()).limit(50).all()
+                
+                trades_data = []
+                for t in trades:
+                    trades_data.append({
+                        "id": t.id,
+                        "symbol": t.symbol,
+                        "side": t.side,
+                        "price": t.price,
+                        "quantity": t.quantity,
+                        "timestamp": t.timestamp.isoformat() if hasattr(t.timestamp, 'isoformat') else t.timestamp,
+                        "ai_risk_score": t.ai_risk_score,
+                        "ai_reasoning": t.ai_reasoning,
+                        "paper_trade": t.paper_trade
+                    })
+                    
+                logs_data = []
+                for l in logs:
+                    logs_data.append({
+                        "id": l.id,
+                        "timestamp": l.timestamp.isoformat() if hasattr(l.timestamp, 'isoformat') else l.timestamp,
+                        "level": l.level,
+                        "message": l.message
+                    })
             finally:
                 db.close()
                 
-            trades_data = []
-            for t in trades:
-                trades_data.append({
-                    "id": t.id,
-                    "symbol": t.symbol,
-                    "side": t.side,
-                    "price": t.price,
-                    "quantity": t.quantity,
-                    "timestamp": t.timestamp.isoformat() if hasattr(t.timestamp, 'isoformat') else t.timestamp,
-                    "ai_risk_score": t.ai_risk_score,
-                    "ai_reasoning": t.ai_reasoning,
-                    "paper_trade": t.paper_trade
-                })
             await websocket.send_json({"type": "trades_update", "data": trades_data})
+            await websocket.send_json({"type": "logs_update", "data": logs_data})
             
             while True:
                 await websocket.receive_text()

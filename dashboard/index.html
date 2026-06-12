@@ -168,6 +168,22 @@
                 </table>
             </div>
         </div>
+
+        <!-- System Debug Log -->
+        <div class="glass-card rounded-2xl overflow-hidden mt-8">
+            <div class="p-6 border-b border-slate-800/50 bg-slate-900/30 flex justify-between items-center">
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">System Debug Log</h2>
+                <div class="flex items-center space-x-2">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-neonCyan opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-neonCyan"></span>
+                    </span>
+                    <span class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Streaming</span>
+                </div>
+            </div>
+            <div class="bg-black/50 p-4 h-64 overflow-y-auto font-mono text-xs" id="debug-log-container">
+            </div>
+        </div>
     </div>
 
     <script>
@@ -199,6 +215,8 @@
                     updateStatus(message.data);
                 } else if (message.type === "trades_update") {
                     updateTrades(message.data);
+                } else if (message.type === "logs_update") {
+                    updateLogs(message.data);
                 }
             };
 
@@ -289,6 +307,16 @@
             }
         }
 
+        function escapeHTML(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function updateTrades(trades) {
             document.getElementById('total-trades').innerText = trades.length;
             
@@ -310,16 +338,48 @@
                 const d = new Date(trade.timestamp);
                 const dateStr = d.toLocaleDateString() + ' <span class="text-slate-500 ml-1">' + d.toLocaleTimeString() + '</span>';
                 
+                const safeSymbol = escapeHTML(trade.symbol.replace('USDT',''));
+                const safeReasoning = escapeHTML(trade.ai_reasoning || '--');
+                const safeSide = escapeHTML(trade.side);
+                
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
-                    <td class="p-4 font-extrabold tracking-wider ${sideClass}">${trade.side} <span class="text-white text-xs ml-1">${trade.symbol.replace('USDT','')}</span></td>
+                    <td class="p-4 font-extrabold tracking-wider ${sideClass}">${safeSide} <span class="text-white text-xs ml-1">${safeSymbol}</span></td>
                     <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                     <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
                     <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
-                    <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning || '--'}</td>
+                    <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${safeReasoning}">${safeReasoning}</td>
                 `;
                 tbody.appendChild(tr);
             });
+        }
+
+        function updateLogs(logs) {
+            const container = document.getElementById('debug-log-container');
+            container.innerHTML = '';
+            
+            const sortedLogs = [...logs].reverse();
+            
+            sortedLogs.forEach(log => {
+                const div = document.createElement('div');
+                div.className = 'mb-1';
+                
+                const d = new Date(log.timestamp);
+                const timeStr = d.toLocaleTimeString([], {hour12: false}) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+                
+                let colorClass = 'text-slate-400';
+                if (log.level === 'ERROR') colorClass = 'text-neonRed font-bold';
+                else if (log.level === 'WARNING') colorClass = 'text-orange-400';
+                else if (log.level === 'INFO') colorClass = 'text-neonCyan';
+                
+                const safeLevel = escapeHTML(log.level);
+                const safeMessage = escapeHTML(log.message);
+                
+                div.innerHTML = `<span class="text-slate-500 mr-2">[${escapeHTML(timeStr)}]</span> <span class="${colorClass}">[${safeLevel}] ${safeMessage}</span>`;
+                container.appendChild(div);
+            });
+            
+            container.scrollTop = container.scrollHeight;
         }
     </script>
 </body>

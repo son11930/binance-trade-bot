@@ -22,6 +22,14 @@ class Trade(Base):
     ai_reasoning = Column(String, nullable=True)
     paper_trade = Column(Boolean, default=True)
 
+class SystemLog(Base):
+    __tablename__ = "system_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    level = Column(String, index=True) # INFO, WARNING, ERROR
+    message = Column(String)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 
@@ -68,5 +76,28 @@ class TradeRepository:
             logging.exception(f"Error creating trade for {symbol}")
             db.rollback()
             return None
+        finally:
+            db.close()
+
+class LogRepository:
+    @staticmethod
+    def log_event(level: str, message: str):
+        db = SessionLocal()
+        try:
+            log_entry = SystemLog(level=level, message=message)
+            db.add(log_entry)
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recent_logs(limit: int = 100):
+        db = SessionLocal()
+        try:
+            return db.query(SystemLog).order_by(SystemLog.timestamp.desc()).limit(limit).all()
+        except Exception:
+            return []
         finally:
             db.close()

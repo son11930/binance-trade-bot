@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from .binance_client import get_historical_klines, place_market_order, get_current_price, get_live_asset_balance
 from .strategy import apply_indicators, analyze_market
 from .ai_engine import fetch_crypto_news, analyze_sentiment
-from .database import TradeRepository
+from .database import TradeRepository, LogRepository
 
 load_dotenv()
 
@@ -22,6 +22,10 @@ current_positions = {sym: 0.0 for sym in SYMBOLS}
 buy_prices = {sym: 0.0 for sym in SYMBOLS}
 last_trade_times = {sym: None for sym in SYMBOLS}
 live_usdt_balance = 0.0
+
+def log_msg(level: str, msg: str):
+    print(msg)
+    LogRepository.log_event(level, msg)
 
 def sync_state_with_binance():
     """
@@ -45,7 +49,7 @@ def sync_state_with_binance():
         real_bal = get_live_asset_balance(asset)
         
         if real_bal is None:
-            print(f"⚠️ Skipping sync for {symbol} due to API error.")
+            log_msg("WARNING", f"⚠️ Skipping sync for {symbol} due to API error.")
             continue
             
         try:
@@ -56,7 +60,7 @@ def sync_state_with_binance():
         # If value is less than $2, we consider it dust (sold)
         if real_bal * current_price < 2.0:
             if current_positions[symbol] > 0:
-                print(f"⚠️ Detected manual SELL for {symbol}. Syncing state.")
+                log_msg("WARNING", f"⚠️ Detected manual SELL for {symbol}. Syncing state.")
             current_positions[symbol] = 0.0
             buy_prices[symbol] = 0.0
         else:
@@ -70,7 +74,7 @@ def sync_state_with_binance():
                 else:
                     # Manual buy detected or missing DB
                     buy_prices[symbol] = current_price
-                    print(f"⚠️ Manual BUY detected for {symbol} or DB missing. Using current price as baseline.")
+                    log_msg("WARNING", f"⚠️ Manual BUY detected for {symbol} or DB missing. Using current price as baseline.")
 
 def update_bot_state(status_msg, thinking=False, symbol="System"):
     state = {
@@ -84,7 +88,7 @@ def update_bot_state(status_msg, thinking=False, symbol="System"):
         with open("tmp/bot_state.json", "w", encoding="utf-8") as f:
             json.dump(state, f)
     except Exception as e:
-        logging.exception(f"⚠️ Failed to write bot_state.json: {e}")
+        log_msg("ERROR", f"⚠️ Failed to write bot_state.json: {e}")
 
 def check_stop_loss(symbol, current_price):
     pos = current_positions[symbol]
@@ -121,7 +125,7 @@ def run_bot_cycle():
             
             # Check Stop Loss
             if check_stop_loss(symbol, current_price):
-                print(f"🚨 STOP LOSS TRIGGERED for {symbol} at {current_price}!")
+                log_msg("WARNING", f"🚨 STOP LOSS TRIGGERED for {symbol} at {current_price}!")
                 execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="Stop Loss Triggered")
                 current_positions[symbol] = 0.0
                 continue
@@ -138,7 +142,7 @@ def run_bot_cycle():
                 
                 # Input Validation & Sanitization
                 if not isinstance(ai_result, dict):
-                    print(f"⚠️ Invalid AI response for {symbol}. Aborting trade.")
+                    log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting trade.")
                     continue
                     
                 decision = ai_result.get('decision')
@@ -151,12 +155,12 @@ def run_bot_cycle():
                 update_bot_state(f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol)
                 
                 if decision == "BUY" and risk_score <= 40:
-                    print(f"🚀 Executing BUY for {symbol}...")
+                    log_msg("INFO", f"🚀 Executing BUY for {symbol}...")
                     
                     # Dynamic Position Sizing using LIVE BALANCE
                     if not PAPER_TRADING:
                         if live_usdt_balance < 10.0:
-                            print(f"⚠️ Insufficient Binance USDT to buy {symbol}")
+                            log_msg("WARNING", f"⚠️ Insufficient Binance USDT to buy {symbol}")
                             continue
                             
                         total_equity = live_usdt_balance + current_holding_value
@@ -175,16 +179,16 @@ def run_bot_cycle():
                     buy_prices[symbol] = current_price
                     last_trade_times[symbol] = datetime.now(timezone.utc)
                 else:
-                    print(f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
+                    log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
                     
             elif signal == "SELL" and current_positions[symbol] > 0:
-                print(f"📉 SELL Signal for {symbol}. Executing...")
+                log_msg("INFO", f"📉 SELL Signal for {symbol}. Executing...")
                 execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="MACD Death Cross")
                 current_positions[symbol] = 0.0
                 last_trade_times[symbol] = datetime.now(timezone.utc)
                 
         except Exception as e:
-            logging.exception(f"❌ Error processing {symbol}")
+            log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
             continue
             
     update_bot_state("Cycle complete. Waiting...", symbol="All")
@@ -193,20 +197,20 @@ def execute_trade(symbol: str, side: str, qty: float, price: float, reason: str 
     try:
         place_market_order(symbol, side, qty, is_paper=PAPER_TRADING)
     except Exception as e:
-        logging.exception(f"⚠️ Exchange Execution Failed for {symbol}")
+        log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {e}")
         return # Do not log trade if it failed on exchange
         
     trade = TradeRepository.create_trade(symbol, side, price, qty, ai_risk, reason, PAPER_TRADING)
     if trade:
-        print(f"✅ Trade logged: {side} {qty} {symbol} at {price}")
+        log_msg("INFO", f"✅ Trade logged: {side} {qty} {symbol} at {price}")
     else:
-        print(f"⚠️ Failed to save trade to database for {symbol}")
+        log_msg("ERROR", f"⚠️ Failed to save trade to database for {symbol}")
 
 if __name__ == "__main__":
-    print("Starting Multi-Coin MACD Trading Bot Loop...")
+    log_msg("INFO", "Starting Multi-Coin MACD Trading Bot Loop...")
     while True:
         try:
             run_bot_cycle()
         except Exception as e:
-            print(f"Error in bot cycle: {e}")
+            log_msg("ERROR", f"Error in bot cycle: {e}")
         time.sleep(60)

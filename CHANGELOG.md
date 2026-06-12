@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.1.0] - 2026-06-12
+### Debugging & Observability (ระบบแสดงผลข้อผิดพลาด)
+**English:**
+- Added a real-time "System Debug Log" panel to the Web Dashboard to monitor errors, warnings, and system events.
+- Integrated `LogRepository` to persist logs in the SQLite database (`trades.db`).
+- Replaced `print` and `logging` statements in the bot engine to capture Binance API errors (e.g. `LOT_SIZE` rejections, connectivity issues) directly to the database.
+- Implemented a new `logs_update` WebSocket broadcast in the backend to stream logs to connected clients in real-time.
+
+**Thai (ภาษาไทย):**
+- เพิ่มแผง "System Debug Log" บนหน้าเว็บ เพื่อแสดงเวลาและรายละเอียดการทำงาน รวมถึงข้อผิดพลาดของบอทแบบเรียลไทม์
+- สร้าง `LogRepository` เพื่อเก็บประวัติ Log (เช่น INFO, WARNING, ERROR) ลงในฐานข้อมูล SQLite
+- ปรับปรุงการเก็บ Log ในตัวบอทเทรดให้จับข้อมูล Error ต่างๆ เช่น การถูก Binance ปฏิเสธคำสั่งซื้อ มาแสดงผลบนหน้าเว็บแทนที่จะอยู่ใน Terminal อย่างเดียว
+- เพิ่มระบบกระจายสัญญาณ Log ผ่าน WebSockets ให้หน้าเว็บอัปเดตบรรทัดต่อบรรทัดแบบเรียลไทม์
+
 ## [3.0.0] - 2026-06-12
 ### Architecture & Performance (สถาปัตยกรรมและประสิทธิภาพ)
 **English:**

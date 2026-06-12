@@ -3,13 +3,12 @@ import json
 import requests
 import logging
 import xml.etree.ElementTree as ET
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
-if api_key and api_key != "your_gemini_api_key_here":
-    genai.configure(api_key=api_key)
 
 def fetch_crypto_news(limit: int = 5) -> str:
     """
@@ -40,11 +39,7 @@ def analyze_sentiment(news_text: str) -> dict:
     if not news_text or news_text.startswith("No recent news"):
         return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis."}
         
-    # Initialize the model with JSON response type
-    model = genai.GenerativeModel(
-        model_name="gemini-3.5-flash",
-        generation_config={"response_mime_type": "application/json"}
-    )
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     
     prompt = f"""
     You are an expert cryptocurrency trading AI. Analyze the following recent news headlines:
@@ -64,7 +59,13 @@ def analyze_sentiment(news_text: str) -> dict:
     """
     
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-3.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
+        )
         result = json.loads(response.text)
         return result
     except Exception as e:

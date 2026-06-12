@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.0.0] - 2026-06-12
+### Architecture & Performance (สถาปัตยกรรมและประสิทธิภาพ)
+**English:**
+- Migrated dashboard from HTTP Polling to real-time WebSockets with "Auth-on-Connect".
+- Optimized frontend CSS by removing GPU-heavy backdrop-filters and using hardware acceleration.
+- Eliminated Uvicorn infinite restart loop by moving bot state to `tmp/` directory.
+- Refactored database logic to use `TradeRepository` pattern.
+- Fixed `LOT_SIZE` precision errors when placing live market orders on Binance.
+- Solved O(N²) API rate limit vulnerability during portfolio value calculation.
+- Fixed `backtest.py` script to support the new MACD + SMA strategy.
+
+**Thai (ภาษาไทย):**
+- อัปเกรดระบบหน้าเว็บจากการยิงโหลดซ้ำๆ (Polling) เป็น WebSockets ที่รับส่งข้อมูลแบบ Real-time แท้จริง
+- ปลดล็อกภาระการ์ดจอ (GPU) โดยลบโค้ด CSS แอนิเมชันที่กินสเปคสูงออกและใช้ Hardware Acceleration
+- แก้บั๊กเว็บเซิร์ฟเวอร์ Uvicorn รีสตาร์ทตัวเองรัวๆ จนกิน CPU i7 โดยย้ายไฟล์สถานะไปไว้ที่ `tmp/`
+- ปรับโครงสร้างระบบฐานข้อมูลให้ใช้มาตรฐาน `TradeRepository`
+- แก้ปัญหาทศนิยม (LOT_SIZE) ที่ทำให้บอทซื้อเหรียญจริงไม่ได้
+- แก้โค้ดรันทดสอบย้อนหลัง (Backtest) ให้รันกับกลยุทธ์ MACD ตัวใหม่ล่าสุดได้แล้ว
 ## [2.1.0] - 2026-06-12
 ### Security & System Hardening (ความปลอดภัยและเสถียรภาพ)
 **English:**

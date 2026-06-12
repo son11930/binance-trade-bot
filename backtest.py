@@ -1,5 +1,6 @@
 from binance.client import Client
-from datetime import datetime, timedelta
+from binance.client import Client
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import os
 import sys
@@ -11,7 +12,7 @@ client = Client()
 symbol = "BTCUSDT"
 interval = Client.KLINE_INTERVAL_1HOUR
 
-start_str = (datetime.utcnow() - timedelta(days=365)).strftime("%d %b %Y %H:%M:%S")
+start_str = (datetime.now(timezone.utc) - timedelta(days=365)).strftime("%d %b %Y %H:%M:%S")
 print(f"Fetching 1 year of data since {start_str}...")
 klines = client.get_historical_klines(symbol, interval, start_str)
 
@@ -34,14 +35,17 @@ trades = []
 
 for i in range(200, len(df)):
     row = df.iloc[i]
+    prev_row = df.iloc[i-1]
     price = row['close']
-    rsi = row['RSI_14']
-    bb_lower = row['BBL_20_2.0']
-    bb_middle = row['BBM_20_2.0']
-    bb_upper = row['BBU_20_2.0']
+    macd = row['MACD']
+    signal_line = row['Signal_Line']
+    prev_macd = prev_row['MACD']
+    prev_signal = prev_row['Signal_Line']
     sma_200 = row['SMA_200']
     
     is_uptrend = price > sma_200
+    macd_bullish_cross = prev_macd <= prev_signal and macd > signal_line
+    macd_bearish_cross = prev_macd >= prev_signal and macd < signal_line
     
     if position > 0:
         drop = (buy_price - price) / buy_price * 100
@@ -51,17 +55,17 @@ for i in range(200, len(df)):
             position = 0.0
             continue
             
-    if position == 0 and rsi < 30 and price <= (bb_lower * 1.01) and is_uptrend:
+    if position == 0 and macd_bullish_cross and is_uptrend:
         invest = 10.0
         if capital >= invest:
             capital -= invest
             position = invest / price
             buy_price = price
             
-    elif position > 0 and (price >= bb_upper or rsi > 70):
+    elif position > 0 and macd_bearish_cross:
         profit = (price - buy_price) / buy_price * 100
         capital += (position * price)
-        trades.append({"type": "WIN" if profit > 0 else "LOSS", "profit_pct": profit, "reason": "Target Hit"})
+        trades.append({"type": "WIN" if profit > 0 else "LOSS", "profit_pct": profit, "reason": "MACD Death Cross"})
         position = 0.0
 
 if position > 0:

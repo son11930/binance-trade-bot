@@ -31,9 +31,7 @@
             background-attachment: fixed;
         }
         .glass-card {
-            background: rgba(15, 23, 42, 0.4);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            background: rgba(15, 23, 42, 0.85); /* Darker solid bg since blur is removed */
             border: 1px solid rgba(255, 255, 255, 0.05);
             box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -46,10 +44,11 @@
         
         .ai-pulse {
             animation: aiPulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            will-change: opacity;
         }
         @keyframes aiPulse {
-            0%, 100% { opacity: 1; text-shadow: 0 0 20px #00F0FF; }
-            50% { opacity: .5; text-shadow: 0 0 5px #00F0FF; }
+            0%, 100% { opacity: 1; }
+            50% { opacity: .4; }
         }
     </style>
 </head>
@@ -173,16 +172,45 @@
 
     <script>
         let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
-        let pollingIntervals = [];
+        let ws;
+        let reconnectTimeout = 1000;
 
         function startApp() {
             document.getElementById('login-modal').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
+            connectWebSocket();
+        }
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/ws`;
             
-            fetchStatus();
-            fetchTrades();
-            pollingIntervals.push(setInterval(fetchStatus, 2000));
-            pollingIntervals.push(setInterval(fetchTrades, 5000));
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log("WebSocket connected.");
+                reconnectTimeout = 1000; // reset
+                ws.send(JSON.stringify({ type: "auth", token: authToken }));
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                if (message.type === "status_update") {
+                    updateStatus(message.data);
+                } else if (message.type === "trades_update") {
+                    updateTrades(message.data);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket disconnected. Reconnecting in " + reconnectTimeout + "ms");
+                setTimeout(connectWebSocket, reconnectTimeout);
+                reconnectTimeout = Math.min(reconnectTimeout * 2, 30000); // Max 30s
+            };
+
+            ws.onerror = (error) => {
+                console.error("WebSocket error:", error);
+            };
         }
 
         if (authToken) {
@@ -223,100 +251,75 @@
         function logout() {
             localStorage.removeItem('bot_token');
             sessionStorage.removeItem('bot_token');
+            if (ws) ws.close();
             window.location.reload();
         }
 
-        async function apiFetch(url) {
-            const res = await fetch(url, {
-                headers: { 'Authorization': `Bearer ${authToken}` }
+        function updateStatus(data) {
+            document.getElementById('symbol-display').innerText = data.symbols ? data.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
+            
+            const isPaper = data.paper_trading === "True";
+            const modeBadge = document.getElementById('mode-badge');
+            if (isPaper) {
+                modeBadge.innerText = "Simulated Paper Trading";
+                modeBadge.className = "px-4 py-1.5 rounded-full bg-slate-500/20 text-slate-300 text-sm font-bold border border-slate-500/30 uppercase tracking-widest";
+                document.getElementById('live-usdt').innerText = "SIMULATED";
+                document.getElementById('live-usdt').classList.add('text-lg', 'text-slate-400');
+            } else {
+                modeBadge.innerText = "LIVE EXCHANGE SYNC";
+                modeBadge.className = "px-4 py-1.5 rounded-full bg-neonRed/10 text-neonRed text-sm font-bold border border-neonRed/30 uppercase tracking-widest animate-pulse";
+                document.getElementById('live-usdt').innerText = data.live_usdt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                document.getElementById('live-usdt').classList.remove('text-lg', 'text-slate-400');
+            }
+            
+            const aiStatus = data.ai_status || {};
+            const statusTextEl = document.getElementById('ai-status-text');
+            statusTextEl.innerText = aiStatus.status_message || 'Waiting for bot cycle...';
+            
+            if (aiStatus.is_thinking) {
+                document.getElementById('ai-spinner').classList.remove('hidden');
+                document.getElementById('ai-brain').classList.add('hidden');
+                statusTextEl.classList.add('text-neonCyan', 'ai-pulse');
+                statusTextEl.classList.remove('text-slate-200');
+            } else {
+                document.getElementById('ai-spinner').classList.add('hidden');
+                document.getElementById('ai-brain').classList.remove('hidden');
+                statusTextEl.classList.remove('text-neonCyan', 'ai-pulse');
+                statusTextEl.classList.add('text-slate-200');
+            }
+        }
+
+        function updateTrades(trades) {
+            document.getElementById('total-trades').innerText = trades.length;
+            
+            if (trades.length > 0 && trades[0].ai_risk_score !== null) {
+                const risk = trades[0].ai_risk_score;
+                document.getElementById('last-risk').innerText = `Last Risk: ${risk}/100`;
+            }
+
+            const tbody = document.getElementById('trade-table-body');
+            tbody.innerHTML = '';
+            
+            trades.forEach(trade => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/30 transition-colors";
+                
+                const isBuy = trade.side === 'BUY';
+                const sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
+                
+                const d = new Date(trade.timestamp);
+                const dateStr = d.toLocaleDateString() + ' <span class="text-slate-500 ml-1">' + d.toLocaleTimeString() + '</span>';
+                
+                tr.innerHTML = `
+                    <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
+                    <td class="p-4 font-extrabold tracking-wider ${sideClass}">${trade.side} <span class="text-white text-xs ml-1">${trade.symbol.replace('USDT','')}</span></td>
+                    <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
+                    <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
+                    <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning || '--'}</td>
+                `;
+                tbody.appendChild(tr);
             });
-            if (res.status === 401) {
-                logout();
-            }
-            return res;
-        }
-
-        async function fetchStatus() {
-            try {
-                const res = await apiFetch('/api/status');
-                if(!res || !res.ok) return;
-                const data = await res.json();
-                
-                document.getElementById('symbol-display').innerText = data.symbols ? data.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
-                
-                const isPaper = data.paper_trading === "True";
-                const modeBadge = document.getElementById('mode-badge');
-                if (isPaper) {
-                    modeBadge.innerText = "Simulated Paper Trading";
-                    modeBadge.className = "px-4 py-1.5 rounded-full bg-slate-500/20 text-slate-300 text-sm font-bold border border-slate-500/30 uppercase tracking-widest";
-                    document.getElementById('live-usdt').innerText = "SIMULATED";
-                    document.getElementById('live-usdt').classList.add('text-lg', 'text-slate-400');
-                } else {
-                    modeBadge.innerText = "LIVE EXCHANGE SYNC";
-                    modeBadge.className = "px-4 py-1.5 rounded-full bg-neonRed/10 text-neonRed text-sm font-bold border border-neonRed/30 uppercase tracking-widest animate-pulse";
-                    document.getElementById('live-usdt').innerText = data.live_usdt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                    document.getElementById('live-usdt').classList.remove('text-lg', 'text-slate-400');
-                }
-                
-                const aiStatus = data.ai_status || {};
-                const statusTextEl = document.getElementById('ai-status-text');
-                statusTextEl.innerText = aiStatus.status_message || 'Waiting for bot cycle...';
-                
-                if (aiStatus.is_thinking) {
-                    document.getElementById('ai-spinner').classList.remove('hidden');
-                    document.getElementById('ai-brain').classList.add('hidden');
-                    statusTextEl.classList.add('text-neonCyan', 'ai-pulse');
-                    statusTextEl.classList.remove('text-slate-200');
-                } else {
-                    document.getElementById('ai-spinner').classList.add('hidden');
-                    document.getElementById('ai-brain').classList.remove('hidden');
-                    statusTextEl.classList.remove('text-neonCyan', 'ai-pulse');
-                    statusTextEl.classList.add('text-slate-200');
-                }
-            } catch (e) {
-                console.error("Status fetch error:", e);
-            }
-        }
-
-        async function fetchTrades() {
-            try {
-                const res = await apiFetch('/api/trades');
-                if(!res || !res.ok) return;
-                const trades = await res.json();
-                
-                document.getElementById('total-trades').innerText = trades.length;
-                
-                if (trades.length > 0 && trades[0].ai_risk_score !== null) {
-                    const risk = trades[0].ai_risk_score;
-                    document.getElementById('last-risk').innerText = `Last Risk: ${risk}/100`;
-                }
-
-                const tbody = document.getElementById('trade-table-body');
-                tbody.innerHTML = '';
-                
-                trades.forEach(trade => {
-                    const tr = document.createElement('tr');
-                    tr.className = "hover:bg-slate-800/30 transition-colors";
-                    
-                    const isBuy = trade.side === 'BUY';
-                    const sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
-                    
-                    const d = new Date(trade.timestamp);
-                    const dateStr = d.toLocaleDateString() + ' <span class="text-slate-500 ml-1">' + d.toLocaleTimeString() + '</span>';
-                    
-                    tr.innerHTML = `
-                        <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
-                        <td class="p-4 font-extrabold tracking-wider ${sideClass}">${trade.side} <span class="text-white text-xs ml-1">${trade.symbol.replace('USDT','')}</span></td>
-                        <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
-                        <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
-                        <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
-                        <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${trade.ai_reasoning}">${trade.ai_reasoning || '--'}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            } catch (e) {
-                console.error("Trade fetch error:", e);
-            }
         }
     </script>
 </body>

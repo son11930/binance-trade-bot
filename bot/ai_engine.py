@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import logging
 import xml.etree.ElementTree as ET
 import google.generativeai as genai
 from dotenv import load_dotenv
@@ -16,7 +17,12 @@ def fetch_crypto_news(limit: int = 5) -> str:
     """
     try:
         url = "https://cointelegraph.com/rss"
-        response = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
         root = ET.fromstring(response.content)
         headlines = []
         for item in root.findall('./channel/item')[:limit]:
@@ -24,19 +30,19 @@ def fetch_crypto_news(limit: int = 5) -> str:
             headlines.append(title)
         return "\n".join(headlines)
     except Exception as e:
-        print(f"Error fetching news: {e}")
+        logging.exception("Error fetching news from CoinTelegraph")
         return "No recent news available due to error."
 
 def analyze_sentiment(news_text: str) -> dict:
     """
-    Uses Gemini 1.5 Flash to analyze news sentiment and return a Risk Score.
+    Uses Gemini 3.5 Flash to analyze news sentiment and return a Risk Score.
     """
     if not news_text or news_text.startswith("No recent news"):
         return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis."}
         
     # Initialize the model with JSON response type
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="gemini-3.5-flash",
         generation_config={"response_mime_type": "application/json"}
     )
     
@@ -62,5 +68,5 @@ def analyze_sentiment(news_text: str) -> dict:
         result = json.loads(response.text)
         return result
     except Exception as e:
-        print(f"AI Analysis error: {e}")
+        logging.exception("AI Analysis error")
         return {"decision": "HOLD", "risk_score": 100, "reason": "Error during AI analysis."}

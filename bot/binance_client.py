@@ -1,7 +1,9 @@
 import os
+import math
 import pandas as pd
+import logging
 from binance.client import Client
-from binance.enums import *
+from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,8 +41,28 @@ def get_live_asset_balance(asset: str) -> float | None:
         balance = client.get_asset_balance(asset=asset)
         return float(balance['free']) if balance else 0.0
     except Exception as e:
-        print(f"Error fetching balance for {asset}: {e}")
+        logging.exception(f"Error fetching balance for {asset}")
         return None
+
+STEP_SIZE_CACHE = {}
+
+def get_step_size(symbol: str) -> float:
+    if symbol in STEP_SIZE_CACHE:
+        return STEP_SIZE_CACHE[symbol]
+    try:
+        info = client.get_symbol_info(symbol)
+        for f in info['filters']:
+            if f['filterType'] == 'LOT_SIZE':
+                step_size = float(f['stepSize'])
+                STEP_SIZE_CACHE[symbol] = step_size
+                return step_size
+    except Exception as e:
+        logging.exception(f"Error fetching step size for {symbol}")
+    return 0.00001 # safe fallback
+
+def round_step_size(quantity: float, step_size: float) -> float:
+    precision = int(round(-math.log(step_size, 10), 0))
+    return math.floor(quantity * (10**precision)) / (10**precision)
 
 def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool = True):
     """
@@ -61,10 +83,13 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     
     # Live execution
     binance_side = SIDE_BUY if side.upper() == 'BUY' else SIDE_SELL
+    step_size = get_step_size(symbol)
+    rounded_quantity = round_step_size(quantity, step_size)
+    
     order = client.create_order(
         symbol=symbol,
         side=binance_side,
         type=ORDER_TYPE_MARKET,
-        quantity=quantity
+        quantity=rounded_quantity
     )
     return order

@@ -1,0 +1,3 @@
+python -m uvicorn api.server:app
+
+python -m bot.main

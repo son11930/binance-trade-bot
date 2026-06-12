@@ -1,15 +1,14 @@
 import os
 import json
 import time
-import tempfile
-import shutil
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from .binance_client import get_historical_klines, place_market_order, get_current_price, get_live_asset_balance
 from .strategy import apply_indicators, analyze_market
 from .ai_engine import fetch_crypto_news, analyze_sentiment
-from .database import SessionLocal, Trade, get_last_buy_price
+from .database import TradeRepository
 
 load_dotenv()
 
@@ -65,7 +64,7 @@ def sync_state_with_binance():
             current_positions[symbol] = real_bal
             if buy_prices[symbol] == 0.0:
                 # Recover buy price from DB
-                db_price = get_last_buy_price(symbol)
+                db_price = TradeRepository.get_last_buy_price(symbol)
                 if db_price > 0:
                     buy_prices[symbol] = db_price
                 else:
@@ -79,15 +78,13 @@ def update_bot_state(status_msg, thinking=False, symbol="System"):
         "is_thinking": thinking,
         "symbol_active": symbol,
         "live_usdt": live_usdt_balance,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat()
     }
     try:
-        with tempfile.NamedTemporaryFile("w", delete=False, dir=".", encoding="utf-8") as f:
+        with open("tmp/bot_state.json", "w", encoding="utf-8") as f:
             json.dump(state, f)
-            temp_name = f.name
-        os.replace(temp_name, "bot_state.json")
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"⚠️ Failed to write bot_state.json: {e}")
+    except Exception as e:
+        logging.exception(f"⚠️ Failed to write bot_state.json: {e}")
 
 def check_stop_loss(symbol, current_price):
     pos = current_positions[symbol]
@@ -100,6 +97,15 @@ def check_stop_loss(symbol, current_price):
 
 def run_bot_cycle():
     sync_state_with_binance()
+    
+    # Pre-calculate holding value to avoid O(N^2) API calls
+    current_holding_value = 0.0
+    for sym, pos in current_positions.items():
+        if pos > 0:
+            try:
+                current_holding_value += pos * get_current_price(sym)
+            except Exception:
+                current_holding_value += pos * buy_prices[sym]
     
     for symbol in SYMBOLS:
         try:
@@ -122,7 +128,7 @@ def run_bot_cycle():
 
             # Enforce Cooldown
             ltt = last_trade_times[symbol]
-            if ltt and datetime.utcnow() - ltt < timedelta(minutes=COOLDOWN_MINUTES):
+            if ltt and datetime.now(timezone.utc) - ltt < timedelta(minutes=COOLDOWN_MINUTES):
                 continue
 
             if signal == "BUY" and current_positions[symbol] == 0:
@@ -153,8 +159,7 @@ def run_bot_cycle():
                             print(f"⚠️ Insufficient Binance USDT to buy {symbol}")
                             continue
                             
-                        holding_value = sum([pos * get_current_price(sym) for sym, pos in current_positions.items() if pos > 0])
-                        total_equity = live_usdt_balance + holding_value
+                        total_equity = live_usdt_balance + current_holding_value
                         
                         trade_amount = total_equity / 5.0 # 5 Tranches
                         
@@ -168,7 +173,7 @@ def run_bot_cycle():
                     execute_trade(symbol, "BUY", qty, current_price, reason=reason, ai_risk=risk_score)
                     current_positions[symbol] = qty
                     buy_prices[symbol] = current_price
-                    last_trade_times[symbol] = datetime.utcnow()
+                    last_trade_times[symbol] = datetime.now(timezone.utc)
                 else:
                     print(f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
                     
@@ -176,10 +181,10 @@ def run_bot_cycle():
                 print(f"📉 SELL Signal for {symbol}. Executing...")
                 execute_trade(symbol, "SELL", current_positions[symbol], current_price, reason="MACD Death Cross")
                 current_positions[symbol] = 0.0
-                last_trade_times[symbol] = datetime.utcnow()
+                last_trade_times[symbol] = datetime.now(timezone.utc)
                 
         except Exception as e:
-            print(f"❌ Error processing {symbol}: {e}")
+            logging.exception(f"❌ Error processing {symbol}")
             continue
             
     update_bot_state("Cycle complete. Waiting...", symbol="All")
@@ -188,28 +193,14 @@ def execute_trade(symbol: str, side: str, qty: float, price: float, reason: str 
     try:
         place_market_order(symbol, side, qty, is_paper=PAPER_TRADING)
     except Exception as e:
-        print(f"⚠️ Exchange Execution Failed: {e}")
+        logging.exception(f"⚠️ Exchange Execution Failed for {symbol}")
         return # Do not log trade if it failed on exchange
         
-    db = SessionLocal()
-    try:
-        trade = Trade(
-            symbol=symbol,
-            side=side,
-            price=price,
-            quantity=qty,
-            ai_risk_score=ai_risk,
-            ai_reasoning=reason,
-            paper_trade=PAPER_TRADING
-        )
-        db.add(trade)
-        db.commit()
+    trade = TradeRepository.create_trade(symbol, side, price, qty, ai_risk, reason, PAPER_TRADING)
+    if trade:
         print(f"✅ Trade logged: {side} {qty} {symbol} at {price}")
-    except Exception as e:
-        db.rollback()
-        print(f"⚠️ Failed to save trade to database: {e}")
-    finally:
-        db.close()
+    else:
+        print(f"⚠️ Failed to save trade to database for {symbol}")
 
 if __name__ == "__main__":
     print("Starting Multi-Coin MACD Trading Bot Loop...")

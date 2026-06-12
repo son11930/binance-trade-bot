@@ -1,21 +1,42 @@
-# Project Plan: Debug UI & Bot Logging System
+# Project Plan: Binance Trading Bot Enhancements
 
-## Goal
-Implement a real-time Debug UI on the web dashboard to monitor the trading bot's actions, errors, and Binance rejections.
-
-## Architecture
-Since `bot/main.py` (the trading engine) and `api/server.py` (the dashboard backend) run in separate processes, we will use the shared SQLite database (`trades.db`) as the communication bridge.
-- **Bot**: Will log events (INFO, WARNING, ERROR) to a new `system_logs` table.
-- **API Server**: Will continuously poll the `system_logs` table and broadcast new entries to the frontend via WebSockets.
-- **Frontend**: Will display these logs in a dedicated "System Debug Log" terminal-like panel.
+## Goals
+1. **Fee Calculation**: Extract exact trading fees and execution prices directly from Binance API `fills`.
+2. **Timezone Fix**: Correct the 7-hour discrepancy caused by SQLite stripping timezone info from UTC timestamps.
+3. **PNL Tracking**: Calculate Profit and Loss (PNL) in both USD amount and percentage for all SELL trades. Maintain a cumulative profit record.
+4. **Win/Loss Stats**: Calculate and display Win Rate percentage and Win/Loss counts.
+5. **UI Improvements**: Fix the CSS truncation on the "AI Reasoning" text so it is fully readable, and display the new PNL/Stats data.
+6. **Manual Sells**: Detect manual sells on Binance and log them in the database during the sync cycle so the UI stays up-to-date.
 
 ## Phases
-1. **Data Layer**: Extend `bot/database.py` with a `SystemLog` table and a helper repository.
-2. **Bot Logging**: Route `print()` and `logging.error()` statements in `main.py` and `binance_client.py` to the database.
-3. **API Broadcasting**: Extend `api/server.py`'s background broadcaster to stream new logs to connected WebSocket clients.
-4. **UI Integration**: Add the Debug panel to `dashboard/index.html`.
 
-## Constraints & Rules
-- Minimal performance overhead: Logs should be fetched efficiently (LIMIT 100).
-- Robust error handling: DB insertions must not crash the bot.
-- Real-time updates: Must use the existing WebSocket connection.
+### Phase 1: Database Schema Updates [x]
+- **Target**: `bot/database.py` and existing `trades.db`
+- Add new columns to the `trades` table:
+  - `fee` (Float, nullable)
+  - `fee_asset` (String, nullable)
+  - `pnl_amount` (Float, nullable)
+  - `pnl_percent` (Float, nullable)
+- Update `TradeRepository.create_trade` to accept and save these new fields.
+
+### Phase 2: Bot Core Execution Logic [x]
+- **Target**: `bot/binance_client.py` and `bot/main.py`
+- Modify `place_market_order` to parse the `fills` array from Binance. Calculate the true average fill price, total executed quantity, and total commission/fee.
+- Modify `execute_trade` to:
+  - Receive the enhanced execution data.
+  - Calculate PNL for SELL orders by comparing the actual sell price against the average buy price stored in state (`buy_prices[symbol]`).
+- In `sync_state_with_binance`, when a manual sell is detected (balance drops to zero), log it directly to the database using `TradeRepository.create_trade` with a custom "Manual SELL" reason, allowing the UI to reflect it.
+
+### Phase 3: API & Server Adjustments [x]
+- **Target**: `api/server.py`
+- **Timezone Fix**: When serializing `t.timestamp`, explicitly append `tzinfo=timezone.utc` to the naive SQLite datetime before calling `.isoformat()`. This ensures the browser parses it as UTC and converts it to the user's local timezone (+7 hours).
+- **Stats Calculation**: Create a new function `get_trade_stats(db)` to aggregate cumulative PNL, total wins, total losses, and win rate.
+- Include these stats in the periodic WebSocket broadcasts (`status_update` or a new `stats_update`).
+- Update `TradeSchema` to include the new DB fields.
+
+### Phase 4: Dashboard UI Enhancements [x]
+- **Target**: `dashboard/index.html`
+- **CSS Fix**: Remove the `truncate` and `max-w-md` classes from the AI Reasoning column, replacing them with `whitespace-normal break-words max-w-xs` to allow multi-line reading.
+- **PNL Display**: Add columns to the trade history table to show Fee and PNL (Amount & %).
+- **Stats Header**: Add a top-level stats bar showing the Win Rate, Win/Loss count, and Cumulative Profit.
+- Parse the UTC timestamps correctly to display the user's local time.

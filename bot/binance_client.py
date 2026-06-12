@@ -1,7 +1,6 @@
 import os
 import math
 import pandas as pd
-import logging
 from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 from dotenv import load_dotenv
@@ -84,7 +83,11 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
             "executedQty": quantity, 
             "side": side, 
             "symbol": symbol, 
-            "type": "MARKET"
+            "type": "MARKET",
+            "parsed_avg_price": price,
+            "parsed_exec_qty": quantity,
+            "parsed_commission": 0.0,
+            "parsed_commission_asset": "USDT"
         }
     
     # Live execution
@@ -98,4 +101,34 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
         type=ORDER_TYPE_MARKET,
         quantity=rounded_quantity
     )
+
+    fills = order.get('fills', [])
+    total_qty = 0.0
+    total_quote = 0.0
+    total_commission = 0.0
+    commission_asset = None
+    
+    for fill in fills:
+        p = float(fill['price'])
+        q = float(fill['qty'])
+        c = float(fill['commission'])
+        ca = fill['commissionAsset']
+        
+        total_qty += q
+        total_quote += p * q
+        total_commission += c
+        if not commission_asset:
+            commission_asset = ca
+            
+    avg_price = total_quote / total_qty if total_qty > 0 else 0.0
+    if avg_price == 0.0 and 'price' in order:
+        avg_price = float(order['price'])
+        
+    exec_qty = total_qty if total_qty > 0 else float(order.get('executedQty', rounded_quantity))
+    
+    order['parsed_avg_price'] = avg_price
+    order['parsed_exec_qty'] = exec_qty
+    order['parsed_commission'] = total_commission
+    order['parsed_commission_asset'] = commission_asset
+
     return order

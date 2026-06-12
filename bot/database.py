@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -21,6 +20,10 @@ class Trade(Base):
     ai_risk_score = Column(Float, nullable=True)
     ai_reasoning = Column(String, nullable=True)
     paper_trade = Column(Boolean, default=True)
+    fee = Column(Float, nullable=True)
+    fee_asset = Column(String, nullable=True)
+    pnl_amount = Column(Float, nullable=True)
+    pnl_percent = Column(Float, nullable=True)
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
@@ -45,18 +48,18 @@ class TradeRepository:
     def get_last_buy_price(symbol: str) -> float:
         db = SessionLocal()
         try:
-            trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.side == 'BUY').order_by(Trade.timestamp.desc()).first()
-            if trade:
+            trade = db.query(Trade).filter(Trade.symbol == symbol).order_by(Trade.timestamp.desc()).first()
+            if trade and trade.side == 'BUY':
                 return trade.price
             return 0.0
-        except Exception as e:
+        except Exception:
             logging.exception(f"Error fetching last buy price for {symbol}")
             return 0.0
         finally:
             db.close()
 
     @staticmethod
-    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True):
+    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True, fee: float = None, fee_asset: str = None, pnl_amount: float = None, pnl_percent: float = None):
         db = SessionLocal()
         try:
             trade = Trade(
@@ -66,13 +69,17 @@ class TradeRepository:
                 quantity=quantity,
                 ai_risk_score=risk_score,
                 ai_reasoning=reason,
-                paper_trade=is_paper
+                paper_trade=is_paper,
+                fee=fee,
+                fee_asset=fee_asset,
+                pnl_amount=pnl_amount,
+                pnl_percent=pnl_percent
             )
             db.add(trade)
             db.commit()
             db.refresh(trade)
             return trade
-        except Exception as e:
+        except Exception:
             logging.exception(f"Error creating trade for {symbol}")
             db.rollback()
             return None

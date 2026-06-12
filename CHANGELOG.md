@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.2.0] - 2026-06-12
+### Features & Analytics (สถิติและข้อมูลการเทรด)
+**English:**
+- Implemented real-time Fee and execution price extraction from Binance `fills`.
+- Added cumulative PNL (Profit & Loss) amount and percentage calculation for each SELL trade.
+- Added live Win Rate and Win/Loss counter to the Dashboard UI.
+- Fixed timezone offset display bug on the frontend (added UTC timezone info).
+- Fixed CSS truncation on the AI Reasoning text to allow multi-line reading.
+- Added sync logic to detect and log manual sells from Binance into the Database.
+
+**Thai (ภาษาไทย):**
+- ดึงข้อมูลค่าธรรมเนียม (Fee) และราคาซื้อขายจริงระดับจุดทศนิยมจากบิลของ Binance โดยตรง
+- เพิ่มระบบคำนวณกำไร/ขาดทุน (PNL) เป็นตัวเงินและเปอร์เซ็นต์ทุกครั้งที่มีการกดขาย
+- เพิ่มการแสดงผล Win Rate และจำนวนครั้งที่ชนะ/แพ้ บนหน้าจอ Dashboard หลัก
+- แก้ปัญหาเวลาโชว์ช้าไป 7 ชั่วโมงให้ตรงกับเวลาจริงในไทย
+- แก้ไขปัญหาข้อความ AI เหตุผลการเทรดโดนตัดตกขอบ ให้อ่านได้เต็มบรรทัด
+- ระบบดักจับการขายเหรียญด้วยตัวเอง (Manual Sell): หากเราชิงกดขายเหรียญทิ้งเอง บอทจะรู้ตัวและบันทึกประวัติลงฐานข้อมูลให้หน้าเว็บอัปเดตทันที
+
 ## [3.1.0] - 2026-06-12
 ### Debugging & Observability (ระบบแสดงผลข้อผิดพลาด)
 **English:**

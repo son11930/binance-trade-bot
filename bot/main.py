@@ -1,7 +1,6 @@
 import os
 import json
 import time
-import logging
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
@@ -61,6 +60,14 @@ def sync_state_with_binance():
         if real_bal * current_price < 2.0:
             if current_positions[symbol] > 0:
                 log_msg("WARNING", f"⚠️ Detected manual SELL for {symbol}. Syncing state.")
+                bp = buy_prices[symbol]
+                qty = current_positions[symbol]
+                pnl_amount = (current_price - bp) * qty if bp > 0 else None
+                pnl_percent = (current_price - bp) / bp * 100.0 if bp > 0 else None
+                TradeRepository.create_trade(
+                    symbol, "SELL", current_price, qty, None, "Manual SELL", PAPER_TRADING,
+                    0.0, "USDT", pnl_amount, pnl_percent
+                )
             current_positions[symbol] = 0.0
             buy_prices[symbol] = 0.0
         else:
@@ -85,6 +92,7 @@ def update_bot_state(status_msg, thinking=False, symbol="System"):
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     try:
+        os.makedirs("tmp", exist_ok=True)
         with open("tmp/bot_state.json", "w", encoding="utf-8") as f:
             json.dump(state, f)
     except Exception as e:
@@ -167,6 +175,9 @@ def run_bot_cycle():
                         
                         trade_amount = total_equity / 5.0 # 5 Tranches
                         
+                        if trade_amount < 10.0:
+                            trade_amount = 10.0
+                            
                         if trade_amount > live_usdt_balance:
                             trade_amount = live_usdt_balance
                             
@@ -195,14 +206,29 @@ def run_bot_cycle():
 
 def execute_trade(symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None):
     try:
-        place_market_order(symbol, side, qty, is_paper=PAPER_TRADING)
+        order = place_market_order(symbol, side, qty, is_paper=PAPER_TRADING)
+        avg_price = order.get('parsed_avg_price', price)
+        exec_qty = order.get('parsed_exec_qty', qty)
+        commission = order.get('parsed_commission', 0.0)
+        commission_asset = order.get('parsed_commission_asset', 'USDT')
     except Exception as e:
         log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {e}")
         return # Do not log trade if it failed on exchange
         
-    trade = TradeRepository.create_trade(symbol, side, price, qty, ai_risk, reason, PAPER_TRADING)
+    pnl_amount = None
+    pnl_percent = None
+    if side == "SELL":
+        bp = buy_prices[symbol]
+        if bp > 0:
+            pnl_amount = (avg_price - bp) * exec_qty
+            pnl_percent = (avg_price - bp) / bp * 100.0
+            
+    trade = TradeRepository.create_trade(
+        symbol, side, avg_price, exec_qty, ai_risk, reason, PAPER_TRADING,
+        commission, commission_asset, pnl_amount, pnl_percent
+    )
     if trade:
-        log_msg("INFO", f"✅ Trade logged: {side} {qty} {symbol} at {price}")
+        log_msg("INFO", f"✅ Trade logged: {side} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})")
     else:
         log_msg("ERROR", f"⚠️ Failed to save trade to database for {symbol}")
 

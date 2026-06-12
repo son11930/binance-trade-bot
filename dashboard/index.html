@@ -123,7 +123,7 @@
             </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div class="glass-card p-6 rounded-2xl">
                 <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>
                 <p class="text-lg font-bold text-white mt-2 leading-tight" id="symbol-display">Loading...</p>
@@ -145,6 +145,15 @@
                     <p class="text-sm text-slate-400 mb-1" id="last-risk">Risk: --</p>
                 </div>
             </div>
+
+            <div class="glass-card p-6 rounded-2xl">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Win Rate / PNL</h3>
+                <div class="flex items-end justify-between">
+                    <p class="text-3xl font-extrabold text-white" id="win-rate">--%</p>
+                    <p class="text-sm font-bold" id="cumulative-pnl">$0.00</p>
+                </div>
+                <p class="text-xs text-slate-400 mt-1" id="win-loss-count">0W - 0L</p>
+            </div>
         </div>
 
         <div class="glass-card rounded-2xl overflow-hidden">
@@ -159,6 +168,8 @@
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Action</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Price</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Fee</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-center">AI Risk</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Intelligence Reason</th>
                         </tr>
@@ -217,6 +228,8 @@
                     updateTrades(message.data);
                 } else if (message.type === "logs_update") {
                     updateLogs(message.data);
+                } else if (message.type === "stats_update") {
+                    updateStats(message.data);
                 }
             };
 
@@ -342,13 +355,18 @@
                 const safeReasoning = escapeHTML(trade.ai_reasoning || '--');
                 const safeSide = escapeHTML(trade.side);
                 
+                const feeStr = (trade.fee !== null && trade.fee !== undefined) ? `${trade.fee.toFixed(4)} ${trade.fee_asset || ''}` : '--';
+                const pnlStr = trade.pnl_amount !== null ? `<span class="${trade.pnl_amount >= 0 ? 'text-neonGreen' : 'text-neonRed'}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
+                
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
                     <td class="p-4 font-extrabold tracking-wider ${sideClass}">${safeSide} <span class="text-white text-xs ml-1">${safeSymbol}</span></td>
                     <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
                     <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
+                    <td class="p-4 text-sm font-mono text-slate-400 text-right">${feeStr}</td>
+                    <td class="p-4 text-sm font-mono text-right">${pnlStr}</td>
                     <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
-                    <td class="p-4 text-sm text-slate-400 max-w-md truncate" title="${safeReasoning}">${safeReasoning}</td>
+                    <td class="p-4 text-sm text-slate-400 whitespace-normal break-words max-w-xs" title="${safeReasoning}">${safeReasoning}</td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -379,7 +397,16 @@
                 container.appendChild(div);
             });
             
+            
             container.scrollTop = container.scrollHeight;
+        }
+
+        function updateStats(data) {
+            document.getElementById('win-rate').innerText = `${data.win_rate.toFixed(1)}%`;
+            document.getElementById('win-loss-count').innerText = `${data.wins}W - ${data.losses}L`;
+            const pnlEl = document.getElementById('cumulative-pnl');
+            pnlEl.innerText = `$${data.cumulative_pnl.toFixed(2)}`;
+            pnlEl.className = data.cumulative_pnl >= 0 ? 'text-sm font-bold text-neonGreen' : 'text-sm font-bold text-neonRed';
         }
     </script>
 </body>

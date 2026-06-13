@@ -20,6 +20,14 @@ echo ""
 # Export environment variables if needed
 # source .env
 
+# Activate virtual environment if it exists (Linux/Mac)
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+# Activate virtual environment if it exists (Windows Git Bash)
+elif [ -f "venv/Scripts/activate" ]; then
+    source venv/Scripts/activate
+fi
+
 echo "[1/2] Starting API Web Server in background..."
 python3 -m uvicorn api.server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!

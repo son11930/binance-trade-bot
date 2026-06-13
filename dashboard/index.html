@@ -147,10 +147,21 @@
             </div>
 
             <div class="glass-card p-6 rounded-2xl">
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Win Rate / PNL</h3>
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Win Rate / PNL</h3>
+                    <select id="pnl-timeframe" class="bg-slate-800 text-xs text-white border border-slate-700 rounded px-2 py-1 outline-none">
+                        <option value="1D">1 Day</option>
+                        <option value="7D">7 Days</option>
+                        <option value="1M">1 Month</option>
+                        <option value="ALL" selected>All-Time</option>
+                    </select>
+                </div>
                 <div class="flex items-end justify-between">
                     <p class="text-3xl font-extrabold text-white" id="win-rate">--%</p>
-                    <p class="text-sm font-bold" id="cumulative-pnl">$0.00</p>
+                    <div class="text-right">
+                        <p class="text-sm font-bold" id="cumulative-pnl">$0.00</p>
+                        <p class="text-xs font-bold" id="pnl-percent">0.00%</p>
+                    </div>
                 </div>
                 <p class="text-xs text-slate-400 mt-1" id="win-loss-count">0W - 0L</p>
             </div>
@@ -452,12 +463,33 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        function updateStats(data) {
+        let globalStatsData = null;
+        let selectedTimeframe = "ALL";
+
+        document.getElementById('pnl-timeframe').addEventListener('change', (e) => {
+            selectedTimeframe = e.target.value;
+            if(globalStatsData) renderStats();
+        });
+
+        function renderStats() {
+            if(!globalStatsData || !globalStatsData[selectedTimeframe]) return;
+            const data = globalStatsData[selectedTimeframe];
             document.getElementById('win-rate').innerText = `${data.win_rate.toFixed(1)}%`;
             document.getElementById('win-loss-count').innerText = `${data.wins}W - ${data.losses}L`;
+            
             const pnlEl = document.getElementById('cumulative-pnl');
-            pnlEl.innerText = `$${data.cumulative_pnl.toFixed(2)}`;
+            pnlEl.innerText = `${data.cumulative_pnl >= 0 ? '+' : ''}$${data.cumulative_pnl.toFixed(2)}`;
             pnlEl.className = data.cumulative_pnl >= 0 ? 'text-sm font-bold text-neonGreen' : 'text-sm font-bold text-neonRed';
+            
+            const pctEl = document.getElementById('pnl-percent');
+            pctEl.innerText = `${data.pnl_percent >= 0 ? '+' : ''}${data.pnl_percent.toFixed(2)}%`;
+            pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen' : 'text-xs font-bold text-neonRed';
+        }
+
+        function updateStats(data) {
+            // Data is now a dict with keys 1D, 7D, 1M, ALL
+            globalStatsData = data;
+            renderStats();
         }
     </script>
 </body>

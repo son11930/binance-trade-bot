@@ -56,7 +56,7 @@
    ```env
    # Binance API Keys
    BINANCE_API_KEY=ใส่_api_key_ของคุณตรงนี้
-   BINANCE_API_SECRET=ใส่_api_secret_ของคุณตรงนี้
+   BINANCE_SECRET_KEY=ใส่_api_secret_ของคุณตรงนี้
 
    # Gemini AI API Key
    GEMINI_API_KEY=ใส่_gemini_key_ของคุณตรงนี้

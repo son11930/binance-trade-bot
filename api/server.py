@@ -3,9 +3,9 @@ import hashlib
 import asyncio
 import logging
 import secrets
-from datetime import timezone
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket
+from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,26 +56,67 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-def get_trade_stats(db: Session):
-    trades = db.query(Trade).filter(Trade.side == 'SELL').all()
+def calculate_stats_for_trades(trades):
     cumulative_pnl = 0.0
     wins = 0
     losses = 0
     total_closed = 0
+    cumulative_capital = 0.0
     for t in trades:
         if t.pnl_amount is not None:
             cumulative_pnl += t.pnl_amount
+            sell_value = t.price * t.quantity
+            capital_used = sell_value - t.pnl_amount
+            if capital_used > 0:
+                cumulative_capital += capital_used
+            
             if t.pnl_amount > 0:
                 wins += 1
             elif t.pnl_amount < 0:
                 losses += 1
             total_closed += 1
+            
     win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
+    pnl_percent = (cumulative_pnl / cumulative_capital * 100) if cumulative_capital > 0 else 0.0
     return {
         "cumulative_pnl": cumulative_pnl,
+        "pnl_percent": pnl_percent,
         "wins": wins,
         "losses": losses,
         "win_rate": win_rate
+    }
+
+def get_trade_stats(db: Session):
+    all_trades = db.query(Trade).filter(Trade.side == 'SELL').all()
+    
+    now = datetime.now(timezone.utc)
+    
+    def get_time(t):
+        if isinstance(t.timestamp, str):
+            from datetime import datetime as dt
+            return dt.fromisoformat(t.timestamp.replace("Z", "+00:00")).replace(tzinfo=timezone.utc)
+        if t.timestamp.tzinfo is not None and t.timestamp.tzinfo.utcoffset(t.timestamp) is not None:
+            return t.timestamp
+        return t.timestamp.replace(tzinfo=timezone.utc)
+
+    trades_1d = []
+    trades_7d = []
+    trades_1m = []
+    
+    for t in all_trades:
+        t_time = get_time(t)
+        if t_time >= now - timedelta(days=1):
+            trades_1d.append(t)
+        if t_time >= now - timedelta(days=7):
+            trades_7d.append(t)
+        if t_time >= now - timedelta(days=30):
+            trades_1m.append(t)
+    
+    return {
+        "1D": calculate_stats_for_trades(trades_1d),
+        "7D": calculate_stats_for_trades(trades_7d),
+        "1M": calculate_stats_for_trades(trades_1m),
+        "ALL": calculate_stats_for_trades(all_trades)
     }
 
 def format_trade(t):
@@ -196,9 +237,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.receive_text()
         else:
             await websocket.close(code=1008)
+    except (WebSocketDisconnect, asyncio.exceptions.CancelledError):
+        manager.disconnect(websocket)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         manager.disconnect(websocket)
         
 app.mount("/", StaticFiles(directory="dashboard", html=True), name="dashboard")

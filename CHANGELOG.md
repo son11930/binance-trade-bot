@@ -1,3 +1,15 @@
+﻿## [3.6.0] - 2026-06-13
+### Added
+- Implemented Time-Filtered PNL dashboard with 1D, 7D, 1M, and ALL options.
+- Added Profit Percentage metric calculated dynamically against total capital used per timeframe.
+### Security & Review
+- Applied code-reviewer fixes to avoid AttributeError parsing timestamps and optimized loop passes.
+
+## [3.5.0] - 2026-06-13
+### Added
+- Implemented robust AI Model Fallback mechanism in `bot/ai_engine.py` using `gemini-3.5-flash`, `gemini-3.1-flash-lite`, and `gemini-3.0-flash` to prevent rate limit crashes.
+- Added prompt injection sanitization and API key masking in AI engine logs.
+
 # Changelog
 
 ## [3.4.0] - 2026-06-13

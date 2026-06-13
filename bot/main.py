@@ -262,7 +262,8 @@ def run_bot_cycle():
                         highest_prices[symbol] = current_price
                         last_trade_times[symbol] = datetime.now(timezone.utc)
                 else:
-                    log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}).")
+                    log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}). Applying cooldown.")
+                    last_trade_times[symbol] = datetime.now(timezone.utc)
                     
             elif signal == "SELL" and current_positions[symbol] > 0:
                 log_msg("INFO", f"📉 SELL Signal for {symbol}. Executing...")
@@ -276,6 +277,8 @@ def run_bot_cycle():
                 
         except Exception as e:
             log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
+            # Apply a 5-minute soft cooldown on error to prevent API spam loops
+            last_trade_times[symbol] = datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES) + timedelta(minutes=5)
             continue
             
     update_bot_state("Cycle complete. Waiting...", symbol="All")

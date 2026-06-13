@@ -10,3 +10,4 @@ requests
 PyJWT
 bcrypt
 ta
+defusedxml

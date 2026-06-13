@@ -31,7 +31,7 @@ if not USER or not PASS or not SECRET_SALT:
     raise ValueError("CRITICAL SECURITY ERROR: DASHBOARD_USER, DASHBOARD_PASS, and DASHBOARD_SECRET_SALT must be set in .env")
 
 AUTH_TOKEN = hashlib.sha256(f"{USER}:{PASS}:{SECRET_SALT}".encode()).hexdigest()
-WEBHOOK_TOKEN = hashlib.sha256(f"{USER}:{PASS}:{SECRET_SALT}_webhook".encode()).hexdigest()
+WEBHOOK_TOKEN = hashlib.sha256(f"{USER}:{SECRET_SALT}_webhook".encode()).hexdigest()
 
 @dataclass(frozen=True)
 class SymbolState:

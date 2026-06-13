@@ -1,6 +1,6 @@
 python-binance
 pandas
-google-generativeai
+google-genai
 fastapi
 uvicorn
 websockets

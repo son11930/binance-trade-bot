@@ -1,10 +1,92 @@
+import os
+import urllib.parse
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
 import logging
 
-DATABASE_URL = "sqlite:///./trades.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+def sanitize_text(text: str) -> str:
+    if not text:
+        return text
+    text_str = str(text)
+    
+    secrets = [
+        ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
+        ("BINANCE_API_KEY", os.getenv("BINANCE_API_KEY")),
+        ("BINANCE_API_SECRET", os.getenv("BINANCE_API_SECRET")),
+        ("BINANCE_SECRET_KEY", os.getenv("BINANCE_SECRET_KEY")),
+        ("DASHBOARD_USER", os.getenv("DASHBOARD_USER")),
+        ("DASHBOARD_PASS", os.getenv("DASHBOARD_PASS")),
+        ("DASHBOARD_SECRET_SALT", os.getenv("DASHBOARD_SECRET_SALT"))
+    ]
+    
+    # Generate AUTH_TOKEN
+    user = os.getenv("DASHBOARD_USER", "")
+    pwd = os.getenv("DASHBOARD_PASS", "")
+    salt = os.getenv("DASHBOARD_SECRET_SALT", "")
+    if user and pwd and salt:
+        import hashlib
+        auth_token = hashlib.sha256(f"{user}:{pwd}:{salt}".encode()).hexdigest()
+        webhook_token = hashlib.sha256(f"{user}:{pwd}:{salt}_webhook".encode()).hexdigest()
+        secrets.append(("AUTH_TOKEN", auth_token))
+        secrets.append(("WEBHOOK_TOKEN", webhook_token))
+    
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        secrets.append(("DATABASE_URL", db_url))
+        if "://" in db_url and "@" in db_url:
+            try:
+                parsed = urllib.parse.urlparse(db_url)
+                if parsed.password:
+                    secrets.append(("DB_PASS", parsed.password))
+                if parsed.hostname:
+                    secrets.append(("DB_HOST", parsed.hostname))
+            except Exception:
+                pass
+                
+    for name, val in secrets:
+        if val and len(val) > 3:
+            text_str = text_str.replace(val, f"***MASKED_{name}***")
+            text_str = text_str.replace(urllib.parse.quote(val), f"***MASKED_{name}***")
+            
+    return text_str
+
+class SanitizedFormatter(logging.Formatter):
+    def format(self, record):
+        original_msg = super().format(record)
+        return sanitize_text(original_msg)
+
+def setup_logging():
+    formatter = SanitizedFormatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        handler = logging.StreamHandler()
+        root_logger.addHandler(handler)
+        
+    for handler in root_logger.handlers:
+        handler.setFormatter(formatter)
+        
+    for name, logger_obj in logging.root.manager.loggerDict.items():
+        if isinstance(logger_obj, logging.Logger):
+            for handler in logger_obj.handlers:
+                handler.setFormatter(formatter)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trades.db")
+
+if DATABASE_URL.startswith("postgres"):
+    # PostgreSQL configuration (Supabase/Neon)
+    # pool_pre_ping=True ensures dropped connections are automatically reconnected
+    engine = create_engine(
+        DATABASE_URL, 
+        pool_pre_ping=True, 
+        pool_size=5, 
+        max_overflow=10
+    )
+else:
+    # Local SQLite fallback
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -16,7 +98,8 @@ class Trade(Base):
     side = Column(String)  # BUY or SELL
     price = Column(Float)
     quantity = Column(Float)
-    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # timezone=True is required for PostgreSQL compatibility
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     ai_risk_score = Column(Float, nullable=True)
     ai_reasoning = Column(String, nullable=True)
     paper_trade = Column(Boolean, default=True)
@@ -29,7 +112,7 @@ class SystemLog(Base):
     __tablename__ = "system_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     level = Column(String, index=True) # INFO, WARNING, ERROR
     message = Column(String)
 
@@ -68,7 +151,7 @@ class TradeRepository:
                 price=price,
                 quantity=quantity,
                 ai_risk_score=risk_score,
-                ai_reasoning=reason,
+                ai_reasoning=sanitize_text(reason) if reason else None,
                 paper_trade=is_paper,
                 fee=fee,
                 fee_asset=fee_asset,
@@ -91,7 +174,8 @@ class LogRepository:
     def log_event(level: str, message: str):
         db = SessionLocal()
         try:
-            log_entry = SystemLog(level=level, message=message)
+            safe_message = sanitize_text(message)
+            log_entry = SystemLog(level=level, message=safe_message)
             db.add(log_entry)
             db.commit()
         except Exception:

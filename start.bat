@@ -2,6 +2,19 @@
 title Binance AI System Launcher
 
 echo ===================================================
+echo        Checking for Updates from GitHub...
+echo ===================================================
+git fetch origin main
+git pull origin main
+if %ERRORLEVEL% neq 0 (
+    echo [WARNING] Failed to pull updates. Starting with current version...
+    timeout /t 3 >nul
+) else (
+    echo [OK] System is up to date!
+)
+echo.
+
+echo ===================================================
 echo        Starting Binance AI Trading System...
 echo ===================================================
 echo.

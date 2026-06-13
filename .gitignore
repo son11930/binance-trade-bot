@@ -40,3 +40,10 @@ bot_state.tmp
 tests/
 .coverage
 .pytest_cache/
+
+# Data & Temp files
+*.csv
+tmp/
+scratch/
+command.txt
+tmps*

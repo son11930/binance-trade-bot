@@ -8,11 +8,12 @@ from binance import ThreadedWebsocketManager
 from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
-from .database import LogRepository
+from .database import LogRepository, sanitize_text
 
 def log_msg(level: str, msg: str):
-    print(msg)
-    LogRepository.log_event(level, msg)
+    safe_msg = sanitize_text(msg)
+    print(safe_msg)
+    LogRepository.log_event(level, safe_msg)
 
 load_dotenv()
 
@@ -34,13 +35,44 @@ def get_historical_klines(symbol: str, interval: str, limit: int = 100) -> pd.Da
         'taker_buy_quote_asset_volume', 'ignore'
     ])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume']:
-        df[col] = df[col].astype(float)
+    df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
     return df
 
 def get_current_price(symbol: str) -> float:
     ticker = client.get_symbol_ticker(symbol=symbol)
     return float(ticker['price'])
+
+def analyze_order_book_walls(symbol: str, depth: int = 50) -> dict:
+    """
+    Fetches the order book and finds the largest Bid and Ask walls within the given depth.
+    Returns a dict with 'largest_bid_price', 'largest_bid_qty', 'largest_ask_price', 'largest_ask_qty'
+    """
+    try:
+        order_book = client.get_order_book(symbol=symbol, limit=depth)
+        
+        bids = order_book['bids'] # [price, qty]
+        asks = order_book['asks']
+        
+        total_bid_qty = sum(float(x[1]) for x in bids) if bids else 0.0
+        total_ask_qty = sum(float(x[1]) for x in asks) if asks else 0.0
+        
+        largest_bid = max(bids, key=lambda x: float(x[1])) if bids else [0, 0]
+        largest_ask = max(asks, key=lambda x: float(x[1])) if asks else [0, 0]
+        
+        return {
+            "largest_bid_price": float(largest_bid[0]),
+            "largest_bid_qty": float(largest_bid[1]),
+            "total_bid_qty": total_bid_qty,
+            "largest_ask_price": float(largest_ask[0]),
+            "largest_ask_qty": float(largest_ask[1]),
+            "total_ask_qty": total_ask_qty
+        }
+    except Exception as e:
+        log_msg("ERROR", f"Error fetching order book for {symbol}: {e}")
+        return {
+            "largest_bid_price": 0.0, "largest_bid_qty": 0.0,
+            "largest_ask_price": 0.0, "largest_ask_qty": 0.0
+        }
 
 def get_live_asset_balance(asset: str) -> float | None:
     """
@@ -131,9 +163,10 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
         
     exec_qty = total_qty if total_qty > 0 else float(order.get('executedQty', rounded_quantity))
     
-    order['parsed_avg_price'] = avg_price
-    order['parsed_exec_qty'] = exec_qty
-    order['parsed_commission'] = total_commission
-    order['parsed_commission_asset'] = commission_asset
-
-    return order
+    return {
+        **order,
+        "parsed_avg_price": avg_price,
+        "parsed_exec_qty": exec_qty,
+        "parsed_commission": total_commission,
+        "parsed_commission_asset": commission_asset
+    }

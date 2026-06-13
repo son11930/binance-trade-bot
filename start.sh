@@ -1,6 +1,18 @@
 #!/bin/bash
 
 echo "==================================================="
+echo "       Checking for Updates from GitHub...         "
+echo "==================================================="
+git fetch origin main
+if git pull origin main; then
+    echo "[OK] System is up to date!"
+else
+    echo "[WARNING] Failed to pull updates. Starting with current version..."
+    sleep 3
+fi
+echo ""
+
+echo "==================================================="
 echo "       Starting Binance AI Trading System...       "
 echo "==================================================="
 echo ""

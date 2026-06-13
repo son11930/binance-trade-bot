@@ -42,6 +42,10 @@
         .text-glow { text-shadow: 0 0 12px rgba(57, 255, 20, 0.6); }
         .border-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
         
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+        
         .ai-pulse {
             animation: aiPulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
             will-change: opacity;
@@ -106,20 +110,69 @@
             </div>
         </header>
 
-        <div class="glass-card p-6 rounded-2xl border-glow flex items-center space-x-6 relative overflow-hidden">
-            <div class="absolute inset-0 bg-gradient-to-r from-glowAccent/5 to-transparent pointer-events-none"></div>
-            <div id="ai-icon-container" class="relative">
-                <div id="ai-brain" class="text-5xl drop-shadow-[0_0_15px_rgba(59,130,246,0.5)]">🤖</div>
-                <div id="ai-spinner" class="hidden text-neonCyan ai-pulse">
-                    <svg class="h-12 w-12" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
-                        <path class="opacity-100" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
+        <!-- AI Committee UI -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <!-- Bullish Analyst -->
+            <div class="glass-card p-6 rounded-2xl relative overflow-hidden transition-all duration-500" id="ui-bull-card">
+                <div class="absolute -right-10 -top-10 w-32 h-32 bg-neonGreen/10 rounded-full blur-3xl"></div>
+                <div class="flex items-center space-x-3 mb-4">
+                    <div class="text-3xl drop-shadow-[0_0_10px_rgba(57,255,20,0.5)]">🐂</div>
+                    <div>
+                        <h3 class="text-neonGreen text-xs uppercase tracking-[0.2em] font-bold">Bullish Analyst</h3>
+                        <p class="text-slate-400 text-[10px] tracking-wider uppercase">Momentum & Breakouts</p>
+                    </div>
+                </div>
+                <div class="h-32 overflow-y-auto pr-2 custom-scrollbar">
+                    <p id="ui-bull-text" class="text-sm font-light text-slate-300 leading-relaxed italic">Awaiting market data...</p>
                 </div>
             </div>
-            <div class="flex-1">
-                <h3 class="text-neonCyan text-xs uppercase tracking-[0.2em] font-bold mb-1">Live AI Status</h3>
-                <p id="ai-status-text" class="text-xl md:text-2xl font-light text-slate-200">System initializing...</p>
+
+            <!-- Bearish Manager -->
+            <div class="glass-card p-6 rounded-2xl relative overflow-hidden transition-all duration-500" id="ui-bear-card">
+                <div class="absolute -right-10 -top-10 w-32 h-32 bg-neonRed/10 rounded-full blur-3xl"></div>
+                <div class="flex items-center space-x-3 mb-4">
+                    <div class="text-3xl drop-shadow-[0_0_10px_rgba(255,0,60,0.5)]">🐻</div>
+                    <div>
+                        <h3 class="text-neonRed text-xs uppercase tracking-[0.2em] font-bold">Bearish Risk Manager</h3>
+                        <p class="text-slate-400 text-[10px] tracking-wider uppercase">Divergence & Threats</p>
+                    </div>
+                </div>
+                <div class="h-32 overflow-y-auto pr-2 custom-scrollbar">
+                    <p id="ui-bear-text" class="text-sm font-light text-slate-300 leading-relaxed italic">Awaiting market data...</p>
+                </div>
+            </div>
+
+            <!-- Chief Strategist -->
+            <div class="glass-card p-6 rounded-2xl relative overflow-hidden transition-all duration-500 shadow-[0_0_15px_rgba(0,240,255,0.1)]" id="ui-chief-card">
+                <div class="absolute -right-10 -top-10 w-32 h-32 bg-neonCyan/10 rounded-full blur-3xl"></div>
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="text-3xl drop-shadow-[0_0_10px_rgba(0,240,255,0.5)]" id="ui-chief-brain">🧠</div>
+                        <div>
+                            <h3 class="text-neonCyan text-xs uppercase tracking-[0.2em] font-bold">Chief Strategist</h3>
+                            <p class="text-slate-400 text-[10px] tracking-wider uppercase">Final Verdict & EV</p>
+                        </div>
+                    </div>
+                    <div id="ui-ai-spinner" class="hidden text-neonCyan ai-pulse">
+                        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                            <path class="opacity-100" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </div>
+                </div>
+                <div class="flex flex-col justify-between h-32">
+                    <p id="ui-chief-text" class="text-sm font-light text-slate-200 leading-relaxed overflow-y-auto pr-2 custom-scrollbar">System initializing...</p>
+                    <div class="flex items-end justify-between mt-2 pt-3 border-t border-slate-700/50 shrink-0">
+                        <div>
+                            <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Decision</p>
+                            <p id="ui-chief-decision" class="text-xl font-extrabold tracking-widest text-slate-500">HOLD</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Risk Score</p>
+                            <p id="ui-chief-risk" class="text-2xl font-extrabold text-white">--</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -342,19 +395,43 @@
             }
             
             const aiStatus = data.ai_status || {};
-            const statusTextEl = document.getElementById('ai-status-text');
-            statusTextEl.innerText = aiStatus.status_message || 'Waiting for bot cycle...';
             
             if (aiStatus.is_thinking) {
-                document.getElementById('ai-spinner').classList.remove('hidden');
-                document.getElementById('ai-brain').classList.add('hidden');
-                statusTextEl.classList.add('text-neonCyan', 'ai-pulse');
-                statusTextEl.classList.remove('text-slate-200');
+                document.getElementById('ui-ai-spinner').classList.remove('hidden');
+                document.getElementById('ui-chief-brain').classList.add('hidden');
+                
+                document.getElementById('ui-chief-card').classList.add('border-glow');
+                document.getElementById('ui-bull-card').classList.add('shadow-[0_0_15px_rgba(57,255,20,0.2)]');
+                document.getElementById('ui-bear-card').classList.add('shadow-[0_0_15px_rgba(255,0,60,0.2)]');
+                
+                document.getElementById('ui-bull-text').innerHTML = '<span class="animate-pulse">Analyzing momentum and breakouts...</span>';
+                document.getElementById('ui-bear-text').innerHTML = '<span class="animate-pulse">Checking risks and invalidation levels...</span>';
+                document.getElementById('ui-chief-text').innerHTML = '<span class="animate-pulse">' + escapeHTML(aiStatus.status_message || 'Evaluating...') + '</span>';
             } else {
-                document.getElementById('ai-spinner').classList.add('hidden');
-                document.getElementById('ai-brain').classList.remove('hidden');
-                statusTextEl.classList.remove('text-neonCyan', 'ai-pulse');
-                statusTextEl.classList.add('text-slate-200');
+                document.getElementById('ui-ai-spinner').classList.add('hidden');
+                document.getElementById('ui-chief-brain').classList.remove('hidden');
+                
+                document.getElementById('ui-chief-card').classList.remove('border-glow');
+                document.getElementById('ui-bull-card').classList.remove('shadow-[0_0_15px_rgba(57,255,20,0.2)]');
+                document.getElementById('ui-bear-card').classList.remove('shadow-[0_0_15px_rgba(255,0,60,0.2)]');
+                
+                if (aiStatus.ai_debate) {
+                    const debate = aiStatus.ai_debate;
+                    document.getElementById('ui-bull-text').innerText = debate.bull || 'No data.';
+                    document.getElementById('ui-bear-text').innerText = debate.bear || 'No data.';
+                    document.getElementById('ui-chief-text').innerText = debate.chief_reason || aiStatus.status_message;
+                    
+                    document.getElementById('ui-chief-decision').innerText = debate.decision || 'HOLD';
+                    document.getElementById('ui-chief-risk').innerText = debate.risk_score || '--';
+                    
+                    if (debate.decision === 'BUY') {
+                        document.getElementById('ui-chief-decision').className = 'text-xl font-extrabold tracking-widest text-neonGreen text-glow';
+                    } else {
+                        document.getElementById('ui-chief-decision').className = 'text-xl font-extrabold tracking-widest text-slate-500';
+                    }
+                } else {
+                    document.getElementById('ui-chief-text').innerText = aiStatus.status_message || 'Waiting for bot cycle...';
+                }
             }
             
             const positionsBody = document.getElementById('positions-table-body');
@@ -368,7 +445,7 @@
                     const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen' : (pos.pnl_percent < 0 ? 'text-neonRed' : 'text-slate-300');
                     
                     tr.innerHTML = `
-                        <td class="p-4 font-medium text-slate-200">${pos.symbol}</td>
+                        <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
                         <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
                         <td class="p-4 text-right text-slate-300 font-mono">$${pos.buy_price.toFixed(4)}</td>
                         <td class="p-4 text-right text-slate-300 font-mono">$${pos.current_price.toFixed(4)}</td>

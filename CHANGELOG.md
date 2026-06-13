@@ -1,4 +1,9 @@
-﻿## [3.6.0] - 2026-06-13
+## [3.7.0] - 2026-06-14
+### Added
+- **Auto-Update Mechanism**: Integrated `git fetch` and `git pull origin main` into `start.bat` and `start.sh` to automatically pull the latest code updates before starting the bot.
+- **VPS Deployment Guide**: Added `UBUNTU_VPS_DEPLOYMENT.md` with step-by-step instructions for deploying the bot on an Ubuntu VPS, including Python venv setup and `systemd` background service configuration.
+
+## [3.6.0] - 2026-06-13
 ### Added
 - Implemented Time-Filtered PNL dashboard with 1D, 7D, 1M, and ALL options.
 - Added Profit Percentage metric calculated dynamically against total capital used per timeframe.

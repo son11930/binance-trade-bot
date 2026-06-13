@@ -1,3 +1,18 @@
+## [3.7.1] - 2026-06-14
+### Security & Code Quality Overhaul
+**English:**
+- **Authentication**: Replaced static SHA256 dashboard token with expiring JSON Web Tokens (JWT) for secure authentication.
+- **Passwords**: Updated login system to use `bcrypt` password hashing instead of `.env` plaintext comparisons.
+- **Rate Limit DoS Prevention**: Implemented IP cleanup mechanism to prevent memory leak DoS on login endpoint.
+- **Asynchronous AI Evaluation**: Dispatched the blocking AI Sentiment Analysis to a background thread to prevent WebSocket disconnections during heavy Gemini API processing.
+- **Error Handling**: Fixed silent error swallowing in the crypto news fetch loop.
+
+**Thai (ภาษาไทย):**
+- **ปรับปรุงระบบความปลอดภัย (JWT & Bcrypt)**: เปลี่ยนระบบ Token เป็นแบบ JWT ที่มีวันหมดอายุ และบังคับใช้การเข้ารหัสรหัสผ่านด้วย `bcrypt` แทนการอ่านข้อความธรรมดา
+- **ป้องกันระบบล่ม (Anti-DoS)**: เพิ่มระบบล้างข้อมูล IP เก่าๆ บนหน้า Login ป้องกันคนสแปมจนเซิร์ฟเวอร์แรมเต็ม
+- **แก้ปัญหาหลุดการเชื่อมต่อ (Async Threads)**: แยกส่วนของ AI ออกไปคิดใน Thread เบื้องหลัง เพื่อไม่ให้บล็อกการรับราคาแบบเรียลไทม์จาก Binance (ช่วยแก้ปัญหาบอทหลุด/ค้างบ่อย)
+- **ระบบ Log ที่ดีขึ้น**: เพิ่มการแจ้งเตือน Error ชัดเจนเมื่อระบบดึงข่าวไม่สำเร็จ แทนที่จะข้ามไปเงียบๆ
+
 ## [3.7.0] - 2026-06-14
 ### Added
 - **Auto-Update Mechanism**: Integrated `git fetch` and `git pull origin main` into `start.bat` and `start.sh` to automatically pull the latest code updates before starting the bot.

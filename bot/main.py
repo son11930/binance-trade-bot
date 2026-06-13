@@ -2,6 +2,8 @@ import os
 import time
 import requests
 import hashlib
+import threading
+import pandas as pd
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, replace
 from dotenv import load_dotenv
@@ -134,8 +136,6 @@ def update_bot_state(status_msg, thinking=False, symbol="System", ai_debate: dic
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
-    import threading
-    
     def _send():
         try:
             headers = {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
@@ -220,7 +220,6 @@ def update_kline_buffer(symbol, k):
             float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['v'])
         ]
     elif msg_timestamp > last_timestamp:
-        import pandas as pd
         new_row = pd.DataFrame([{
             'timestamp': msg_timestamp,
             'open': float(k['o']),
@@ -274,6 +273,83 @@ def process_kline_message(msg):
     if is_closed:
         evaluate_strategy_for_symbol(symbol, df, current_price)
 
+def _evaluate_buy_signal(symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, current_holding_value: float):
+    global live_usdt_balance, states
+    try:
+        if strategy_used == "SIDEWAYS_RSI_BB":
+            from .binance_client import analyze_order_book_walls
+            walls = analyze_order_book_walls(symbol)
+            log_msg("INFO", f"Order Book Check for {symbol} - Largest Bid: {walls['largest_bid_price']}, Total Bid Vol: {walls.get('total_bid_qty', 0)}")
+
+        tech_data = {
+            "strategy_used": strategy_used,
+            "adx": adx_val,
+            "rsi": rsi_val
+        }
+        
+        ai_result = analyze_sentiment(latest_news, symbol, tech_data)
+        
+        if not isinstance(ai_result, dict):
+            log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting trade.")
+            return
+            
+        decision = ai_result.get('decision')
+        risk_score = ai_result.get('risk_score')
+        reason = str(ai_result.get('reason', 'No reason provided'))[:255]
+        committee_debate = ai_result.get('committee_debate', {})
+        
+        if risk_score is None or not isinstance(risk_score, (int, float)):
+            risk_score = 100
+            
+        ai_debate_payload = {
+            "symbol": symbol,
+            "strategy": strategy_used,
+            "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
+            "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
+            "chief_reason": sanitize_text(reason),
+            "decision": decision,
+            "risk_score": risk_score
+        }
+            
+        update_bot_state(f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload)
+        
+        state = states[symbol]
+        if decision == "BUY" and risk_score <= 60:
+            log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used}...")
+            
+            total_equity = live_usdt_balance + current_holding_value
+            trade_amount = total_equity * 0.20 # 20% per trade
+            if trade_amount < 10.0: trade_amount = 10.0
+            if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
+            
+            if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
+                log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
+                return
+                
+            safe_trade_amount = trade_amount * 0.999 # 0.1% fee simulation
+            qty = safe_trade_amount / current_price 
+            trade = execute_trade(symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score)
+            if trade:
+                live_usdt_balance -= trade_amount
+
+                states[symbol] = replace(
+                    state, 
+                    position=qty, 
+                    buy_price=current_price, 
+                    highest_price=current_price, 
+                    last_trade_time=datetime.now(timezone.utc),
+                    trade_entry_time=datetime.now(timezone.utc),
+                    active_strategy=strategy_used,
+                    dynamic_sl=sl_target,
+                    dynamic_tp=tp_target,
+                    max_time_in_trade=time_limit
+                )
+        else:
+            log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}). Applying cooldown.")
+            states[symbol] = replace(state, last_trade_time=datetime.now(timezone.utc))
+    except Exception as e:
+        log_msg("ERROR", f"❌ Error in _evaluate_buy_signal for {symbol}: {e}")
+
 def evaluate_strategy_for_symbol(symbol: str, df, current_price: float):
     global live_usdt_balance, states
     try:
@@ -296,77 +372,9 @@ def evaluate_strategy_for_symbol(symbol: str, df, current_price: float):
         if signal == "BUY" and state.position == 0:
             update_bot_state(f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol)
             
-            if strategy_used == "SIDEWAYS_RSI_BB":
-                from .binance_client import analyze_order_book_walls
-                walls = analyze_order_book_walls(symbol)
-                log_msg("INFO", f"Order Book Check for {symbol} - Largest Bid: {walls['largest_bid_price']}, Total Bid Vol: {walls.get('total_bid_qty', 0)}")
-
-            tech_data = {
-                "strategy_used": strategy_used,
-                "adx": df.iloc[-1].get('ADX', 'N/A'),
-                "rsi": df.iloc[-1].get('RSI', 'N/A')
-            }
+            # Dispatch to background thread to prevent blocking websocket
+            threading.Thread(target=_evaluate_buy_signal, args=(symbol, current_price, strategy_used, sl_target, tp_target, time_limit, df.iloc[-1].get('ADX', 'N/A'), df.iloc[-1].get('RSI', 'N/A'), current_holding_value), daemon=True).start()
             
-            ai_result = analyze_sentiment(latest_news, symbol, tech_data)
-            
-            if not isinstance(ai_result, dict):
-                log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting trade.")
-                return
-                
-            decision = ai_result.get('decision')
-            risk_score = ai_result.get('risk_score')
-            reason = str(ai_result.get('reason', 'No reason provided'))[:255]
-            committee_debate = ai_result.get('committee_debate', {})
-            
-            if risk_score is None or not isinstance(risk_score, (int, float)):
-                risk_score = 100
-                
-            ai_debate_payload = {
-                "symbol": symbol,
-                "strategy": strategy_used,
-                "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
-                "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
-                "chief_reason": sanitize_text(reason),
-                "decision": decision,
-                "risk_score": risk_score
-            }
-                
-            update_bot_state(f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload)
-            
-            if decision == "BUY" and risk_score <= 60:
-                log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used}...")
-                
-                total_equity = live_usdt_balance + current_holding_value
-                trade_amount = total_equity * 0.20 # 20% per trade
-                if trade_amount < 10.0: trade_amount = 10.0
-                if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
-                
-                if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
-                    log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
-                    return
-                    
-                safe_trade_amount = trade_amount * 0.999 # 0.1% fee simulation
-                qty = safe_trade_amount / current_price 
-                trade = execute_trade(symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score)
-                if trade:
-                    live_usdt_balance -= trade_amount
-
-                    states[symbol] = replace(
-                        state, 
-                        position=qty, 
-                        buy_price=current_price, 
-                        highest_price=current_price, 
-                        last_trade_time=datetime.now(timezone.utc),
-                        trade_entry_time=datetime.now(timezone.utc),
-                        active_strategy=strategy_used,
-                        dynamic_sl=sl_target,
-                        dynamic_tp=tp_target,
-                        max_time_in_trade=time_limit
-                    )
-            else:
-                log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}). Applying cooldown.")
-                states[symbol] = replace(state, last_trade_time=datetime.now(timezone.utc))
-                
         elif signal == "SELL" and state.position > 0:
             log_msg("INFO", f"📉 SELL Signal for {symbol} via {strategy_used}. Executing...")
             trade = execute_trade(symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}")
@@ -386,8 +394,8 @@ def news_updater_loop():
     while True:
         try:
             latest_news = fetch_crypto_news(5)
-        except Exception:
-            pass
+        except Exception as e:
+            log_msg("ERROR", f"News fetch failed: {e}")
         time.sleep(3600) # Update news every hour
 
 if __name__ == "__main__":
@@ -399,7 +407,6 @@ if __name__ == "__main__":
     for sym in SYMBOLS:
         kline_buffers[sym] = get_historical_klines(sym, "15m", limit=250)
         
-    import threading
     threading.Thread(target=news_updater_loop, daemon=True).start()
     
     # Subscribe to streams

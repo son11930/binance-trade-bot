@@ -57,10 +57,17 @@ Evolve the single AI decision-maker into a multi-agent debate system to improve 
    - Update `api/server.py` to broadcast the new committee data structure.
    - Update the UI Javascript to parse and display the live debates and scores.
 
-## Phase 6: Operational Enhancements & Deployment (Current Focus)
-Ensure the bot is easy to deploy, update, and manage in production environments.
+## Phase 6: Operational Enhancements & Security Remediation
 
-1. **Auto-Update Mechanism**:
-   - Integrated `git fetch` and `git pull origin main` into `start.bat` and `start.sh` so the system automatically pulls the latest code before starting.
-2. **VPS Deployment Documentation**:
-   - Created `UBUNTU_VPS_DEPLOYMENT.md` providing step-by-step instructions for installing dependencies, cloning the repository, and setting up the bot as a background service via `systemd` on an Ubuntu VPS.
+1. **Auto-Update Mechanism**: 
+   - Add `git fetch origin main` and `git pull origin main` to `start.bat` and `start.sh` to automatically update the codebase on startup.
+2. **Ubuntu VPS Deployment**:
+   - Create `UBUNTU_VPS_DEPLOYMENT.md` providing step-by-step instructions for deploying via `systemd` on a 3 Core, 3GB RAM VPS.
+3. **Security Audit Remediation**:
+   - Replaced static SHA256 auth tokens with expiring JSON Web Tokens (JWT) for dashboard access.
+   - Refactored login system to use bcrypt password hashing instead of plaintext string comparisons.
+   - Prevented memory leak DoS on login endpoint by enforcing periodic IP cleanup.
+4. **Code Quality & Stability Overhaul**:
+   - Decoupled the synchronous AI sentiment analysis from the WebSocket callback using background threads to prevent stream blocking and dropped frames.
+   - Refactored `evaluate_strategy_for_symbol` to remove deep nesting.
+   - Fixed silent error swallowing in the crypto news fetch loop.

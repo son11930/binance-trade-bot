@@ -1,11 +1,14 @@
 import os
+import time
 import hashlib
 import asyncio
 import logging
 import secrets
+import jwt
+import bcrypt
 from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,8 +31,9 @@ SECRET_SALT = os.getenv("DASHBOARD_SECRET_SALT")
 if not USER or not PASS or not SECRET_SALT:
     raise ValueError("CRITICAL SECURITY ERROR: DASHBOARD_USER, DASHBOARD_PASS, and DASHBOARD_SECRET_SALT must be set in .env")
 
-AUTH_TOKEN = hashlib.sha256(f"{USER}:{PASS}:{SECRET_SALT}".encode()).hexdigest()
-WEBHOOK_TOKEN = hashlib.sha256(f"{USER}:{PASS}:{SECRET_SALT}_webhook".encode()).hexdigest()
+WEBHOOK_TOKEN = hashlib.sha256(f"{USER}:{SECRET_SALT}_webhook".encode()).hexdigest()
+JWT_SECRET = hashlib.sha256(f"{SECRET_SALT}_jwt".encode()).hexdigest()
+ALGORITHM = "HS256"
 
 class ConnectionManager:
     def __init__(self):
@@ -44,9 +48,17 @@ class ConnectionManager:
             del self.active_connections[websocket]
 
     async def authenticate(self, websocket: WebSocket, token: str) -> bool:
-        if token and secrets.compare_digest(token, AUTH_TOKEN):
-            self.active_connections[websocket] = True
-            return True
+        if not token:
+            return False
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+            if secrets.compare_digest(payload.get("sub", ""), USER):
+                self.active_connections[websocket] = True
+                return True
+        except jwt.ExpiredSignatureError:
+            pass
+        except jwt.InvalidTokenError:
+            pass
         return False
 
     async def broadcast(self, message: dict):
@@ -198,10 +210,18 @@ login_attempts = {}
 
 @app.post("/api/login")
 def login(req: LoginRequest, request: Request):
-    import time
     client_ip = request.client.host
     now = time.time()
     
+    # Cleanup old entries to prevent memory leak DoS
+    if len(login_attempts) > 1000:
+        keys_to_delete = [ip for ip, times in login_attempts.items() if not times or now - times[-1] >= 60]
+        for k in keys_to_delete:
+            del login_attempts[k]
+        # If still too large, clear completely to save memory
+        if len(login_attempts) > 1000:
+            login_attempts.clear()
+            
     if client_ip in login_attempts:
         attempts = [t for t in login_attempts[client_ip] if now - t < 60]
         if len(attempts) >= 5:
@@ -212,8 +232,16 @@ def login(req: LoginRequest, request: Request):
         
     login_attempts[client_ip].append(now)
     
-    if secrets.compare_digest(req.username, USER) and secrets.compare_digest(req.password, PASS):
-        return {"token": AUTH_TOKEN}
+    try:
+        password_matches = bcrypt.checkpw(req.password.encode('utf-8'), PASS.encode('utf-8'))
+    except Exception:
+        # If PASS is not a valid bcrypt hash, this will catch the exception
+        password_matches = False
+
+    if secrets.compare_digest(req.username, USER) and password_matches:
+        expire = datetime.utcnow() + timedelta(minutes=60)
+        token = jwt.encode({"sub": USER, "exp": expire}, JWT_SECRET, algorithm=ALGORITHM)
+        return {"token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.websocket("/api/ws")

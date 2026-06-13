@@ -17,23 +17,20 @@ echo "       Starting Binance AI Trading System...       "
 echo "==================================================="
 echo ""
 
-# Export environment variables if needed
-# source .env
-
-# Activate virtual environment if it exists (Linux/Mac)
-if [ -f "venv/bin/activate" ]; then
-    source venv/bin/activate
-# Activate virtual environment if it exists (Windows Git Bash)
-elif [ -f "venv/Scripts/activate" ]; then
-    source venv/Scripts/activate
+# Determine correct Python executable
+PYTHON_BIN="python3"
+if [ -f "venv/bin/python3" ]; then
+    PYTHON_BIN="venv/bin/python3"
+elif [ -f "venv/Scripts/python.exe" ]; then
+    PYTHON_BIN="venv/Scripts/python.exe"
 fi
 
 echo "[1/2] Starting API Web Server in background..."
-python3 -m uvicorn api.server:app --host 0.0.0.0 --port 8000 &
+$PYTHON_BIN -m uvicorn api.server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!
 
 echo "[2/2] Starting Trading Bot Logic..."
-python3 -m bot.main &
+$PYTHON_BIN -m bot.main &
 BOT_PID=$!
 
 echo ""

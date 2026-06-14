@@ -159,8 +159,8 @@ app = FastAPI(title="AI Trading Dashboard", lifespan=lifespan)
 def get_db_updates():
     db = SessionLocal()
     try:
-        trades = db.query(Trade).order_by(Trade.timestamp.desc()).limit(50).all()
-        logs = db.query(SystemLog).order_by(SystemLog.timestamp.desc()).limit(50).all()
+        trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
+        logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(50).all()
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = [format_log(l) for l in logs]

@@ -44,7 +44,17 @@ tests/
 # Data & Temp files
 *.csv
 tmp/
-scratch/
 command.txt
 remote.txt
-tmps*
+
+# Obsolete Scripts (Group 3)
+migrate.py
+generate_hash.py
+hash_generator.bat
+hash_generator.sh
+
+# Planning Docs (Group 4)
+PROJECT_PLAN.md
+architecture_proposal.md
+strategy_review.md
+task.md

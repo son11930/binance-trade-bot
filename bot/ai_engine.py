@@ -105,7 +105,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     Provide a concise analysis focusing ONLY on why this trade might fail.
     """
 
-    models_to_try = ['gemini-3.5-flash', 'gemini-1.5-flash', 'gemini-1.0-pro']
+    models_to_try = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-flash-latest']
     
     def _call_model(m_name, p, conf):
         return client.models.generate_content(model=m_name, contents=p, config=conf)
@@ -115,7 +115,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
         for m in models_to_try:
             try:
                 future = ai_executor.submit(_call_model, m, prompt_text, conf)
-                res = future.result(timeout=10)
+                res = future.result(timeout=20)
                 return res.text
             except concurrent.futures.TimeoutError:
                 logging.error(f"AI analysis timeout with {m} (10s)")
@@ -169,7 +169,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
         try:
             config = types.GenerateContentConfig(response_mime_type="application/json")
             future = ai_executor.submit(_call_model, model_name, chief_prompt, config)
-            response = future.result(timeout=15) # 15s timeout for Chief
+            response = future.result(timeout=25) # 25s timeout for Chief
             
             import json
             raw_text = response.text.strip()

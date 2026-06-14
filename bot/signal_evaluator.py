@@ -137,6 +137,10 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
                 net_return = gross_return - fee
                 state_manager.add_to_balance(net_return)
                 state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
+        else:
+            # Added to give the user visual feedback that the bot is alive and evaluating
+            log_msg("INFO", f"🕯️ Evaluated {symbol} at {current_price:.4f} -> Result: HOLD")
+                
                 
     except Exception as e:
         log_msg("ERROR", f"❌ Error processing {symbol}: {e}")

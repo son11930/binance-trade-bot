@@ -130,13 +130,31 @@ def format_trade(t):
         "pnl_percent": getattr(t, 'pnl_percent', None)
     }
 
-def format_log(l):
-    return {
-        "id": l.id,
-        "timestamp": l.timestamp.replace(tzinfo=timezone.utc).isoformat() if hasattr(l.timestamp, 'isoformat') else l.timestamp,
-        "level": l.level,
-        "message": l.message
-    }
+def format_logs(logs):
+    formatted_logs = []
+    for l in logs:
+        ts = l.timestamp
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except ValueError:
+                pass
+        
+        if hasattr(ts, 'isoformat'):
+            # Force UTC if naive
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            ts_str = ts.isoformat()
+        else:
+            ts_str = ts
+
+        formatted_logs.append({
+            "id": l.id,
+            "timestamp": ts_str,
+            "level": l.level,
+            "message": l.message
+        })
+    return formatted_logs
 
 latest_bot_state = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
 
@@ -163,7 +181,7 @@ def get_db_updates():
         logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(50).all()
         
         trades_data = [format_trade(t) for t in trades]
-        logs_data = [format_log(l) for l in logs]
+        logs_data = format_logs(logs)
         stats_data = get_trade_stats(db)
         
         return trades_data, logs_data, stats_data

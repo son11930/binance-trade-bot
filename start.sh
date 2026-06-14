@@ -25,11 +25,14 @@ elif [ -f "venv/Scripts/python.exe" ]; then
     PYTHON_BIN="venv/Scripts/python.exe"
 fi
 
-echo "[1/2] Starting API Web Server in background..."
+echo "[1/3] Initializing Database..."
+$PYTHON_BIN -c "from bot.database import init_db; init_db()"
+
+echo "[2/3] Starting API Web Server in background..."
 $PYTHON_BIN -m uvicorn api.server:app --host 0.0.0.0 --port 8000 &
 SERVER_PID=$!
 
-echo "[2/2] Starting Trading Bot Logic..."
+echo "[3/3] Starting Trading Bot Logic..."
 $PYTHON_BIN -m bot.main &
 BOT_PID=$!
 

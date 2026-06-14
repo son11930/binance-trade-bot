@@ -14,6 +14,13 @@ from .risk_manager import calculate_pnl
 setup_logging()
 
 def main():
+    # Ensure database tables exist before doing anything else
+    from .database import init_db
+    try:
+        init_db()
+    except Exception as e:
+        log_msg("ERROR", f"Failed to initialize database: {e}")
+
     log_msg("INFO", "Starting Multi-Coin MACD Trading Bot with WebSockets...")
     
     # Initialize State

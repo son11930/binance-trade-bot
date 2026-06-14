@@ -91,6 +91,8 @@ else:
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+from sqlalchemy.sql import func
+
 class Trade(Base):
     __tablename__ = "trades"
 
@@ -100,7 +102,7 @@ class Trade(Base):
     price = Column(Float)
     quantity = Column(Float)
     # timezone=True is required for PostgreSQL compatibility
-    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), default=func.now())
     ai_risk_score = Column(Float, nullable=True)
     ai_reasoning = Column(String, nullable=True)
     paper_trade = Column(Boolean, default=True)
@@ -113,7 +115,7 @@ class SystemLog(Base):
     __tablename__ = "system_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(DateTime(timezone=True), default=func.now())
     level = Column(String, index=True) # INFO, WARNING, ERROR
     message = Column(String)
 
@@ -179,7 +181,9 @@ class LogRepository:
             log_entry = SystemLog(level=level, message=safe_message)
             db.add(log_entry)
             db.commit()
-        except Exception:
+        except Exception as e:
+            import sys
+            print(f"CRITICAL DB ERROR in LogRepository: {e}", file=sys.stderr, flush=True)
             db.rollback()
         finally:
             db.close()

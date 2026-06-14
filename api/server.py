@@ -141,7 +141,7 @@ latest_bot_state = {"status_message": "Bot is offline (Not running)", "is_thinki
 def get_bot_status():
     return {
         "status": "online",
-        "symbols": ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "BNBUSDT"],
+        "symbols": ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT"],
         "paper_trading": os.getenv("PAPER_TRADING", "True"),
         "live_usdt": latest_bot_state.get("live_usdt", 0.0),
         "ai_status": latest_bot_state

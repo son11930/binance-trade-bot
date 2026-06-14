@@ -11,3 +11,4 @@ PyJWT
 bcrypt
 ta
 defusedxml
+psycopg2-binary

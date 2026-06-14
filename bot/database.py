@@ -74,6 +74,8 @@ def setup_logging():
                 handler.setFormatter(formatter)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trades.db")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 if DATABASE_URL.startswith("postgres"):
     # PostgreSQL configuration (Supabase/Neon)

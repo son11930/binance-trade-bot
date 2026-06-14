@@ -14,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
-from pydantic import BaseModel
-from typing import Dict
+from pydantic import BaseModel, Field
+from typing import Dict, Optional, List, Any
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
 
@@ -31,8 +31,10 @@ SECRET_SALT = os.getenv("DASHBOARD_SECRET_SALT")
 if not USER or not PASS or not SECRET_SALT:
     raise ValueError("CRITICAL SECURITY ERROR: DASHBOARD_USER, DASHBOARD_PASS, and DASHBOARD_SECRET_SALT must be set in .env")
 
-WEBHOOK_TOKEN = hashlib.sha256(f"{USER}:{SECRET_SALT}_webhook".encode()).hexdigest()
-JWT_SECRET = hashlib.sha256(f"{SECRET_SALT}_jwt".encode()).hexdigest()
+import hmac
+
+WEBHOOK_TOKEN = hmac.new(SECRET_SALT.encode(), f"{USER}_webhook".encode(), hashlib.sha256).hexdigest()
+JWT_SECRET = hmac.new(SECRET_SALT.encode(), b"jwt", hashlib.sha256).hexdigest()
 ALGORITHM = "HS256"
 
 class ConnectionManager:
@@ -176,10 +178,27 @@ def verify_token(api_key_header: str = Security(APIKeyHeader(name="Authorization
         raise HTTPException(status_code=401, detail="Invalid token")
     return True
 
+class PositionModel(BaseModel):
+    symbol: str
+    quantity: float
+    buy_price: float
+    current_price: float
+    pnl_amount: float
+    pnl_percent: float
+
+class BroadcastState(BaseModel):
+    status_message: str
+    is_thinking: bool
+    symbol_active: Optional[str] = None
+    live_usdt: float
+    positions: List[PositionModel] = []
+    ai_debate: Optional[Dict[str, Any]] = None
+    updated_at: Optional[str] = None
+
 @app.post("/api/internal/broadcast")
-async def receive_broadcast(state: dict, auth: bool = Depends(verify_token)):
+async def receive_broadcast(state: BroadcastState, auth: bool = Depends(verify_token)):
     global latest_bot_state
-    latest_bot_state = state
+    latest_bot_state = state.model_dump()
     
     # Push state update
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
@@ -203,8 +222,8 @@ app.add_middleware(
 )
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., max_length=50)
+    password: str = Field(..., max_length=72)
 
 login_attempts = {}
 
@@ -239,7 +258,7 @@ def login(req: LoginRequest, request: Request):
         password_matches = False
 
     if secrets.compare_digest(req.username, USER) and password_matches:
-        expire = datetime.utcnow() + timedelta(minutes=60)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=60)
         token = jwt.encode({"sub": USER, "exp": expire}, JWT_SECRET, algorithm=ALGORITHM)
         return {"token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")

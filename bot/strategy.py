@@ -42,6 +42,13 @@ def apply_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     # Volume SMA (20)
     df['SMA_20_Vol'] = ta.trend.sma_indicator(df['volume'], window=20)
+
+    # Strategy Review Enhancements
+    df['SMA_ADX_3'] = ta.trend.sma_indicator(df['ADX'], window=3)
+    df['SMA_ADX_5'] = ta.trend.sma_indicator(df['ADX'], window=5)
+    df['MACD_Histogram'] = df['MACD'] - df['MACD_Signal']
+    df['Bollinger_Band_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid']
+    df['Distance_to_SMA_200'] = ((df['close'] - df['SMA_200']) / df['SMA_200']) * 100
     
     return df
 
@@ -59,10 +66,11 @@ def detect_regime(df: pd.DataFrame) -> str:
         return "UNKNOWN"
         
     adx_curr = latest['ADX']
-    adx_prev = prev['ADX']
+    sma_adx_3 = latest.get('SMA_ADX_3', 0)
+    sma_adx_5 = latest.get('SMA_ADX_5', 0)
     
-    # ADX rising and > 25 indicates strong trend
-    if adx_curr > 25 and adx_curr > adx_prev:
+    # ADX > 25 and short SMA of ADX > longer SMA of ADX indicates strong trend
+    if adx_curr > 25 and sma_adx_3 > sma_adx_5:
         return "TRENDING"
         
     # ADX < 25 or falling indicates sideways / consolidation
@@ -95,13 +103,13 @@ def analyze_market(df: pd.DataFrame) -> SignalPlan:
     atr = latest['ATR']
     
     if regime == "TRENDING":
-        return execute_trend_strategy(latest, prev, price, atr)
+        return execute_trend_strategy(df, latest, prev, price, atr)
     elif regime == "SIDEWAYS":
         return execute_sideways_strategy(latest, prev, price, atr)
         
     return default_signal
 
-def execute_trend_strategy(latest, prev, price, atr) -> SignalPlan:
+def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
     """
     Trend Strategy: MACD Crossover + SMA 200
     """
@@ -115,13 +123,23 @@ def execute_trend_strategy(latest, prev, price, atr) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # BUY: MACD crosses ABOVE Signal Line AND Price > SMA 200 AND RSI < 65 AND Volume > 1.5x SMA
-    if macd_curr > sig_curr and macd_prev <= sig_prev and price > sma_200 and rsi_curr < 65 and vol_curr > (vol_sma * 1.5):
+    # Check if MACD crossed above signal within last 3 periods
+    recent_macd_cross = False
+    if len(df) >= 3:
+        for i in range(1, 4):
+            idx_curr = -i
+            idx_prev = -i - 1
+            if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
+                recent_macd_cross = True
+                break
+
+    # BUY: MACD crossed ABOVE Signal Line in last 3 periods AND Price > SMA 200 AND RSI < 65 AND Volume > 1.5x SMA
+    if recent_macd_cross and price > sma_200 and rsi_curr < 65 and vol_curr > (vol_sma * 1.5):
         return SignalPlan(
             action="BUY",
             strategy_used="TREND_MACD",
-            stop_loss=price - (atr * 1.5),
-            take_profit=price + (atr * 2.5),
+            stop_loss=price - (atr * 1.5), # Keep trailing SL
+            take_profit=0.0,               # Remove fixed TP for trend riding
             time_in_trade=24
         )
         
@@ -155,13 +173,13 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # BUY: RSI crosses back ABOVE 30 (Reversal) AND price near lower BB AND Volume > 1.5x SMA
-    if rsi_curr > 30 and rsi_prev <= 30 and price <= bb_lower * 1.01 and vol_curr > (vol_sma * 1.5):
+    # BUY: RSI crosses back ABOVE 30 (Reversal) AND price near lower BB AND Volume <= SMA
+    if rsi_curr > 30 and rsi_prev <= 30 and price <= bb_lower * 1.01 and vol_curr <= vol_sma:
         return SignalPlan(
             action="BUY",
             strategy_used="SIDEWAYS_RSI_BB",
             stop_loss=price - (atr * 1.5), 
-            take_profit=price + (atr * 2.5),             
+            take_profit=latest['BB_Upper'],             
             time_in_trade=10                  
         )
         

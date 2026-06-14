@@ -46,4 +46,5 @@ tests/
 tmp/
 scratch/
 command.txt
+remote.txt
 tmps*

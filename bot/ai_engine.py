@@ -69,6 +69,10 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     Current Strategy: {tech_data.get('strategy_used', 'UNKNOWN')}
     ADX: {tech_data.get('adx', 'N/A')}
     RSI: {tech_data.get('rsi', 'N/A')}
+    MACD_Histogram: {tech_data.get('macd_histogram', 'N/A')}
+    ATR: {tech_data.get('atr', 'N/A')}
+    Bollinger_Band_Width: {tech_data.get('bb_width', 'N/A')}
+    Distance_to_SMA_200 (%): {tech_data.get('dist_sma_200', 'N/A')}
     </technical_context>
         """
 

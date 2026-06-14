@@ -26,8 +26,9 @@ def sanitize_text(text: str) -> str:
     salt = os.getenv("DASHBOARD_SECRET_SALT", "")
     if user and pwd and salt:
         import hashlib
-        auth_token = hashlib.sha256(f"{user}:{pwd}:{salt}".encode()).hexdigest()
-        webhook_token = hashlib.sha256(f"{user}:{pwd}:{salt}_webhook".encode()).hexdigest()
+        import hmac
+        auth_token = hmac.new(salt.encode(), f"{user}:{pwd}".encode(), hashlib.sha256).hexdigest()
+        webhook_token = hmac.new(salt.encode(), f"{user}_webhook".encode(), hashlib.sha256).hexdigest()
         secrets.append(("AUTH_TOKEN", auth_token))
         secrets.append(("WEBHOOK_TOKEN", webhook_token))
     

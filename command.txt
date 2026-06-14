@@ -1,3 +1,14 @@
 python -m uvicorn api.server:app
 
 python -m bot.main
+
+
+sudo systemctl start binance-bot.service
+
+sudo systemctl status binance-bot.service
+
+sudo journalctl -u binance-bot.service -f
+
+sudo systemctl restart binance-bot.service
+
+sudo systemctl stop binance-bot.service

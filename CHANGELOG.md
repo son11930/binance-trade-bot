@@ -1,3 +1,19 @@
+## [4.0.0] - 2026-06-15
+### Cloud Database & 10-Coin Ecosystem
+**English:**
+- **Cloud Database (Aiven PostgreSQL)**: Completely migrated the core database from local SQLite to Aiven PostgreSQL to ensure data persistence, scalability, and seamless deployment across multiple instances.
+- **10-Coin Support**: Expanded the bot's trading capability from 5 to 10 highly liquid symbols (BTC, ETH, XRP, SOL, BNB, ADA, AVAX, DOGE, DOT, LINK).
+- **Timeframe Optimization**: Shifted the mathematical analysis interval from 1 Hour down to 15 Minutes (15m), significantly increasing trade frequency to capitalize on micro-trends.
+- **UI & Timezone Fixes**: Resolved a critical silent bug where `api.server.py` would default to an empty SQLite database due to an import order issue. Re-engineered timestamp parsing to ensure all dashboard logs display in localized local time instead of UTC.
+- **Enhanced Log Observability**: Bootstrapped the bot to safely log directly to the remote Aiven Database with fail-safes and connected the web interface's "System Debug Log" directly to the cloud log repository.
+
+**Thai (ภาษาไทย):**
+- **เปลี่ยนผ่านสู่ระบบคลาวด์ (Aiven PostgreSQL)**: ย้ายฐานข้อมูลหลักจากไฟล์ SQLite ในเครื่อง ไปใช้ PostgreSQL บนคลาวด์ของ Aiven แบบเต็มรูปแบบ ป้องกันข้อมูลหายและรองรับการขยายตัวในอนาคต
+- **ลุยตลาด 10 เหรียญ**: เพิ่มเหรียญที่บอทสามารถเทรดได้พร้อมกันเป็น 10 เหรียญ (BTC, ETH, XRP, SOL, BNB, ADA, AVAX, DOGE, DOT, LINK)
+- **ปรับความไวเป็น 15 นาที**: ปรับความละเอียดของกราฟเทคนิคอลจาก 1 ชั่วโมง (1h) เป็น 15 นาที (15m) เพื่อเพิ่มโอกาสการเข้าทำกำไรที่รวดเร็วขึ้น
+- **แก้บั๊กเวลาและฐานข้อมูล**: แก้บั๊กใหญ่ที่หน้าเว็บไม่ยอมดึงข้อมูลเพราะโหลดตัวแปร `.env` ผิดจังหวะ และแก้ระบบเวลาให้หน้าเว็บแปลงเป็น "เวลาไทย" อัตโนมัติ (ไม่ต้องทนดูเวลา UTC แล้ว)
+- **ระบบ Log ทะลุเมฆ**: ปรับให้บอทส่งสถานะการทำงานทุกอย่างขึ้นไปเก็บไว้บน Aiven ทันที และให้หน้าเว็บดึงข้อมูลมาแสดงผลแบบ Real-time โดยไม่ผ่านไฟล์ในเครื่อง
+
 ## [3.7.1] - 2026-06-14
 ### Security & Code Quality Overhaul
 **English:**

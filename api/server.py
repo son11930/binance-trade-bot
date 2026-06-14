@@ -18,10 +18,10 @@ from pydantic import BaseModel, Field
 from typing import Dict, Optional, List, Any
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
+load_dotenv()
 
 from bot.database import Trade, init_db, SystemLog, SessionLocal, setup_logging
 
-load_dotenv()
 setup_logging()
 
 USER = os.getenv("DASHBOARD_USER")

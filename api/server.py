@@ -185,9 +185,21 @@ def get_db_updates():
         stats_data = get_trade_stats(db)
         
         return trades_data, logs_data, stats_data
-    except Exception:
-        logging.exception("Broadcast DB error")
-        return [], [], {}
+    except Exception as e:
+        import traceback
+        err_msg = str(e)
+        logging.error(f"Broadcast DB error: {err_msg}")
+        traceback.print_exc()
+        
+        # Return the error as a fake log so it appears on the dashboard
+        from datetime import datetime, timezone
+        error_log = [{
+            "id": 999999,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": "ERROR",
+            "message": f"CRITICAL DB ERROR: {err_msg}"
+        }]
+        return [], error_log, {}
     finally:
         db.close()
 

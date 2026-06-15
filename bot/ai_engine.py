@@ -160,11 +160,13 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     Focus on Expected Value (EV). Do the upside targets outweigh the downside risks?
     Provide an actionable Risk Score. Higher risk = smaller position.
     If you BUY, define strict invalidation levels.
+    Determine the ideal position size based on Expected Value and risk. Return an allocation_percentage between 10 and 40. (e.g. highly confident/low risk = 40, moderate = 20, high risk = 10).
     
     Output a strictly valid JSON object with the following schema:
     {{
         "decision": "BUY" or "HOLD",
         "risk_score": integer between 0 and 100,
+        "allocation_percentage": integer between 10 and 40,
         "reason": "short explanation based on the debate"
     }}
     """
@@ -186,7 +188,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
             
             result = json.loads(raw_text.strip())
             
-            if all(k in result for k in ("decision", "risk_score", "reason")):
+            if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason")):
                 result["committee_debate"] = {
                     "bullish_analysis": bull_analysis,
                     "bearish_analysis": bear_analysis

@@ -158,10 +158,12 @@ def format_logs(logs):
 
 latest_bot_state = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
 
+from bot.config import SYMBOLS
+
 def get_bot_status():
     return {
         "status": "online",
-        "symbols": ["BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT"],
+        "symbols": SYMBOLS,
         "paper_trading": os.getenv("PAPER_TRADING", "True"),
         "live_usdt": latest_bot_state.get("live_usdt", 0.0),
         "ai_status": latest_bot_state
@@ -178,7 +180,7 @@ def get_db_updates():
     db = SessionLocal()
     try:
         trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
-        logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(50).all()
+        logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(500).all()
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)

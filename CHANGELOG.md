@@ -1,4 +1,18 @@
-## [4.0.0] - 2026-06-15
+## [4.1.0] - 2026-06-16
+### AI Autonomous Allocation & 20-Coin Expansion
+**English:**
+- **Asset Universe Expansion**: Expanded the `SYMBOLS` scan list from 10 to 20 Top Cryptocurrencies (L1/DeFi), strictly excluding Meme coins to improve fundamental indicator reliability.
+- **Dynamic AI Position Sizing**: Upgraded the AI `chief_prompt` to dynamically calculate and output a precise `allocation_percentage` based on Risk/EV evaluation.
+- **Failsafe Circuit Breaker**: Implemented a mathematical boundary in `signal_evaluator.py` that intercepts the AI's allocation and strictly bounds it between a minimum of 10% and a maximum of 40% of total equity to prevent model hallucination risks.
+- **Dashboard Log Scaling**: Increased the live WebSocket `SystemLog` broadcast limit from 50 to 500 rows to allow 1-2 days of observability on the frontend without impacting database performance due to O(1) B-Tree indexing.
+
+**Thai (ภาษาไทย):**
+- **ขยายตลาด 20 เหรียญ**: เพิ่มลิสต์สแกนเหรียญจาก 10 เป็น 20 เหรียญ (เน้นสาย L1/DeFi) และคัดเหรียญ Meme ออกทั้งหมดเพื่อให้กราฟนิ่งขึ้น
+- **AI คุมเงินทุน (Dynamic Sizing)**: ปรับ Prompt ให้ AI คิดสัดส่วนการลงทุน (% ของพอร์ต) ให้เองตามความเสี่ยงที่วิเคราะห์ได้ในแต่ละรอบ
+- **ระบบบอดี้การ์ดคุม AI**: เขียนโค้ดดักจับ % ที่ AI สั่งมา เพื่อป้องกันปัญหา AI หลอน โดยบังคับให้อยู่ในกรอบปลอดภัยคือ "ซื้อขั้นต่ำ 10% และสูงสุดไม่เกิน 40%" เสมอ
+- **ขยายประวัติ Log**: ปรับ Backend ให้ส่งข้อมูล Debug Log ให้หน้าเว็บทีละ 500 บรรทัด (ดูย้อนหลังได้ 1-2 วัน) โดยไม่กระทบความเร็วเซิฟเวอร์
+
+
 ### Cloud Database & 10-Coin Ecosystem
 **English:**
 - **Cloud Database (Aiven PostgreSQL)**: Completely migrated the core database from local SQLite to Aiven PostgreSQL to ensure data persistence, scalability, and seamless deployment across multiple instances.

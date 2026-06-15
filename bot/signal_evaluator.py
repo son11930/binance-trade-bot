@@ -58,9 +58,18 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         if decision == "BUY" and risk_score <= 60:
             log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used}...")
             
+            allocation_percentage = ai_result.get('allocation_percentage', 20)
+            if not isinstance(allocation_percentage, (int, float)):
+                allocation_percentage = 20
+            
+            if allocation_percentage < 10:
+                allocation_percentage = 10
+            elif allocation_percentage > 40:
+                allocation_percentage = 40
+                
             live_usdt_balance = state_manager.live_usdt_balance
             total_equity = live_usdt_balance + current_holding_value
-            trade_amount = total_equity * 0.20 # 20% per trade
+            trade_amount = total_equity * (allocation_percentage / 100.0)
             if trade_amount < 10.0: trade_amount = 10.0
             if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
             

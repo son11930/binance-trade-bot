@@ -18,7 +18,7 @@
                         neonCyan: '#00F0FF',
                         neonGreen: '#39FF14',
                         neonRed: '#FF003C',
-                        glowAccent: '#3B82F6'
+                        neonPink: '#FF00FF'
                     }
                 }
             }
@@ -37,9 +37,11 @@
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
         .glass-card:hover {
-            box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.3);
         }
-        .text-glow { text-shadow: 0 0 12px rgba(57, 255, 20, 0.6); }
+                .text-glow-green { text-shadow: 0 0 15px rgba(57, 255, 20, 0.9); }
+        .text-glow-red { text-shadow: 0 0 15px rgba(255, 0, 60, 0.9); }
+        .border-glow-pink { box-shadow: 0 0 20px rgba(255, 0, 255, 0.4); }
         .border-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
         
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
@@ -61,8 +63,8 @@
     <!-- Login Modal -->
     <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md">
         <div class="glass-card p-10 rounded-3xl max-w-sm w-full border-glow relative overflow-hidden">
-            <div class="absolute -right-10 -top-10 w-32 h-32 bg-glowAccent/20 rounded-full blur-3xl"></div>
-            <h2 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-glowAccent mb-8 text-center tracking-wide">SYSTEM ACCESS</h2>
+            <div class="absolute -right-10 -top-10 w-32 h-32 bg-neonPink/20 rounded-full blur-3xl"></div>
+            <h2 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink mb-8 text-center tracking-wide">SYSTEM ACCESS</h2>
             <form id="login-form" class="space-y-6 relative z-10">
                 <div>
                     <label class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Username</label>
@@ -77,7 +79,7 @@
                     <label for="remember" class="text-slate-300 text-sm font-semibold tracking-wide">Remember me</label>
                 </div>
                 <p id="login-error" class="text-neonRed text-sm font-bold hidden text-center">Invalid credentials. Access Denied.</p>
-                <button type="submit" class="w-full bg-gradient-to-r from-neonCyan/20 to-glowAccent/20 hover:from-neonCyan/40 hover:to-glowAccent/40 text-neonCyan font-extrabold tracking-widest py-4 px-4 rounded-xl border border-neonCyan/50 transition-all shadow-[0_0_15px_rgba(0,240,255,0.2)] hover:shadow-[0_0_25px_rgba(0,240,255,0.4)]">
+                <button type="submit" class="w-full bg-gradient-to-r from-neonCyan/20 to-neonPink/20 hover:from-neonCyan/40 hover:to-neonPink/40 text-neonCyan font-extrabold tracking-widest py-4 px-4 rounded-xl border border-neonCyan/50 transition-all shadow-[0_0_15px_rgba(0,240,255,0.2)] hover:shadow-[0_0_25px_rgba(0,240,255,0.4)]">
                     AUTHENTICATE
                 </button>
             </form>
@@ -88,7 +90,7 @@
     <div id="app-container" class="max-w-6xl mx-auto space-y-8 relative z-10 hidden">
         <header class="flex flex-col md:flex-row justify-between items-center glass-card p-6 rounded-2xl">
             <div class="text-center md:text-left mb-4 md:mb-0">
-                <h1 class="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-glowAccent">
+                <h1 class="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink">
                     AI Trading Engine
                 </h1>
                 <p class="text-slate-400 text-sm mt-1 font-light tracking-wide">Multi-Coin Auto Sync & MACD Strategy</p>
@@ -452,8 +454,8 @@
                     const tr = document.createElement('tr');
                     tr.className = 'hover:bg-slate-800/30 transition-colors';
                     
-                    const pnlAmtColor = pos.pnl_amount > 0 ? 'text-neonGreen' : (pos.pnl_amount < 0 ? 'text-neonRed' : 'text-slate-300');
-                    const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen' : (pos.pnl_percent < 0 ? 'text-neonRed' : 'text-slate-300');
+                    const pnlAmtColor = pos.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
+                    const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_percent < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
                     
                     tr.innerHTML = `
                         <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
@@ -506,7 +508,8 @@
                 const safeSide = escapeHTML(trade.side);
                 
                 const feeStr = (trade.fee !== null && trade.fee !== undefined) ? `${trade.fee.toFixed(4)} ${trade.fee_asset || ''}` : '--';
-                const pnlStr = trade.pnl_amount !== null ? `<span class="${trade.pnl_amount >= 0 ? 'text-neonGreen' : 'text-neonRed'}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
+                const pnlClass = trade.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (trade.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
+                    const pnlStr = trade.pnl_amount !== null ? `<span class="${pnlClass}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
                 
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
@@ -567,11 +570,11 @@
             
             const pnlEl = document.getElementById('cumulative-pnl');
             pnlEl.innerText = `${data.cumulative_pnl >= 0 ? '+' : ''}$${data.cumulative_pnl.toFixed(2)}`;
-            pnlEl.className = data.cumulative_pnl >= 0 ? 'text-sm font-bold text-neonGreen' : 'text-sm font-bold text-neonRed';
+            pnlEl.className = data.cumulative_pnl >= 0 ? 'text-sm font-bold text-neonGreen text-glow-green' : 'text-sm font-bold text-neonRed text-glow-red';
             
             const pctEl = document.getElementById('pnl-percent');
             pctEl.innerText = `${data.pnl_percent >= 0 ? '+' : ''}${data.pnl_percent.toFixed(2)}%`;
-            pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen' : 'text-xs font-bold text-neonRed';
+            pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
         }
 
         function updateStats(data) {

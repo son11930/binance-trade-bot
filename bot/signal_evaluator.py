@@ -11,8 +11,12 @@ from .webhook_notifier import update_bot_state
 from .binance_client import get_current_price
 from .state import StateManager
 
-def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, current_holding_value: float, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
+def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
     try:
+        # Calculate holding value dynamically at the time of evaluation, not at queue time
+        states = state_manager.get_all_states()
+        current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else get_current_price(s.symbol)) for s in states.values() if s.position > 0)
+        
         if strategy_used == "SIDEWAYS_RSI_BB":
             from .binance_client import analyze_order_book_walls
             walls = analyze_order_book_walls(symbol)
@@ -57,7 +61,20 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload)
         
         if decision == "BUY" and risk_score <= 60:
-            log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used}...")
+            # --- Slippage Guard (Mitigation 4) ---
+            live_price = get_current_price(symbol)
+            if live_price is not None:
+                slippage = (live_price - current_price) / current_price
+                if slippage > 0.005:  # Price drifted more than 0.5% while waiting for AI
+                    log_msg("WARNING", f"⚠️ Slippage Guard: Aborting {symbol} trade. Price moved +{slippage*100:.2f}% ({current_price} -> {live_price}) while waiting for AI.")
+                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol)
+                    state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+                    return
+                # Update current_price to live_price for accurate execution tracking
+                current_price = live_price
+            # -------------------------------------
+                
+            log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used} at {current_price}...")
             
             allocation_percentage = ai_result.get('allocation_percentage', 20)
             if not isinstance(allocation_percentage, (int, float)):
@@ -122,6 +139,11 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
         state = state_manager.get_state(symbol)
         
         if signal == "BUY" and state.position == 0:
+            time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
+            if time_since_trade < COOLDOWN_MINUTES:
+                log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping BUY signal.")
+                return
+
             update_bot_state(state_manager, f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol)
             
             latest_kline = df.iloc[-1]
@@ -134,11 +156,13 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             vol_sma = latest_kline.get('SMA_20_Vol', 0)
             vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0
             
-            # Dispatch to background thread to prevent blocking websocket
-            threading.Thread(target=_evaluate_buy_signal, args=(
+            # Dispatch to Priority Queue to prevent blocking websocket and prioritize explosive breakouts
+            from .ai_queue import ai_queue_manager
+            ai_queue_manager.submit(
+                vol_surge_val, symbol, _evaluate_buy_signal, 
                 state_manager, symbol, current_price, strategy_used, sl_target, tp_target, time_limit, 
-                adx_val, rsi_val, current_holding_value, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
-            ), daemon=True).start()
+                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
+            )
             
         elif signal == "SELL" and state.position > 0:
             log_msg("INFO", f"📉 SELL Signal for {symbol} via {strategy_used}. Executing...")

@@ -1,5 +1,7 @@
 import threading
-from dataclasses import dataclass, replace
+import json
+import os
+from dataclasses import dataclass, replace, asdict
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -29,6 +31,39 @@ class StateManager:
         self._live_usdt_balance = 1000.0 if PAPER_TRADING else 0.0
         self._kline_buffers = {}
         self._latest_news = "No recent news available."
+        self._state_file = "bot_internal_state.json"
+        self._load_state()
+
+    def _load_state(self):
+        if os.path.exists(self._state_file):
+            try:
+                with open(self._state_file, "r") as f:
+                    data = json.load(f)
+                    for sym, s_data in data.items():
+                        if sym in self._states:
+                            if s_data.get("last_trade_time"):
+                                s_data["last_trade_time"] = datetime.fromisoformat(s_data["last_trade_time"])
+                            if s_data.get("trade_entry_time"):
+                                s_data["trade_entry_time"] = datetime.fromisoformat(s_data["trade_entry_time"])
+                            self._states[sym] = replace(self._states[sym], **s_data)
+                log_msg("INFO", "✅ Successfully loaded internal bot state.")
+            except Exception as e:
+                log_msg("ERROR", f"Failed to load internal state: {e}")
+
+    def _save_state(self):
+        try:
+            data = {}
+            for sym, state in self._states.items():
+                s_dict = asdict(state)
+                if s_dict["last_trade_time"]:
+                    s_dict["last_trade_time"] = s_dict["last_trade_time"].isoformat()
+                if s_dict["trade_entry_time"]:
+                    s_dict["trade_entry_time"] = s_dict["trade_entry_time"].isoformat()
+                data[sym] = s_dict
+            with open(self._state_file, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            log_msg("ERROR", f"Failed to save internal state: {e}")
 
     def get_state(self, symbol: str) -> SymbolState:
         with self._lock:
@@ -38,6 +73,7 @@ class StateManager:
         with self._lock:
             if symbol in self._states:
                 self._states[symbol] = replace(self._states[symbol], **kwargs)
+                self._save_state()
 
     def get_all_states(self) -> Dict[str, SymbolState]:
         with self._lock:

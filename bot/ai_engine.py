@@ -136,12 +136,8 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
         for m in models_to_try:
             for attempt in range(2):
                 try:
-                    future = ai_executor.submit(_call_model, m, prompt_text, conf)
-                    res = future.result(timeout=120) # Increased timeout to handle queue
+                    res = _call_model(m, prompt_text, conf)
                     return res.text
-                except concurrent.futures.TimeoutError:
-                    logging.error(f"AI analysis timeout with {m} (120s)")
-                    break
                 except Exception as e:
                     err_str = str(e)
                     if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
@@ -150,14 +146,14 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                         continue
                     logging.error(f"AI analysis error with {m}: {sanitize_error(e)}")
                     break
-        return "No analysis available."
+        raise Exception("All models failed for analysis")
 
     try:
         bull_future = ai_executor.submit(_get_analysis, bullish_prompt)
         bear_future = ai_executor.submit(_get_analysis, bearish_prompt)
         
-        bull_analysis = bull_future.result()
-        bear_analysis = bear_future.result()
+        bull_analysis = bull_future.result(timeout=120)
+        bear_analysis = bear_future.result(timeout=120)
     except Exception as e:
         logging.error(f"AI Committee error: {sanitize_error(e)}")
         bull_analysis = "No analysis available."
@@ -194,12 +190,12 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     }}
     """
     
+    last_error = "Unknown Error"
     for model_name in models_to_try:
         for attempt in range(2):
             try:
                 config = types.GenerateContentConfig(response_mime_type="application/json")
-                future = ai_executor.submit(_call_model, model_name, chief_prompt, config)
-                response = future.result(timeout=120) # Increased timeout
+                response = _call_model(model_name, chief_prompt, config)
                 
                 import json
                 raw_text = response.text.strip()
@@ -221,11 +217,9 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 else:
                     raise ValueError(f"Malformed schema returned: {result}")
                     
-            except concurrent.futures.TimeoutError:
-                logging.error(f"Chief AI timeout with {model_name} (120s)")
-                break
             except Exception as e:
                 err_str = str(e)
+                last_error = err_str
                 if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
                     logging.warning(f"Chief rate limited on {model_name}, attempt {attempt+1}. Sleeping 5s...")
                     time.sleep(5)
@@ -234,7 +228,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 break
 
     try:
-        LogRepository.log_event("ERROR", "CIRCUIT BREAKER: AI Committee failed or timed out. Defaulting to HOLD.")
+        LogRepository.log_event("ERROR", f"CIRCUIT BREAKER: AI Committee failed. Details: {sanitize_text(last_error)[:100]}...")
     except Exception:
         pass
         

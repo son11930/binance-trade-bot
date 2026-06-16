@@ -2,10 +2,11 @@ import os
 import json
 import requests
 import logging
+import time
+import threading
 from google import genai
 from google.genai import types
 import defusedxml.ElementTree as ET_defused
-import concurrent.futures
 import html
 from dotenv import load_dotenv
 
@@ -19,8 +20,9 @@ def sanitize_error(error: Exception) -> str:
 # Initialize client globally to avoid repeated initialization overhead
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Global thread pool for AI tasks to avoid overhead and freezing
-ai_executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+# Global lock to enforce 4-second delay (15 RPM limit)
+GLOBAL_API_LOCK = threading.Lock()
+LAST_API_CALL = 0
 
 def fetch_crypto_news(limit: int = 5) -> str:
     """
@@ -108,21 +110,14 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
 
     models_to_try = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash']
     
-    import time
-    import threading
-    
-    # Global lock to enforce 4-second delay (15 RPM limit)
-    if not hasattr(analyze_sentiment, "api_lock"):
-        analyze_sentiment.api_lock = threading.Lock()
-        analyze_sentiment.last_call = 0
-
     def _call_model(m_name, p, conf):
-        with analyze_sentiment.api_lock:
+        global LAST_API_CALL
+        with GLOBAL_API_LOCK:
             now = time.time()
-            elapsed = now - analyze_sentiment.last_call
+            elapsed = now - LAST_API_CALL
             if elapsed < 4.0:
                 time.sleep(4.0 - elapsed)
-            analyze_sentiment.last_call = time.time()
+            LAST_API_CALL = time.time()
             
         return client.models.generate_content(model=m_name, contents=p, config=conf)
     

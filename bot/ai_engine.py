@@ -111,24 +111,45 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     Provide a concise analysis focusing ONLY on why this trade might fail.
     """
 
-    models_to_try = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-flash-latest']
+    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-flash-latest']
     
+    import time
+    import threading
+    
+    # Global lock to enforce 4-second delay (15 RPM limit)
+    if not hasattr(analyze_sentiment, "api_lock"):
+        analyze_sentiment.api_lock = threading.Lock()
+        analyze_sentiment.last_call = 0
+
     def _call_model(m_name, p, conf):
+        with analyze_sentiment.api_lock:
+            now = time.time()
+            elapsed = now - analyze_sentiment.last_call
+            if elapsed < 4.0:
+                time.sleep(4.0 - elapsed)
+            analyze_sentiment.last_call = time.time()
+            
         return client.models.generate_content(model=m_name, contents=p, config=conf)
         
     def _get_analysis(prompt_text):
         conf = types.GenerateContentConfig()
         for m in models_to_try:
-            try:
-                future = ai_executor.submit(_call_model, m, prompt_text, conf)
-                res = future.result(timeout=20)
-                return res.text
-            except concurrent.futures.TimeoutError:
-                logging.error(f"AI analysis timeout with {m} (10s)")
-                continue
-            except Exception as e:
-                logging.error(f"AI analysis error with {m}: {sanitize_error(e)}")
-                continue
+            for attempt in range(2):
+                try:
+                    future = ai_executor.submit(_call_model, m, prompt_text, conf)
+                    res = future.result(timeout=120) # Increased timeout to handle queue
+                    return res.text
+                except concurrent.futures.TimeoutError:
+                    logging.error(f"AI analysis timeout with {m} (120s)")
+                    break
+                except Exception as e:
+                    err_str = str(e)
+                    if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
+                        logging.warning(f"Rate limited on {m}, attempt {attempt+1}. Sleeping 5s...")
+                        time.sleep(5)
+                        continue
+                    logging.error(f"AI analysis error with {m}: {sanitize_error(e)}")
+                    break
         return "No analysis available."
 
     try:
@@ -174,37 +195,43 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     """
     
     for model_name in models_to_try:
-        try:
-            config = types.GenerateContentConfig(response_mime_type="application/json")
-            future = ai_executor.submit(_call_model, model_name, chief_prompt, config)
-            response = future.result(timeout=25) # 25s timeout for Chief
-            
-            import json
-            raw_text = response.text.strip()
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-            elif raw_text.startswith("```"):
-                raw_text = raw_text[3:]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
-            
-            result = json.loads(raw_text.strip())
-            
-            if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason")):
-                result["committee_debate"] = {
-                    "bullish_analysis": bull_analysis,
-                    "bearish_analysis": bear_analysis
-                }
-                return result
-            else:
-                raise ValueError(f"Malformed schema returned: {result}")
+        for attempt in range(2):
+            try:
+                config = types.GenerateContentConfig(response_mime_type="application/json")
+                future = ai_executor.submit(_call_model, model_name, chief_prompt, config)
+                response = future.result(timeout=120) # Increased timeout
                 
-        except concurrent.futures.TimeoutError:
-            logging.error(f"Chief AI error with {model_name}: TIMEOUT (15s)")
-            continue
-        except Exception as e:
-            logging.error(f"Chief AI error with {model_name}: {sanitize_error(e)}")
-            continue
+                import json
+                raw_text = response.text.strip()
+                if raw_text.startswith("```json"):
+                    raw_text = raw_text[7:]
+                elif raw_text.startswith("```"):
+                    raw_text = raw_text[3:]
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3]
+                
+                result = json.loads(raw_text.strip())
+                
+                if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason")):
+                    result["committee_debate"] = {
+                        "bullish_analysis": bull_analysis,
+                        "bearish_analysis": bear_analysis
+                    }
+                    return result
+                else:
+                    raise ValueError(f"Malformed schema returned: {result}")
+                    
+            except concurrent.futures.TimeoutError:
+                logging.error(f"Chief AI timeout with {model_name} (120s)")
+                break
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
+                    logging.warning(f"Chief rate limited on {model_name}, attempt {attempt+1}. Sleeping 5s...")
+                    time.sleep(5)
+                    continue
+                logging.error(f"Chief AI error with {model_name}: {sanitize_error(e)}")
+                break
 
     try:
         LogRepository.log_event("ERROR", "CIRCUIT BREAKER: AI Committee failed or timed out. Defaulting to HOLD.")

@@ -14,6 +14,10 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
                 log_msg("INFO", f"📉 Adjusted SELL qty for {symbol} from {qty} to {safe_qty} to prevent -2010 Insufficient Balance error.")
             qty = safe_qty
 
+    if qty <= 0:
+        log_msg("WARNING", f"⚠️ Skipped {side} for {symbol} because quantity is <= 0.")
+        return None
+
     try:
         order = place_market_order(symbol, side, qty, is_paper=is_paper)
         avg_price = order.get('parsed_avg_price', price)

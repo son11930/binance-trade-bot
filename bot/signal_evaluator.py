@@ -139,10 +139,11 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
         state = state_manager.get_state(symbol)
         
         if signal == "BUY" and state.position == 0:
-            time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
-            if time_since_trade < COOLDOWN_MINUTES:
-                log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping BUY signal.")
-                return
+            if state.last_trade_time:
+                time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
+                if time_since_trade < COOLDOWN_MINUTES:
+                    log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping BUY signal.")
+                    return
 
             update_bot_state(state_manager, f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol)
             

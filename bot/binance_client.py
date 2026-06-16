@@ -102,9 +102,20 @@ def get_step_size(symbol: str) -> float:
         log_msg("ERROR", f"Error fetching step size for {symbol}: {e}")
     return 0.00001 # safe fallback
 
+from decimal import Decimal, ROUND_DOWN
+
 def round_step_size(quantity: float, step_size: float) -> float:
-    precision = int(round(-math.log(step_size, 10), 0))
-    return math.floor(quantity * (10**precision)) / (10**precision)
+    try:
+        dec_qty = Decimal(str(quantity))
+        dec_step = Decimal(str(step_size))
+        # Floor division ensures we round down to nearest multiple of step_size
+        rounded = (dec_qty // dec_step) * dec_step
+        return float(rounded)
+    except Exception as e:
+        log_msg("ERROR", f"Error in round_step_size: {e}")
+        # Fallback to math
+        precision = int(round(-math.log(step_size, 10), 0))
+        return math.floor(quantity * (10**precision)) / (10**precision)
 
 def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool = True):
     """

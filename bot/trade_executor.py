@@ -1,10 +1,19 @@
-from .binance_client import place_market_order
+from .binance_client import place_market_order, get_live_asset_balance
 from .database import TradeRepository
 from .logger import log_msg
 from .risk_manager import calculate_pnl
 from .state import StateManager
 
 def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True):
+    if side == "SELL" and not is_paper:
+        base_asset = symbol.replace("USDT", "")
+        actual_balance = get_live_asset_balance(base_asset)
+        if actual_balance is not None:
+            safe_qty = min(qty, actual_balance)
+            if safe_qty < qty:
+                log_msg("INFO", f"📉 Adjusted SELL qty for {symbol} from {qty} to {safe_qty} to prevent -2010 Insufficient Balance error.")
+            qty = safe_qty
+
     try:
         order = place_market_order(symbol, side, qty, is_paper=is_paper)
         avg_price = order.get('parsed_avg_price', price)

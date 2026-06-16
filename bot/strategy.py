@@ -201,7 +201,7 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
             strategy_used="SIDEWAYS_RSI_BB",
             stop_loss=price - (atr * 1.5),
             take_profit=bb_upper,
-            time_in_trade=10,
+            time_in_trade=16,
             near_miss_reason=""
         )
         

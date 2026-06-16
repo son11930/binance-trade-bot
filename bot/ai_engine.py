@@ -64,6 +64,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     
     tech_context = ""
     if tech_data:
+        vol_surge_fmt = f"{tech_data.get('vol_surge_multiplier', 1.0):.1f}x Normal Volume"
         tech_context = f"""
     <technical_context>
     Current Strategy: {tech_data.get('strategy_used', 'UNKNOWN')}
@@ -73,6 +74,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     ATR: {tech_data.get('atr', 'N/A')}
     Bollinger_Band_Width: {tech_data.get('bb_width', 'N/A')}
     Distance_to_SMA_200 (%): {tech_data.get('dist_sma_200', 'N/A')}
+    Volume_Surge_Multiplier: {vol_surge_fmt}
     </technical_context>
         """
 

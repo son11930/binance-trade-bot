@@ -11,7 +11,7 @@ from .webhook_notifier import update_bot_state
 from .binance_client import get_current_price
 from .state import StateManager
 
-def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, current_holding_value: float, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val):
+def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, current_holding_value: float, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
     try:
         if strategy_used == "SIDEWAYS_RSI_BB":
             from .binance_client import analyze_order_book_walls
@@ -25,7 +25,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "macd_histogram": macd_histogram_val,
             "atr": atr_val,
             "bb_width": bb_width_val,
-            "dist_sma_200": dist_sma_200_val
+            "dist_sma_200": dist_sma_200_val,
+            "vol_surge_multiplier": vol_surge_val
         }
         
         latest_news = state_manager.latest_news
@@ -130,11 +131,13 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             atr_val = latest_kline.get('ATR', 'N/A')
             bb_width_val = latest_kline.get('Bollinger_Band_Width', 'N/A')
             dist_sma_200_val = latest_kline.get('Distance_to_SMA_200', 'N/A')
+            vol_sma = latest_kline.get('SMA_20_Vol', 0)
+            vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0
             
             # Dispatch to background thread to prevent blocking websocket
             threading.Thread(target=_evaluate_buy_signal, args=(
                 state_manager, symbol, current_price, strategy_used, sl_target, tp_target, time_limit, 
-                adx_val, rsi_val, current_holding_value, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val
+                adx_val, rsi_val, current_holding_value, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
             ), daemon=True).start()
             
         elif signal == "SELL" and state.position > 0:
@@ -148,9 +151,10 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
                 state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
         else:
             # Added to give the user visual feedback that the bot is alive and evaluating
-            log_msg("INFO", f"🕯️ Evaluated {symbol} at {current_price:.4f} -> Result: HOLD")
-                
-                
+            if getattr(signal_plan, 'near_miss_reason', ""):
+                log_msg("NEAR_MISS", f"[{symbol}] Near Miss ({strategy_used}): {signal_plan.near_miss_reason}")
+            else:
+                log_msg("INFO", f"🕯️ Evaluated {symbol} at {current_price:.4f} -> Result: HOLD")
     except Exception as e:
         log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
         state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES) + timedelta(minutes=5))

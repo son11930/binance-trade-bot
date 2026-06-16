@@ -18,6 +18,11 @@ from pydantic import BaseModel, Field
 from typing import Dict, Optional, List, Any
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
+
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 load_dotenv()
 
 from bot.database import Trade, init_db, SystemLog, SessionLocal, setup_logging
@@ -175,12 +180,19 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="AI Trading Dashboard", lifespan=lifespan)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
 
 def get_db_updates():
     db = SessionLocal()
     try:
         trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
-        logs = db.query(SystemLog).order_by(SystemLog.id.desc()).limit(500).all()
+        
+        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+        logs = db.query(SystemLog).filter(SystemLog.timestamp >= twenty_four_hours_ago).order_by(SystemLog.id.desc()).limit(1000).all()
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)
@@ -194,7 +206,6 @@ def get_db_updates():
         traceback.print_exc()
         
         # Return the error as a fake log so it appears on the dashboard
-        from datetime import datetime, timezone
         error_log = [{
             "id": 999999,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -246,9 +257,12 @@ async def receive_broadcast(state: BroadcastState, auth: bool = Depends(verify_t
     return {"status": "ok"}
 
 
+allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000")
+allowed_origins = [origin.strip() for origin in allowed_origins_str.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=allowed_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -257,32 +271,9 @@ class LoginRequest(BaseModel):
     username: str = Field(..., max_length=50)
     password: str = Field(..., max_length=72)
 
-login_attempts = {}
-
 @app.post("/api/login")
+@limiter.limit("5/minute")
 def login(req: LoginRequest, request: Request):
-    client_ip = request.client.host
-    now = time.time()
-    
-    # Cleanup old entries to prevent memory leak DoS
-    if len(login_attempts) > 1000:
-        keys_to_delete = [ip for ip, times in login_attempts.items() if not times or now - times[-1] >= 60]
-        for k in keys_to_delete:
-            del login_attempts[k]
-        # If still too large, clear completely to save memory
-        if len(login_attempts) > 1000:
-            login_attempts.clear()
-            
-    if client_ip in login_attempts:
-        attempts = [t for t in login_attempts[client_ip] if now - t < 60]
-        if len(attempts) >= 5:
-            raise HTTPException(status_code=429, detail="Too many login attempts. Please try again later.")
-        login_attempts[client_ip] = attempts
-    else:
-        login_attempts[client_ip] = []
-        
-    login_attempts[client_ip].append(now)
-    
     try:
         password_matches = bcrypt.checkpw(req.password.encode('utf-8'), PASS.encode('utf-8'))
     except Exception:
@@ -297,6 +288,22 @@ def login(req: LoginRequest, request: Request):
 
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # WS rate limit (tracked via ip)
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    if not hasattr(app.state, "ws_connections"):
+        app.state.ws_connections = {}
+    
+    now = time.time()
+    if client_ip in app.state.ws_connections:
+        conns = [t for t in app.state.ws_connections[client_ip] if now - t < 60]
+        if len(conns) >= 20:
+            await websocket.close(code=1008, reason="Too many connections")
+            return
+        conns.append(now)
+        app.state.ws_connections[client_ip] = conns
+    else:
+        app.state.ws_connections[client_ip] = [now]
+
     await manager.connect(websocket)
     try:
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)

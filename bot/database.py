@@ -29,8 +29,10 @@ def sanitize_text(text: str) -> str:
         import hmac
         auth_token = hmac.new(salt.encode(), f"{user}:{pwd}".encode(), hashlib.sha256).hexdigest()
         webhook_token = hmac.new(salt.encode(), f"{user}_webhook".encode(), hashlib.sha256).hexdigest()
+        jwt_secret = hmac.new(salt.encode(), b"jwt", hashlib.sha256).hexdigest()
         secrets.append(("AUTH_TOKEN", auth_token))
         secrets.append(("WEBHOOK_TOKEN", webhook_token))
+        secrets.append(("JWT_SECRET", jwt_secret))
     
     db_url = os.getenv("DATABASE_URL")
     if db_url:
@@ -136,7 +138,7 @@ class TradeRepository:
     def get_last_buy_price(symbol: str) -> float:
         db = SessionLocal()
         try:
-            trade = db.query(Trade).filter(Trade.symbol == symbol).order_by(Trade.timestamp.desc()).first()
+            trade = db.query(Trade).filter(Trade.symbol == symbol).order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
             if trade and trade.side == 'BUY':
                 return trade.price
             return 0.0

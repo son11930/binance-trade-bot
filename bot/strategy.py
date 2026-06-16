@@ -9,6 +9,7 @@ class SignalPlan(NamedTuple):
     stop_loss: float
     take_profit: float
     time_in_trade: int
+    near_miss_reason: str = ""
 
 
 def apply_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -123,6 +124,9 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
+    vol_surge_multiplier = vol_curr / vol_sma if vol_sma > 0 else 1.0
+    rsi_limit = 75 if vol_surge_multiplier >= 3.0 else 70
+    
     # Check if MACD crossed above signal within last 3 periods
     recent_macd_cross = False
     if len(df) >= 3:
@@ -133,14 +137,22 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
                 recent_macd_cross = True
                 break
 
-    # BUY: MACD crossed ABOVE Signal Line in last 3 periods AND Price > SMA 200 AND RSI < 65 AND Volume > 1.5x SMA
-    if recent_macd_cross and price > sma_200 and rsi_curr < 65 and vol_curr > (vol_sma * 1.5):
+    near_miss_reason = ""
+    if recent_macd_cross and price > sma_200:
+        if rsi_curr >= rsi_limit:
+            near_miss_reason = f"RSI too high ({rsi_curr:.1f} >= {rsi_limit})"
+        elif vol_curr <= (vol_sma * 1.5):
+            near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma * 1.5:.1f})"
+
+    # BUY: MACD crossed ABOVE Signal Line in last 3 periods AND Price > SMA 200 AND RSI < dynamic limit AND Volume > 1.5x SMA
+    if recent_macd_cross and price > sma_200 and rsi_curr < rsi_limit and vol_curr > (vol_sma * 1.5):
         return SignalPlan(
             action="BUY",
             strategy_used="TREND_MACD",
             stop_loss=price - (atr * 1.5), # Keep trailing SL
             take_profit=0.0,               # Remove fixed TP for trend riding
-            time_in_trade=24
+            time_in_trade=24,
+            near_miss_reason=""
         )
         
     # SELL: MACD crosses BELOW Signal Line
@@ -150,7 +162,8 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
             strategy_used="TREND_MACD",
             stop_loss=0.0,
             take_profit=0.0,
-            time_in_trade=0
+            time_in_trade=0,
+            near_miss_reason=""
         )
         
     return SignalPlan(
@@ -158,7 +171,8 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
         strategy_used="TREND_MACD",
         stop_loss=0.0,
         take_profit=0.0,
-        time_in_trade=0
+        time_in_trade=0,
+        near_miss_reason=near_miss_reason
     )
 
 def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
@@ -173,14 +187,22 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # BUY: RSI crosses back ABOVE 30 (Reversal) AND price near lower BB AND Volume <= SMA
-    if rsi_curr > 30 and rsi_prev <= 30 and price <= bb_lower * 1.01 and vol_curr <= vol_sma:
+    rsi_hook = rsi_curr > rsi_prev and rsi_prev <= 40
+    
+    near_miss_reason = ""
+    if rsi_hook and price <= bb_lower * 1.01:
+        if vol_curr > vol_sma * 1.5:
+            near_miss_reason = f"Volume too high ({vol_curr:.1f} > {vol_sma * 1.5:.1f})"
+
+    # BUY: RSI Hook AND price near lower BB AND Volume <= 1.5x SMA
+    if rsi_hook and price <= bb_lower * 1.01 and vol_curr <= vol_sma * 1.5:
         return SignalPlan(
             action="BUY",
             strategy_used="SIDEWAYS_RSI_BB",
-            stop_loss=price - (atr * 1.5), 
-            take_profit=latest['BB_Upper'],             
-            time_in_trade=10                  
+            stop_loss=price - (atr * 1.5),
+            take_profit=bb_upper,
+            time_in_trade=10,
+            near_miss_reason=""
         )
         
     # SELL: RSI crosses back BELOW 70 (Reversal confirmation) AND price is near upper BB
@@ -190,7 +212,8 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
             strategy_used="SIDEWAYS_RSI_BB",
             stop_loss=0.0,
             take_profit=0.0,
-            time_in_trade=0
+            time_in_trade=0,
+            near_miss_reason=""
         )
         
     return SignalPlan(
@@ -198,5 +221,6 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
         strategy_used="SIDEWAYS_RSI_BB",
         stop_loss=0.0,
         take_profit=0.0,
-        time_in_trade=0
+        time_in_trade=0,
+        near_miss_reason=near_miss_reason
     )

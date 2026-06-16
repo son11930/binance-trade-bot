@@ -188,3 +188,44 @@ def test_execute_sideways_strategy_hold():
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
     assert result.action == "HOLD"
+
+def test_execute_trend_strategy_buy_dynamic_rsi():
+    # Volume is 3x the SMA, so RSI 72 should be allowed (limit is 75)
+    df = pd.DataFrame({'MACD': [-1, 1, 2], 'MACD_Signal': [0, 0, 1]})
+    prev = pd.Series({'MACD': 1, 'MACD_Signal': 0})
+    latest = pd.Series({'MACD': 2, 'MACD_Signal': 1, 'SMA_200': 10, 'RSI': 72, 'volume': 3000, 'SMA_20_Vol': 1000})
+    price = 15
+    atr = 2
+    result = execute_trend_strategy(df, latest, prev, price, atr)
+    assert result.action == "BUY"
+
+def test_execute_trend_strategy_near_miss_rsi():
+    # Volume is normal, RSI is 68 (limit is 70). Oh wait, limit is 70 for normal.
+    # Let's say RSI is 72, volume is normal. It should HOLD and return near_miss_reason.
+    df = pd.DataFrame({'MACD': [-1, 1, 2], 'MACD_Signal': [0, 0, 1]})
+    prev = pd.Series({'MACD': 1, 'MACD_Signal': 0})
+    latest = pd.Series({'MACD': 2, 'MACD_Signal': 1, 'SMA_200': 10, 'RSI': 72, 'volume': 1600, 'SMA_20_Vol': 1000})
+    price = 15
+    atr = 2
+    result = execute_trend_strategy(df, latest, prev, price, atr)
+    assert result.action == "HOLD"
+    assert "RSI too high" in result.near_miss_reason
+
+def test_execute_sideways_strategy_buy_rsi_hook():
+    # RSI turns up from <= 40
+    prev = pd.Series({'RSI': 38})
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1400, 'SMA_20_Vol': 1000})
+    price = 10
+    atr = 2
+    result = execute_sideways_strategy(latest, prev, price, atr)
+    assert result.action == "BUY"
+
+def test_execute_sideways_strategy_near_miss_volume():
+    # RSI hook is perfect, price is perfect, but volume is too high
+    prev = pd.Series({'RSI': 38})
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 2000, 'SMA_20_Vol': 1000})
+    price = 10
+    atr = 2
+    result = execute_sideways_strategy(latest, prev, price, atr)
+    assert result.action == "HOLD"
+    assert "Volume too high" in result.near_miss_reason

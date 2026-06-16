@@ -1,5 +1,18 @@
+## [4.2.0] - 2026-06-16
+### Near Miss Tracking & API Security
+**English:**
+- **Near Miss Logging**: Track and log reasons why strategies do not execute a trade (e.g., "RSI_TOO_HIGH", "NO_VOLUME_SURGE").
+- **Dashboard Filter**: Added a UI toggle switch to hide/show "Near Miss" logs, preventing dashboard clutter.
+- **24-Hour Log Window**: Optimized database queries to only fetch `SystemLog` entries from the last 24 hours.
+- **Production Security**: Integrated `slowapi` for strict `/api/login` rate limiting (5/min), secured `/api/ws` concurrent connections, enforced SQLAlchemy ORM models to prevent SQL Injection, and enabled dynamic CORS origins via `.env`.
+
+**Thai (ภาษาไทย):**
+- **ระบบติดตามสาเหตุที่ไม่ได้ซื้อ (Near Miss)**: เพิ่มการบันทึกสาเหตุที่บอทตัดสินใจไม่เข้าซื้อในจังหวะที่เกือบเข้าเงื่อนไข (เช่น RSI สูงไป, วอลุ่มไม่พอ)
+- **ปุ่มกรองข้อมูล Dashboard**: เพิ่มปุ่มสวิตช์ปิด/เปิด ข้อมูล Near Miss Log เพื่อไม่ให้หน้าเว็บรกเกินไป
+- **แสดงผลย้อนหลัง 24 ชั่วโมง**: ปรับจูนฐานข้อมูลให้ดึงประวัติแค่ 24 ชั่วโมงล่าสุด เพื่อให้ UI โหลดเร็วขึ้นและไม่กินเมมโมรี่
+- **ยกระดับความปลอดภัย (Security)**: ติดตั้ง `slowapi` ป้องกันคนเดารหัสผ่านรัวๆ, ป้องกัน Database จากการโจมตี (SQL Injection), จำกัดการเชื่อมต่อ WebSocket และปรับแต่ง CORS ให้ปลอดภัยขึ้น
+
 ## [4.1.0] - 2026-06-16
-### AI Autonomous Allocation & 20-Coin Expansion
 **English:**
 - **Asset Universe Expansion**: Expanded the `SYMBOLS` scan list from 10 to 20 Top Cryptocurrencies (L1/DeFi), strictly excluding Meme coins to improve fundamental indicator reliability.
 - **Dynamic AI Position Sizing**: Upgraded the AI `chief_prompt` to dynamically calculate and output a precise `allocation_percentage` based on Risk/EV evaluation.

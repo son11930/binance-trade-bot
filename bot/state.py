@@ -1,7 +1,7 @@
 import threading
 import json
 import os
-from dataclasses import dataclass, replace, asdict
+from dataclasses import dataclass, replace, asdict, fields
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -45,7 +45,9 @@ class StateManager:
                                 s_data["last_trade_time"] = datetime.fromisoformat(s_data["last_trade_time"])
                             if s_data.get("trade_entry_time"):
                                 s_data["trade_entry_time"] = datetime.fromisoformat(s_data["trade_entry_time"])
-                            self._states[sym] = replace(self._states[sym], **s_data)
+                            valid_keys = {f.name for f in fields(self._states[sym])}
+                            filtered_data = {k: v for k, v in s_data.items() if k in valid_keys}
+                            self._states[sym] = replace(self._states[sym], **filtered_data)
                 log_msg("INFO", "✅ Successfully loaded internal bot state.")
             except Exception as e:
                 log_msg("ERROR", f"Failed to load internal state: {e}")
@@ -60,8 +62,10 @@ class StateManager:
                 if s_dict["trade_entry_time"]:
                     s_dict["trade_entry_time"] = s_dict["trade_entry_time"].isoformat()
                 data[sym] = s_dict
-            with open(self._state_file, "w") as f:
+            tmp_file = f"{self._state_file}.tmp"
+            with open(tmp_file, "w") as f:
                 json.dump(data, f)
+            os.replace(tmp_file, self._state_file)
         except Exception as e:
             log_msg("ERROR", f"Failed to save internal state: {e}")
 
@@ -73,7 +77,8 @@ class StateManager:
         with self._lock:
             if symbol in self._states:
                 self._states[symbol] = replace(self._states[symbol], **kwargs)
-                self._save_state()
+                if any(k not in ['last_price', 'highest_price'] for k in kwargs):
+                    self._save_state()
 
     def get_all_states(self) -> Dict[str, SymbolState]:
         with self._lock:
@@ -154,3 +159,4 @@ class StateManager:
                         self._states[symbol] = replace(state, position=real_bal, buy_price=bp)
                     else:
                         self._states[symbol] = replace(state, position=real_bal)
+            self._save_state()

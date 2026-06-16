@@ -274,6 +274,10 @@
                 <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">System Debug Log</h2>
                 <div class="flex items-center space-x-4">
                     <label class="flex items-center space-x-2 cursor-pointer">
+                        <input type="checkbox" id="toggle-routine-evals" class="form-checkbox h-4 w-4 text-neonCyan bg-slate-800 border-slate-600 rounded focus:ring-neonCyan">
+                        <span class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Show HOLD</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer">
                         <input type="checkbox" id="toggle-near-miss" class="form-checkbox h-4 w-4 text-neonCyan bg-slate-800 border-slate-600 rounded focus:ring-neonCyan">
                         <span class="text-xs text-slate-400 uppercase tracking-widest font-semibold">Show Near Miss</span>
                     </label>
@@ -536,6 +540,9 @@
         document.getElementById('toggle-near-miss').addEventListener('change', () => {
             renderLogs();
         });
+        document.getElementById('toggle-routine-evals').addEventListener('change', () => {
+            renderLogs();
+        });
 
         function renderLogs() {
             if(!globalLogsData) return;
@@ -543,10 +550,12 @@
             container.innerHTML = '';
             
             const showNearMiss = document.getElementById('toggle-near-miss').checked;
+            const showRoutineEvals = document.getElementById('toggle-routine-evals').checked;
             const sortedLogs = [...globalLogsData].slice(0, 500).reverse();
             
             sortedLogs.forEach(log => {
                 if (log.level === 'NEAR_MISS' && !showNearMiss) return;
+                if (!showRoutineEvals && log.message.includes('-> Result: HOLD')) return;
 
                 const div = document.createElement('div');
                 div.className = 'mb-1';

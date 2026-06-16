@@ -78,40 +78,35 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     </technical_context>
         """
 
-    bullish_prompt = f"""
-    You are the Bullish Analyst for the asset {sanitized_symbol}.
-    Your goal is to find momentum and reasons to BUY based on this data:
+    chief_prompt = f"""
+    You are the Chief Crypto Strategist evaluating a potential trade for {sanitized_symbol}.
+    Your goal is to conduct an internal debate (Bullish vs Bearish) and then provide a final actionable decision based on Expected Value (EV).
     
-    <news_headlines>
+    <raw_data>
+    News:
     {sanitized_news}
-    </news_headlines>
+    
     {tech_context}
+    </raw_data>
     
-    1. Look for volume confirmation and momentum.
-    2. Assess multi-timeframe alignment.
-    3. Identify Reward-to-Risk (R:R) targets.
+    Step 1. Conduct a Bullish Analysis: Find momentum, volume confirmation, and reasons to BUY.
+    Step 2. Conduct a Bearish Analysis: Actively invalidate the trade. Look for fake-outs, bull traps, divergence, and regime conflicts.
+    Step 3. Weigh the Expected Value. Do the upside targets outweigh the downside risks?
+    Step 4. Determine an actionable Risk Score. Higher risk = smaller position.
+    Step 5. If BUY, determine the allocation_percentage between 10 and 40 (e.g. highly confident/low risk = 40, moderate = 20, high risk = 10).
     
-    Provide a concise analysis focusing ONLY on why this is a strong setup.
+    Output a strictly valid JSON object with the following schema:
+    {{
+        "bullish_analysis": "short bullish case",
+        "bearish_analysis": "short bearish case",
+        "decision": "BUY" or "HOLD",
+        "risk_score": integer between 0 and 100,
+        "allocation_percentage": integer between 10 and 40,
+        "reason": "short explanation for the final decision"
+    }}
     """
 
-    bearish_prompt = f"""
-    You are the Bearish Risk Manager for the asset {sanitized_symbol}.
-    Your goal is to actively invalidate this trade and find risks:
-    
-    <news_headlines>
-    {sanitized_news}
-    </news_headlines>
-    {tech_context}
-    
-    1. Look for fake-outs, bull traps, and stop hunts.
-    2. Check for regime conflict (e.g. buying top of range in Sideways).
-    3. Check for bearish divergence.
-    4. Consider broader market correlation risks.
-    
-    Provide a concise analysis focusing ONLY on why this trade might fail.
-    """
-
-    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-flash-latest']
+    models_to_try = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash']
     
     import time
     import threading
@@ -130,65 +125,6 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
             analyze_sentiment.last_call = time.time()
             
         return client.models.generate_content(model=m_name, contents=p, config=conf)
-        
-    def _get_analysis(prompt_text):
-        conf = types.GenerateContentConfig()
-        for m in models_to_try:
-            for attempt in range(2):
-                try:
-                    res = _call_model(m, prompt_text, conf)
-                    return res.text
-                except Exception as e:
-                    err_str = str(e)
-                    if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
-                        logging.warning(f"Rate limited on {m}, attempt {attempt+1}. Sleeping 5s...")
-                        time.sleep(5)
-                        continue
-                    logging.error(f"AI analysis error with {m}: {sanitize_error(e)}")
-                    break
-        raise Exception("All models failed for analysis")
-
-    try:
-        bull_future = ai_executor.submit(_get_analysis, bullish_prompt)
-        bear_future = ai_executor.submit(_get_analysis, bearish_prompt)
-        
-        bull_analysis = bull_future.result(timeout=120)
-        bear_analysis = bear_future.result(timeout=120)
-    except Exception as e:
-        logging.error(f"AI Committee error: {sanitize_error(e)}")
-        bull_analysis = "No analysis available."
-        bear_analysis = "No analysis available."
-
-    chief_prompt = f"""
-    You are the Chief Strategist evaluating a potential trade for {sanitized_symbol}.
-    You have received the following reports from your committee:
-    
-    <bullish_analysis>
-    {bull_analysis}
-    </bullish_analysis>
-    
-    <bearish_analysis>
-    {bear_analysis}
-    </bearish_analysis>
-    
-    <raw_data>
-    {sanitized_news}
-    {tech_context}
-    </raw_data>
-    
-    Focus on Expected Value (EV). Do the upside targets outweigh the downside risks?
-    Provide an actionable Risk Score. Higher risk = smaller position.
-    If you BUY, define strict invalidation levels.
-    Determine the ideal position size based on Expected Value and risk. Return an allocation_percentage between 10 and 40. (e.g. highly confident/low risk = 40, moderate = 20, high risk = 10).
-    
-    Output a strictly valid JSON object with the following schema:
-    {{
-        "decision": "BUY" or "HOLD",
-        "risk_score": integer between 0 and 100,
-        "allocation_percentage": integer between 10 and 40,
-        "reason": "short explanation based on the debate"
-    }}
-    """
     
     last_error = "Unknown Error"
     for model_name in models_to_try:
@@ -208,10 +144,13 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 
                 result = json.loads(raw_text.strip())
                 
-                if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason")):
+                if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason", "bullish_analysis", "bearish_analysis")):
+                    # Reformat to match what main.py expects
+                    bull = result.pop("bullish_analysis")
+                    bear = result.pop("bearish_analysis")
                     result["committee_debate"] = {
-                        "bullish_analysis": bull_analysis,
-                        "bearish_analysis": bear_analysis
+                        "bullish_analysis": bull,
+                        "bearish_analysis": bear
                     }
                     return result
                 else:
@@ -221,10 +160,10 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 err_str = str(e)
                 last_error = err_str
                 if "429" in err_str or "quota" in err_str.lower() or "too many" in err_str.lower():
-                    logging.warning(f"Chief rate limited on {model_name}, attempt {attempt+1}. Sleeping 5s...")
+                    logging.warning(f"Rate limited on {model_name}, attempt {attempt+1}. Sleeping 5s...")
                     time.sleep(5)
                     continue
-                logging.error(f"Chief AI error with {model_name}: {sanitize_error(e)}")
+                logging.error(f"AI error with {model_name}: {sanitize_error(e)}")
                 break
 
     try:

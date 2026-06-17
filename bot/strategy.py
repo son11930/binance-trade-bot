@@ -189,13 +189,23 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
     
     rsi_hook = rsi_curr > rsi_prev and rsi_prev <= 40
     
+    # 1. Price Action Proof of Absorption
+    is_green_candle = latest.get('close', 0) > latest.get('open', 0)
+    candle_range = latest.get('high', 0) - latest.get('low', 0)
+    lower_wick = min(latest.get('open', 0), latest.get('close', 0)) - latest.get('low', 0)
+    is_strong_rejection = (lower_wick / candle_range) > 0.4 if candle_range > 0 else False
+    
+    # 2. Dynamic Volume Cap
+    vol_limit_multiplier = 3.0 if (is_green_candle or is_strong_rejection) else 1.5
+    dynamic_vol_limit = vol_sma * vol_limit_multiplier
+    
     near_miss_reason = ""
     if rsi_hook and price <= bb_lower * 1.01:
-        if vol_curr > vol_sma * 1.5:
-            near_miss_reason = f"Volume too high ({vol_curr:.1f} > {vol_sma * 1.5:.1f})"
+        if vol_curr > dynamic_vol_limit:
+            near_miss_reason = f"Volume too high ({vol_curr:.1f} > {dynamic_vol_limit:.1f})"
 
-    # BUY: RSI Hook AND price near lower BB AND Volume <= 1.5x SMA
-    if rsi_hook and price <= bb_lower * 1.01 and vol_curr <= vol_sma * 1.5:
+    # BUY: RSI Hook AND price near lower BB AND Volume <= Dynamic Limit
+    if rsi_hook and price <= bb_lower * 1.01 and vol_curr <= dynamic_vol_limit:
         return SignalPlan(
             action="BUY",
             strategy_used="SIDEWAYS_RSI_BB",

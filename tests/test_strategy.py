@@ -156,18 +156,18 @@ def test_execute_trend_strategy_hold():
 
 def test_execute_sideways_strategy_buy():
     prev = pd.Series({'RSI': 20})
-    latest = pd.Series({'RSI': 35, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 500, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 35, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 500, 'SMA_20_Vol': 1000, 'open': 10, 'close': 10, 'high': 10, 'low': 10})
     price = 10
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
     assert result.action == "BUY"
     assert result.stop_loss == 10 - (2 * 1.5)
     assert result.take_profit == 20
-    assert result.time_in_trade == 10
+    assert result.time_in_trade == 16
 
 def test_execute_sideways_strategy_sell_condition_1():
     prev = pd.Series({'RSI': 75})
-    latest = pd.Series({'RSI': 65, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 65, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000, 'open': 20, 'close': 19.9, 'high': 20, 'low': 19})
     price = 19.9
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
@@ -175,7 +175,7 @@ def test_execute_sideways_strategy_sell_condition_1():
 
 def test_execute_sideways_strategy_sell_condition_2():
     prev = pd.Series({'RSI': 50})
-    latest = pd.Series({'RSI': 50, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 50, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000, 'open': 20, 'close': 21, 'high': 21, 'low': 20})
     price = 21
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
@@ -183,7 +183,7 @@ def test_execute_sideways_strategy_sell_condition_2():
 
 def test_execute_sideways_strategy_hold():
     prev = pd.Series({'RSI': 50})
-    latest = pd.Series({'RSI': 50, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 50, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1000, 'SMA_20_Vol': 1000, 'open': 15, 'close': 15, 'high': 15, 'low': 15})
     price = 15
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
@@ -214,18 +214,40 @@ def test_execute_trend_strategy_near_miss_rsi():
 def test_execute_sideways_strategy_buy_rsi_hook():
     # RSI turns up from <= 40
     prev = pd.Series({'RSI': 38})
-    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1400, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 1400, 'SMA_20_Vol': 1000, 'open': 10, 'close': 10, 'high': 10, 'low': 10})
     price = 10
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
     assert result.action == "BUY"
 
 def test_execute_sideways_strategy_near_miss_volume():
-    # RSI hook is perfect, price is perfect, but volume is too high
+    # RSI hook is perfect, price is perfect, but volume is too high and NO absorption (red candle, small wick)
     prev = pd.Series({'RSI': 38})
-    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 2000, 'SMA_20_Vol': 1000})
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 2000, 'SMA_20_Vol': 1000, 'open': 10.5, 'close': 10, 'high': 10.5, 'low': 9.9})
+    # range = 0.6, wick = 10 - 9.9 = 0.1 (which is < 40%)
     price = 10
     atr = 2
     result = execute_sideways_strategy(latest, prev, price, atr)
     assert result.action == "HOLD"
     assert "Volume too high" in result.near_miss_reason
+
+def test_execute_sideways_strategy_buy_absorption_green_candle():
+    # High volume (2.5x), but it's a green candle (close > open)
+    prev = pd.Series({'RSI': 38})
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 2500, 'SMA_20_Vol': 1000, 'open': 9.8, 'close': 10.0, 'high': 10.1, 'low': 9.5})
+    price = 10
+    atr = 2
+    result = execute_sideways_strategy(latest, prev, price, atr)
+    assert result.action == "BUY"
+    assert result.strategy_used == "SIDEWAYS_RSI_BB"
+
+def test_execute_sideways_strategy_buy_absorption_long_wick():
+    # High volume (2.5x), red candle, but long lower wick (>40%)
+    prev = pd.Series({'RSI': 38})
+    # Open: 10.2, Close: 10.0, High: 10.2, Low: 9.0 -> Range: 1.2, Lower wick: 10.0 - 9.0 = 1.0 (>40%)
+    latest = pd.Series({'RSI': 45, 'BB_Lower': 10, 'BB_Upper': 20, 'volume': 2500, 'SMA_20_Vol': 1000, 'open': 10.2, 'close': 10.0, 'high': 10.2, 'low': 9.0})
+    price = 10
+    atr = 2
+    result = execute_sideways_strategy(latest, prev, price, atr)
+    assert result.action == "BUY"
+    assert result.strategy_used == "SIDEWAYS_RSI_BB"

@@ -199,7 +199,8 @@ def get_db_updates():
             SystemLog.timestamp >= twenty_four_hours_ago,
             ~SystemLog.message.like('%Queued%'),
             ~SystemLog.message.like('%Order Book Check%'),
-            ~SystemLog.message.like('%Load shedding%')
+            ~SystemLog.message.like('%Load shedding%'),
+            ~SystemLog.message.like('%in cooldown%')
         ).all()
         
         # Fetch recent noisy logs from last 1h only
@@ -207,7 +208,8 @@ def get_db_updates():
             SystemLog.timestamp >= one_hour_ago,
             (SystemLog.message.like('%Queued%')) | 
             (SystemLog.message.like('%Order Book Check%')) | 
-            (SystemLog.message.like('%Load shedding%'))
+            (SystemLog.message.like('%Load shedding%')) |
+            (SystemLog.message.like('%in cooldown%'))
         ).all()
         
         # Combine, sort by ID descending, and limit to 3000

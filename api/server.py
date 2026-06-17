@@ -192,7 +192,7 @@ def get_db_updates():
         trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
         
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        logs = db.query(SystemLog).filter(SystemLog.timestamp >= twenty_four_hours_ago).order_by(SystemLog.id.desc()).limit(1000).all()
+        logs = db.query(SystemLog).filter(SystemLog.timestamp >= twenty_four_hours_ago).order_by(SystemLog.id.desc()).limit(5000).all()
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)

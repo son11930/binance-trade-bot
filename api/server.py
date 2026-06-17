@@ -210,10 +210,10 @@ def get_db_updates():
             (SystemLog.message.like('%Load shedding%'))
         ).all()
         
-        # Combine, sort by ID descending, and limit to 1000 to keep WebSocket fast
+        # Combine, sort by ID descending, and limit to 3000
         combined_logs = important_logs + recent_noisy_logs
         combined_logs.sort(key=lambda x: x.id, reverse=True)
-        logs = combined_logs[:1000]
+        logs = combined_logs[:3000]
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)

@@ -197,7 +197,7 @@ def get_db_updates():
         # Fetch important logs from last 24h (Exclude noise)
         important_logs = db.query(SystemLog).filter(
             SystemLog.timestamp >= twenty_four_hours_ago,
-            ~SystemLog.message.like('%Queued%'),
+            ~SystemLog.message.like('%Result: HOLD%'),
             ~SystemLog.message.like('%Order Book Check%'),
             ~SystemLog.message.like('%Load shedding%'),
             ~SystemLog.message.like('%in cooldown%')
@@ -206,7 +206,7 @@ def get_db_updates():
         # Fetch recent noisy logs from last 1h only
         recent_noisy_logs = db.query(SystemLog).filter(
             SystemLog.timestamp >= one_hour_ago,
-            (SystemLog.message.like('%Queued%')) | 
+            (SystemLog.message.like('%Result: HOLD%')) | 
             (SystemLog.message.like('%Order Book Check%')) | 
             (SystemLog.message.like('%Load shedding%')) |
             (SystemLog.message.like('%in cooldown%'))

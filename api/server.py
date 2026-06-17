@@ -192,7 +192,28 @@ def get_db_updates():
         trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
         
         twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        logs = db.query(SystemLog).filter(SystemLog.timestamp >= twenty_four_hours_ago).order_by(SystemLog.id.desc()).limit(5000).all()
+        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        
+        # Fetch important logs from last 24h (Exclude noise)
+        important_logs = db.query(SystemLog).filter(
+            SystemLog.timestamp >= twenty_four_hours_ago,
+            ~SystemLog.message.like('%Queued%'),
+            ~SystemLog.message.like('%Order Book Check%'),
+            ~SystemLog.message.like('%Load shedding%')
+        ).all()
+        
+        # Fetch recent noisy logs from last 1h only
+        recent_noisy_logs = db.query(SystemLog).filter(
+            SystemLog.timestamp >= one_hour_ago,
+            (SystemLog.message.like('%Queued%')) | 
+            (SystemLog.message.like('%Order Book Check%')) | 
+            (SystemLog.message.like('%Load shedding%'))
+        ).all()
+        
+        # Combine, sort by ID descending, and limit to 1000 to keep WebSocket fast
+        combined_logs = important_logs + recent_noisy_logs
+        combined_logs.sort(key=lambda x: x.id, reverse=True)
+        logs = combined_logs[:1000]
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)

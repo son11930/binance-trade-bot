@@ -34,10 +34,16 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     }
     
     def _send():
-        try:
-            headers = {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
-            requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=5)
-        except Exception as e:
-            log_msg("WARNING", f"Webhook delivery failed: {e}")
+        import time
+        headers = {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
+        for attempt in range(3):
+            try:
+                requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    log_msg("WARNING", f"Webhook delivery failed after 3 attempts: {e}")
+                else:
+                    time.sleep(2)
             
     threading.Thread(target=_send, daemon=True).start()

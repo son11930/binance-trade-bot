@@ -38,7 +38,8 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
         headers = {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
         for attempt in range(3):
             try:
-                requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+                response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
+                response.raise_for_status()
                 break
             except Exception as e:
                 if attempt == 2:

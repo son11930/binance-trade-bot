@@ -10,10 +10,10 @@ from dotenv import load_dotenv
 
 from .database import LogRepository, sanitize_text
 
-def log_msg(level: str, msg: str):
+def log_msg(level: str, msg: str, market_type: str = 'spot'):
     safe_msg = sanitize_text(msg)
-    print(safe_msg)
-    LogRepository.log_event(level, safe_msg)
+    print(f"[{market_type.upper()}] {safe_msg}")
+    LogRepository.log_event(level, safe_msg, market_type=market_type)
 
 load_dotenv()
 
@@ -212,47 +212,47 @@ def futures_get_klines(symbol: str, interval: str, limit: int = 100) -> pd.DataF
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
         return df
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures klines for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching futures klines for {symbol}: {e}", market_type='futures')
         return pd.DataFrame()
 
 def futures_set_leverage(symbol: str, leverage: int = 3, is_paper: bool = True):
     """Set leverage for a specific futures symbol."""
     if is_paper:
-        log_msg("INFO", f"[PAPER] Skipped setting leverage to {leverage}x for {symbol}")
+        log_msg("INFO", f"[PAPER] Skipped setting leverage to {leverage}x for {symbol}", market_type='futures')
         return
     try:
         client.futures_change_leverage(symbol=symbol, leverage=leverage)
-        log_msg("INFO", f"Leverage set to {leverage}x for {symbol}")
+        log_msg("INFO", f"Leverage set to {leverage}x for {symbol}", market_type='futures')
     except Exception as e:
         if isinstance(e, BinanceAPIException) and "No need to change leverage" in str(e):
             return
-        log_msg("ERROR", f"Failed to set leverage for {symbol}: {e}")
+        log_msg("ERROR", f"Failed to set leverage for {symbol}: {e}", market_type='futures')
 
 def futures_set_position_mode(is_paper: bool = True):
     """Set Hedge Mode (Dual-Side Position) for Futures trading."""
     if is_paper:
-        log_msg("INFO", f"[PAPER] Skipped setting Hedge Mode (Dual-Side Position)")
+        log_msg("INFO", f"[PAPER] Skipped setting Hedge Mode (Dual-Side Position)", market_type='futures')
         return
     try:
         client.futures_change_position_mode(dualSidePosition="true")
-        log_msg("INFO", f"Hedge Mode (Dual-Side Position) enabled for Futures")
+        log_msg("INFO", f"Hedge Mode (Dual-Side Position) enabled for Futures", market_type='futures')
     except Exception as e:
         if isinstance(e, BinanceAPIException) and "No need to change position side" in str(e):
             return
-        log_msg("ERROR", f"Failed to set Hedge Mode for Futures: {e}")
+        log_msg("ERROR", f"Failed to set Hedge Mode for Futures: {e}", market_type='futures')
 
 def futures_set_margin_type(symbol: str, margin_type: str = "ISOLATED", is_paper: bool = True):
     """Set margin type for a specific futures symbol (ISOLATED or CROSSED)."""
     if is_paper:
-        log_msg("INFO", f"[PAPER] Skipped setting margin type to {margin_type} for {symbol}")
+        log_msg("INFO", f"[PAPER] Skipped setting margin type to {margin_type} for {symbol}", market_type='futures')
         return
     try:
         client.futures_change_margin_type(symbol=symbol, marginType=margin_type)
-        log_msg("INFO", f"Margin type set to {margin_type} for {symbol}")
+        log_msg("INFO", f"Margin type set to {margin_type} for {symbol}", market_type='futures')
     except Exception as e:
         if isinstance(e, BinanceAPIException) and "No need to change margin type" in str(e):
             return
-        log_msg("ERROR", f"Failed to set margin type for {symbol}: {e}")
+        log_msg("ERROR", f"Failed to set margin type for {symbol}: {e}", market_type='futures')
 
 def futures_get_current_price(symbol: str) -> float:
     try:

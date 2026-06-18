@@ -18,7 +18,7 @@ def main():
     
     # Configure Futures settings on real account
     if not PAPER_TRADING:
-        log_msg("INFO", f"Setting up Futures Margin ({FUTURES_MARGIN_TYPE}) and Leverage ({FUTURES_LEVERAGE}x)...")
+        log_msg("INFO", f"Setting up Futures Margin ({FUTURES_MARGIN_TYPE}) and Leverage ({FUTURES_LEVERAGE}x)...", market_type='futures')
         futures_set_position_mode(is_paper=False)
         for sym in SYMBOLS:
             futures_set_margin_type(sym, FUTURES_MARGIN_TYPE, is_paper=False)
@@ -38,7 +38,7 @@ def main():
         state_manager_spot.set_kline_buffer(sym, klines)
         
     # Fetch initial history for Futures
-    log_msg("INFO", "Fetching initial Futures 5m history...")
+    log_msg("INFO", "Fetching initial Futures 5m history...", market_type='futures')
     for sym in SYMBOLS:
         f_klines = futures_get_klines(sym, "5m", limit=250)
         state_manager_futures.set_kline_buffer(sym, f_klines)
@@ -64,9 +64,9 @@ def main():
             if hasattr(twm, 'start_kline_futures_socket'):
                 twm.start_kline_futures_socket(callback=ws_manager_futures.process_kline_message, symbol=sym, interval='5m')
             else:
-                log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_kline_futures_socket")
+                log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_kline_futures_socket", market_type='futures')
         except Exception as e:
-            log_msg("ERROR", f"Failed to start futures kline socket for {sym}: {e}")
+            log_msg("ERROR", f"Failed to start futures kline socket for {sym}: {e}", market_type='futures')
         
     log_msg("INFO", "WebSocket streams active. Waiting for candle closes...")
     update_bot_state(state_manager_spot, "Waiting for next candle close...", symbol="All")

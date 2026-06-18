@@ -1,3 +1,21 @@
+## [4.3.1] - 2026-06-19
+### TDD Quality Assurance & Deep Optimization
+**English:**
+- **TDD Validated**: Executed full agentic verification ensuring zero syntax errors and robust modularity.
+- **Stop-and-Reverse (SAR) Fix**: Fixed a bug where reversals would fail to open the opposing order.
+- **NaN ATR Protection**: Fixed `bot/risk_manager.py` risk threshold bypass when ATR calculates to NaN.
+- **Time-in-Trade Accuracy**: Fixed interval desync between Spot (15m) and Futures (5m).
+- **In-place Mutation Fix**: Solved race conditions and `SettingWithCopyWarning` by cloning DataFrames in the execution pool.
+- **State-Based Exits**: Changed edge-triggered MACD exits to state-based thresholds to guarantee exit reliability during network disconnections.
+
+**Thai (ภาษาไทย):**
+- **ตรวจสอบคุณภาพ 100% (TDD Validated)**: ตรวจโค้ดอย่างละเอียดโดย Agent มั่นใจว่าไม่มีบั๊กและพร้อมใช้งานจริง
+- **แก้บั๊กสลับฝั่ง (Stop and Reverse)**: แก้ไขให้ระบบปิดสถานะและเปิดอีกฝั่งสวนได้ทันทีแบบไม่มีอาการค้าง
+- **กันระบบพังตอน ATR เออเร่อ**: ดักจับค่า `NaN` ที่จะทำให้ระบบล็อคกำไร (Trailing Stop) ไม่ทำงาน
+- **แก้นาฬิกาจับเวลา**: ปรับจูนการนับแท่งเทียนให้แม่นยำขึ้น โดยแยกแยะเวลาแท่ง Spot (15 นาที) กับ Futures (5 นาที) ออกจากกัน
+- **แก้บั๊ก Thread ชนกัน**: สั่งจำลองข้อมูล (Clone) ก่อนโยนเข้าคิวเพื่อป้องกันไม่ให้ข้อมูลกราฟตีกันขณะทำงานพร้อมกัน
+- **ระบบ Exit แบบ State-based**: เปลี่ยนวิธีการปิดออร์เดอร์จากการรอดู "จังหวะเส้นตัด" มาดู "สถานะปัจจุบัน" ช่วยป้องกันปัญหาบอทไม่ยอมขายถ้าเน็ตกระตุกตรงจังหวะตัดพอดี
+
 ## [4.3.0] - 2026-06-18
 ### Dual-Engine (Spot & Futures) & Security Hardening
 **English:**

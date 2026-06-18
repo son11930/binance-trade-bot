@@ -645,18 +645,13 @@
                 let actionText = isBuy ? 'BUY' : 'SELL';
                 
                 if (trade.market_type === 'futures') {
-                    if (trade.ai_reasoning && trade.ai_reasoning.includes('SHORT')) {
-                        actionText = isBuy ? 'CLOSE SHORT' : 'SHORT';
-                        sideClass = isBuy ? 'text-slate-300' : 'text-neonRed glow-red';
-                    } else if (trade.ai_reasoning && trade.ai_reasoning.includes('LONG')) {
-                        actionText = isBuy ? 'LONG' : 'CLOSE LONG';
-                        sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-slate-300';
-                    } else if (trade.ai_reasoning === 'Manual Close') {
-                        actionText = 'MANUAL CLOSE';
-                        sideClass = 'text-yellow-400 glow-yellow';
+                    const isClosing = trade.pnl_amount !== null && trade.pnl_amount !== undefined;
+                    if (isClosing) {
+                        actionText = isBuy ? 'CLOSE SHORT' : 'CLOSE LONG';
+                        sideClass = 'text-slate-400';
                     } else {
-                        // Default fallback
                         actionText = isBuy ? 'LONG' : 'SHORT';
+                        sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
                     }
                 }
                 

@@ -61,10 +61,10 @@ def main():
         
         # Futures Streams
         try:
-            if hasattr(twm, 'start_futures_kline_socket'):
-                twm.start_futures_kline_socket(callback=ws_manager_futures.process_kline_message, symbol=sym, interval='5m')
+            if hasattr(twm, 'start_kline_futures_socket'):
+                twm.start_kline_futures_socket(callback=ws_manager_futures.process_kline_message, symbol=sym, interval='5m')
             else:
-                log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_futures_kline_socket")
+                log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_kline_futures_socket")
         except Exception as e:
             log_msg("ERROR", f"Failed to start futures kline socket for {sym}: {e}")
         

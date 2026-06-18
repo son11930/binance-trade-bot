@@ -49,8 +49,8 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     def _send():
         import time
         headers = {}
-        # Only attach token if hitting our internal API
-        if "127.0.0.1" in WEBHOOK_URL or "localhost" in WEBHOOK_URL:
+        # Only attach token if hitting our internal API (which ends in /api/internal/broadcast)
+        if "127.0.0.1" in WEBHOOK_URL or "localhost" in WEBHOOK_URL or "/api/internal/broadcast" in WEBHOOK_URL:
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
         for attempt in range(3):

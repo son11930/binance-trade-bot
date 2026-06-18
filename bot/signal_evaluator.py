@@ -277,6 +277,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         lowest_price=current_price,
                         active_strategy=strategy_used, 
                         last_trade_time=datetime.now(timezone.utc),
+                        trade_entry_time=datetime.now(timezone.utc),
+                        max_time_in_trade=signal_plan.time_in_trade,
                         dynamic_sl=sl_target,
                         dynamic_tp=tp_target,
                         position_side=position_side

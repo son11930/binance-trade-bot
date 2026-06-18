@@ -9,6 +9,8 @@ DATABASE_URL_SPOT = os.getenv("DATABASE_URL_SPOT", "sqlite:///./trades_spot.db")
 DATABASE_URL_FUTURES = os.getenv("DATABASE_URL_FUTURES", "sqlite:///./trades_futures.db")
 
 def upgrade_db(url):
+    if url and url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
     print(f"Connecting to {url}...")
     try:
         engine = create_engine(url)

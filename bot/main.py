@@ -25,11 +25,12 @@ def main():
             futures_set_leverage(sym, FUTURES_LEVERAGE, is_paper=False)
             
     # Initialize Spot State
-    state_manager_spot = StateManager()
+    state_manager_spot = StateManager(market_type='spot')
     state_manager_spot.sync_state_with_binance(calculate_pnl)
     
     # Initialize Futures State
-    state_manager_futures = StateManager()
+    state_manager_futures = StateManager(market_type='futures')
+    state_manager_futures.sync_state_with_binance(calculate_pnl)
     
     # Fetch initial history for Spot
     log_msg("INFO", "Fetching initial Spot 15m history...")
@@ -69,12 +70,18 @@ def main():
             log_msg("ERROR", f"Failed to start futures kline socket for {sym}: {e}", market_type='futures')
         
     log_msg("INFO", "WebSocket streams active. Waiting for candle closes...")
-    update_bot_state(state_manager_spot, "Waiting for next candle close...", symbol="All")
+    # Initial state broadcast
+    update_bot_state(state_manager_spot, "Waiting for next candle close...", symbol="All", market_type='spot')
+    update_bot_state(state_manager_futures, "Waiting for next candle close...", symbol="All", market_type='futures')
     
     try:
         while True:
             time.sleep(60)
-            update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All")
+            try:
+                update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All", market_type='spot')
+                update_bot_state(state_manager_futures, "Monitoring Futures markets...", symbol="All", market_type='futures')
+            except Exception as e:
+                log_msg("ERROR", f"Error updating bot state: {e}")
     except KeyboardInterrupt:
         twm.stop()
         log_msg("INFO", "Bot stopped by user.")

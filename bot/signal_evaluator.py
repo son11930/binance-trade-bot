@@ -189,6 +189,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         from .strategy import analyze_futures_market
         from .trade_executor import execute_futures_trade
         
+        update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol, market_type='futures')
+        
         df = apply_indicators(df)
         signal_plan = analyze_futures_market(df)
         
@@ -211,6 +213,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=PAPER_TRADING)
                         if trade:
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+                            update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
                     return # Already in a position
                 
                 # Opening new position
@@ -252,6 +255,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         dynamic_tp=getattr(signal_plan, 'take_profit', 0.0),
                         position_side=position_side
                     )
+                    update_bot_state(state_manager, f"FUTURES {signal} {position_side} executed for {symbol}", symbol=symbol, market_type='futures')
             
             # Check if exiting position
             elif "EXIT" in strategy_used:
@@ -260,11 +264,15 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
                     if trade:
                         state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+                        update_bot_state(state_manager, f"FUTURES EXIT executed for {symbol}", symbol=symbol, market_type='futures')
         else:
             if getattr(signal_plan, 'near_miss_reason', ""):
                 log_msg("NEAR_MISS", f"[{symbol}] Futures Near Miss ({strategy_used}): {signal_plan.near_miss_reason}", market_type="futures")
             else:
                 log_msg("INFO", f"🕯️ Evaluated Futures {symbol} at {current_price:.4f} -> Result: HOLD", market_type="futures")
+            
+            # Broadcast hold state explicitly so UI updates
+            update_bot_state(state_manager, f"HOLD {symbol} (No Signal)", symbol=symbol, market_type='futures')
                 
     except Exception as e:
         log_msg("ERROR", f"❌ Error processing futures {symbol}: {e}", market_type="futures")

@@ -9,6 +9,7 @@ from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
 from .database import LogRepository, sanitize_text
+from .config import PAPER_TRADING
 
 def log_msg(level: str, msg: str, market_type: str = 'spot'):
     safe_msg = sanitize_text(msg)
@@ -339,6 +340,62 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
 from dataclasses import replace
 import logging
 from bot.database import sanitize_text
+
+def futures_cancel_all_orders(symbol: str):
+    """Cancel all open orders (including TP/SL) for a futures symbol."""
+    try:
+        if PAPER_TRADING:
+            log_msg("INFO", f"[FUTURES PAPER] Cancelled all orders for {symbol}")
+            return True
+            
+        client.futures_cancel_all_open_orders(symbol=symbol)
+        log_msg("INFO", f"Cancelled all open orders for {symbol}", market_type='futures')
+        return True
+    except Exception as e:
+        log_msg("ERROR", f"Failed to cancel orders for {symbol}: {e}", market_type='futures')
+        return False
+
+def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float):
+    """Set Take Profit and Stop Loss for a specific position using closePosition=True"""
+    if PAPER_TRADING:
+        log_msg("INFO", f"[FUTURES PAPER] Set TP={tp_price} SL={sl_price} for {positionSide} {symbol}")
+        return True
+        
+    # For a LONG position, to close it we SELL. For a SHORT position, we BUY.
+    close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
+    
+    try:
+        # Cancel existing orders first
+        futures_cancel_all_orders(symbol)
+        
+        # Place Take Profit
+        if tp_price > 0:
+            client.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                positionSide=positionSide,
+                type='TAKE_PROFIT_MARKET',
+                stopPrice=str(round(tp_price, 4)),
+                closePosition=True,
+                timeInForce='GTC'
+            )
+            
+        # Place Stop Loss
+        if sl_price > 0:
+            client.futures_create_order(
+                symbol=symbol,
+                side=close_side,
+                positionSide=positionSide,
+                type='STOP_MARKET',
+                stopPrice=str(round(sl_price, 4)),
+                closePosition=True,
+                timeInForce='GTC'
+            )
+        return True
+    except Exception as e:
+        log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {e}", market_type='futures')
+        return False
+
 
 def futures_get_position(symbol: str, positionSide: str = None) -> dict | None:
     """Fetch position details for a specific futures symbol."""

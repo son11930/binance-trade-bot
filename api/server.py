@@ -311,6 +311,8 @@ class PositionModel(BaseModel):
     current_price: float
     pnl_amount: float
     pnl_percent: float
+    position_side: Optional[str] = None
+    margin: Optional[float] = None
 
 class BroadcastState(BaseModel):
     market_type: str = 'spot'

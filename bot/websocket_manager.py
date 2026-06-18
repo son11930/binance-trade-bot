@@ -126,6 +126,9 @@ class WebSocketManager:
                             state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING
                         )
                         if trade:
+                            from .binance_client import futures_cancel_all_orders
+                            futures_cancel_all_orders(symbol)
+                            
                             # Update local balance if we track it (optional for futures but let's do it)
                             if trade.pnl_amount:
                                 self.state_manager.add_to_balance(trade.pnl_amount)

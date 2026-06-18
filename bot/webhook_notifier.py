@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from datetime import datetime, timezone
 
-from .config import WEBHOOK_URL, WEBHOOK_TOKEN
+from .config import WEBHOOK_URL, WEBHOOK_TOKEN, FUTURES_LEVERAGE
 from .logger import log_msg
 from .risk_manager import calculate_pnl
 from .state import StateManager
@@ -17,14 +17,21 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     states = state_manager.get_all_states()
     for sym, state in states.items():
         if state.position > 0:
-            pnl_amt, pnl_pct = calculate_pnl(state.buy_price, state.last_price, state.position)
+            pnl_amt, pnl_pct = calculate_pnl(state.buy_price, state.last_price, state.position, market_type=market_type, position_side=state.position_side)
+            
+            margin = None
+            if market_type == 'futures':
+                margin = (state.position * state.buy_price) / FUTURES_LEVERAGE
+                
             positions_data.append({
                 "symbol": sym,
                 "quantity": state.position,
                 "buy_price": state.buy_price,
                 "current_price": state.last_price,
                 "pnl_amount": pnl_amt,
-                "pnl_percent": pnl_pct
+                "pnl_percent": pnl_pct,
+                "position_side": state.position_side,
+                "margin": margin
             })
 
     # Sanitize inputs to prevent API key leaks

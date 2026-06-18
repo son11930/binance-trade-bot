@@ -256,7 +256,7 @@
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
-                    <thead>
+                    <thead id="positions-thead">
                         <tr class="bg-slate-900/40">
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Quantity</th>
@@ -369,8 +369,29 @@
             
             if (market === 'futures') {
                 document.getElementById('futures-badge').classList.remove('hidden');
+                document.getElementById('positions-thead').innerHTML = `
+                    <tr class="bg-slate-900/40">
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size (Side)</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Entry Price</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Mark Price</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin (USDT)</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
+                    </tr>
+                `;
             } else {
                 document.getElementById('futures-badge').classList.add('hidden');
+                document.getElementById('positions-thead').innerHTML = `
+                    <tr class="bg-slate-900/40">
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Quantity</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Avg Buy Price</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Current Price</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
+                    </tr>
+                `;
             }
             
             // Re-render everything
@@ -555,14 +576,30 @@
                     const pnlAmtColor = pos.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
                     const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_percent < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
                     
-                    tr.innerHTML = `
-                        <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
-                        <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
-                        <td class="p-4 text-right text-slate-300 font-mono">$${pos.buy_price.toFixed(4)}</td>
-                        <td class="p-4 text-right text-slate-300 font-mono">$${pos.current_price.toFixed(4)}</td>
-                        <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}$${pos.pnl_amount.toFixed(2)}</td>
-                        <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
-                    `;
+                    if (currentMarket === 'futures') {
+                        const sideColor = pos.position_side === 'LONG' ? 'text-neonGreen' : 'text-neonRed';
+                        const sideLabel = pos.position_side || 'N/A';
+                        
+                        tr.innerHTML = `
+                            <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
+                            <td class="p-4 text-right font-mono"><span class="${sideColor} font-bold mr-2">${sideLabel}</span><span class="text-slate-300">${pos.quantity.toFixed(4)}</span></td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toFixed(4)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toFixed(4)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.margin ? pos.margin.toFixed(2) : '--'}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${pos.pnl_amount.toFixed(2)}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
+                        `;
+                    } else {
+                        tr.innerHTML = `
+                            <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toFixed(4)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toFixed(4)}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${pos.pnl_amount.toFixed(2)}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
+                        `;
+                    }
+                    
                     positionsBody.appendChild(tr);
                 });
             } else {

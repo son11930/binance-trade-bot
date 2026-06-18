@@ -212,6 +212,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         exit_side = "SELL" if state.position_side == "LONG" else "BUY"
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=PAPER_TRADING)
                         if trade:
+                            from .binance_client import futures_cancel_all_orders
+                            futures_cancel_all_orders(symbol)
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
                     return # Already in a position
@@ -244,6 +246,14 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 log_msg("INFO", f"🚀 Executing FUTURES {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
                 trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
                 if trade:
+                    sl_target = getattr(signal_plan, 'stop_loss', 0.0)
+                    tp_target = getattr(signal_plan, 'take_profit', 0.0)
+                    
+                    from .binance_client import futures_set_tp_sl
+                    if sl_target > 0 or tp_target > 0:
+                        futures_set_tp_sl(symbol, position_side, tp_target, sl_target)
+                        log_msg("INFO", f"🎯 Placed TP at {tp_target} and SL at {sl_target} for {symbol}", market_type="futures")
+                        
                     state_manager.update_state(
                         symbol, 
                         position=trade.get('quantity', qty) if isinstance(trade, dict) else qty, 
@@ -251,8 +261,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         highest_price=current_price, 
                         active_strategy=strategy_used, 
                         last_trade_time=datetime.now(timezone.utc),
-                        dynamic_sl=getattr(signal_plan, 'stop_loss', 0.0),
-                        dynamic_tp=getattr(signal_plan, 'take_profit', 0.0),
+                        dynamic_sl=sl_target,
+                        dynamic_tp=tp_target,
                         position_side=position_side
                     )
                     update_bot_state(state_manager, f"FUTURES {signal} {position_side} executed for {symbol}", symbol=symbol, market_type='futures')
@@ -263,6 +273,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     log_msg("INFO", f"📉 FUTURES EXIT {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
                     if trade:
+                        from .binance_client import futures_cancel_all_orders
+                        futures_cancel_all_orders(symbol)
                         state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                         update_bot_state(state_manager, f"FUTURES EXIT executed for {symbol}", symbol=symbol, market_type='futures')
         else:

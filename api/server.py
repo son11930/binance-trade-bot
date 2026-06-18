@@ -78,14 +78,14 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-def get_stats_for_period(db: Session, start_time=None):
+def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot'):
     query = db.query(
         func.sum(Trade.pnl_amount).label('cumulative_pnl'),
         func.sum(case((Trade.pnl_amount > 0, 1), else_=0)).label('wins'),
         func.sum(case((Trade.pnl_amount < 0, 1), else_=0)).label('losses'),
         func.count(Trade.id).label('total_closed'),
         func.sum(case((Trade.pnl_amount != None, (Trade.price * Trade.quantity) - Trade.pnl_amount), else_=0)).label('cumulative_capital')
-    ).filter(Trade.side == 'SELL')
+    ).filter(Trade.side == 'SELL', Trade.market_type == market_type)
     
     if start_time:
         query = query.filter(Trade.timestamp >= start_time)

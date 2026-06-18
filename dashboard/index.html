@@ -339,7 +339,7 @@
         let ws;
         let reconnectTimeout = 1000;
         
-        let currentMarket = 'spot'; // 'spot' or 'futures'
+        let currentMarket = localStorage.getItem('selectedMarket') || 'spot'; // 'spot' or 'futures'
 
         // Data Storage
         let dataStore = {
@@ -349,6 +349,7 @@
 
         function setMarket(market) {
             currentMarket = market;
+            localStorage.setItem('selectedMarket', market);
             
             // UI Toggle
             const spotTab = document.getElementById('tab-spot');
@@ -404,6 +405,7 @@
         function startApp() {
             document.getElementById('login-modal').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
+            setMarket(currentMarket);
             connectWebSocket();
         }
 

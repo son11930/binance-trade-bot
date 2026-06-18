@@ -226,13 +226,13 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 if not PAPER_TRADING:
                     live_usdt = futures_account_balance("USDT")
                     if live_usdt is not None:
-                        # Dynamic Portfolio Allocation (20% - 40%)
+                        # Dynamic Portfolio Allocation (10% - 25%)
                         adx = df.iloc[-1].get('ADX', 0) if not df.empty else 0
-                        allocation_percent = 0.20
+                        allocation_percent = 0.10
                         
                         if adx > 25:
-                            # Scale linearly between 25 and 50 ADX, up to 40% max allocation
-                            extra_alloc = ((min(adx, 50) - 25) / 25) * 0.20
+                            # Scale linearly between 25 and 50 ADX, up to 25% max allocation
+                            extra_alloc = ((min(adx, 50) - 25) / 25) * 0.15
                             allocation_percent += extra_alloc
                             
                         # Safety: Don't spend more than we have (leaving 5% buffer just in case)

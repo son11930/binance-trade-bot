@@ -343,15 +343,15 @@ def futures_get_position(symbol: str, positionSide: str = None) -> dict | None:
                 for pos in positions:
                     if pos.get("positionSide") == positionSide:
                         return pos
-            else:
-                # Fallback to first active if positionSide not specified
                 for pos in positions:
                     if float(pos.get("positionAmt", "0")) != 0:
                         return pos
-            return positions[0] # Return default empty if none active
-        return None
+                return positions[0]
+        
+        # If API returns empty list, it means no position exists
+        return {"positionAmt": "0", "entryPrice": "0", "positionSide": positionSide or "LONG"}
     except Exception as e:
-        log_msg("ERROR", f"Failed to get futures position for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching futures position for {symbol}: {e}", market_type='futures')
         return None
 
 def futures_account_balance(asset: str = "USDT") -> float | None:

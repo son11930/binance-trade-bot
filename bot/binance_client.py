@@ -317,7 +317,14 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
         avg_price = float(order.get('avgPrice', 0.0))
         if avg_price == 0.0:
             avg_price = float(order.get('price', 0.0))
-        exec_qty = float(order.get('executedQty', rounded_quantity))
+        if avg_price == 0.0:
+            # Market orders return 0 for price and avgPrice might not be populated immediately
+            avg_price = futures_get_current_price(symbol)
+            
+        exec_qty = float(order.get('executedQty', 0.0))
+        if exec_qty == 0.0:
+            # If order just created and not fully processed, fallback to requested qty
+            exec_qty = float(order.get('origQty', rounded_quantity))
         
         return {
             **order,

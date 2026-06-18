@@ -354,6 +354,11 @@ def futures_get_position(symbol: str, positionSide: str = None) -> dict | None:
                     if float(pos.get("positionAmt", "0")) != 0:
                         return pos
                 return positions[0]
+            else:
+                for pos in positions:
+                    if float(pos.get("positionAmt", "0")) != 0:
+                        return pos
+                return positions[0]
         
         # If API returns empty list, it means no position exists
         return {"positionAmt": "0", "entryPrice": "0", "positionSide": positionSide or "LONG"}

@@ -61,13 +61,18 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
             if state.dynamic_sl > 0 and current_price <= state.dynamic_sl:
                 return f"Dynamic Stop Loss ({state.dynamic_sl}) 🚨"
             
-        if profit_percent >= 3.0:
-            return "Take Profit 🎯"
-            
-        if max_profit_percent >= 1.5 and hp_drop_percent >= 0.5:
-            return "Trailing Stop 🛡️"
-            
         atr_percent = (atr_value / current_price) * 100 if atr_value else 2.5
+        
+        # ATR Trailing Stop (Chandelier Exit)
+        # 1. We must be in profit by at least 1.5x ATR (scaled by leverage for PNL)
+        min_profit_to_trail = atr_percent * 1.5 * (FUTURES_LEVERAGE if market_type == 'futures' else 1.0)
+        
+        if max_profit_percent >= min_profit_to_trail:
+            # 2. Trail by 2.0x ATR raw price drop
+            trailing_drop_raw_percent = atr_percent * 2.0
+            if hp_drop_percent >= trailing_drop_raw_percent:
+                return "ATR Trailing Stop 🛡️"
+            
         stop_loss_threshold = min(stop_loss_percent, atr_percent * 1.5)
         # Use FUTURES_LEVERAGE equivalent if futures so we don't hit fallback immediately?
         if market_type == 'futures':

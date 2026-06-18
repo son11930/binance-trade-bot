@@ -85,7 +85,7 @@ def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot'
         func.sum(case((Trade.pnl_amount < 0, 1), else_=0)).label('losses'),
         func.count(Trade.id).label('total_closed'),
         func.sum(case((Trade.pnl_amount != None, (Trade.price * Trade.quantity) - Trade.pnl_amount), else_=0)).label('cumulative_capital')
-    ).filter(Trade.side == 'SELL', Trade.market_type == market_type)
+    ).filter(Trade.pnl_amount != None, Trade.market_type == market_type)
     
     if start_time:
         query = query.filter(Trade.timestamp >= start_time)

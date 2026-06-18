@@ -245,7 +245,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         action="HOLD", strategy_used="NONE", stop_loss=0.0, 
         take_profit=0.0, time_in_trade=0, near_miss_reason="", position_side=""
     )
-    
+
     if len(df) < 200:
         return default_signal
         
@@ -289,5 +289,28 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         return SignalPlan("SELL", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
     if macd_cross_up:
         return SignalPlan("BUY", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
+        
+    near_miss_reason = ""
+    strategy_used = "NONE"
+    
+    if macd_cross_up:
+        strategy_used = "FUTURES_5M_LONG"
+        if price <= sma_200:
+            near_miss_reason = f"Price below SMA200 ({price:.2f} <= {sma_200:.2f})"
+        elif rsi_curr >= 70:
+            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
+            
+    elif macd_cross_down:
+        strategy_used = "FUTURES_5M_SHORT"
+        if price >= sma_200:
+            near_miss_reason = f"Price above SMA200 ({price:.2f} >= {sma_200:.2f})"
+        elif rsi_curr <= 30:
+            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
+            
+    if near_miss_reason:
+        return SignalPlan(
+            action="HOLD", strategy_used=strategy_used, stop_loss=0.0, 
+            take_profit=0.0, time_in_trade=0, near_miss_reason=near_miss_reason, position_side=""
+        )
         
     return default_signal

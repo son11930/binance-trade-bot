@@ -223,16 +223,27 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 from .binance_client import futures_account_balance
                 
                 # Sizing and balance check
-                notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
                 if not PAPER_TRADING:
                     live_usdt = futures_account_balance("USDT")
                     if live_usdt is not None:
-                        # Safety: Don't spend more than we have (leaving 5% buffer)
-                        margin_to_use = min(FUTURES_QUANTITY_USDT, live_usdt * 0.95)
+                        # Dynamic Portfolio Allocation (20% - 40%)
+                        adx = df.iloc[-1].get('ADX', 0) if not df.empty else 0
+                        allocation_percent = 0.20
+                        
+                        if adx > 25:
+                            # Scale linearly between 25 and 50 ADX, up to 40% max allocation
+                            extra_alloc = ((min(adx, 50) - 25) / 25) * 0.20
+                            allocation_percent += extra_alloc
+                            
+                        # Safety: Don't spend more than we have (leaving 5% buffer just in case)
+                        margin_to_use = min(live_usdt * allocation_percent, live_usdt * 0.95)
                         notional_value = margin_to_use * FUTURES_LEVERAGE
+                        
                         if margin_to_use < 2.0:
                             log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol}.", market_type="futures")
                             return
+                else:
+                    notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
 
                 if notional_value < 5.0:
                     log_msg("WARNING", f"⚠️ Notional value {notional_value} is below Binance minimum 5.0 for {symbol}.", market_type="futures")

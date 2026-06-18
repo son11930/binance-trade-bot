@@ -242,6 +242,9 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         if margin_to_use < 2.0:
                             log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol}.", market_type="futures")
                             return
+                    else:
+                        log_msg("ERROR", f"❌ Failed to fetch USDT balance for {symbol}.", market_type="futures")
+                        return
                 else:
                     notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
 

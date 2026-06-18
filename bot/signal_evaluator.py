@@ -249,8 +249,9 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 else:
                     notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
 
-                if notional_value < 5.0:
-                    log_msg("WARNING", f"⚠️ Notional value {notional_value} is below Binance minimum 5.0 for {symbol}.", market_type="futures")
+                # Set minimum to 6.0 instead of 5.0 to account for slippage and fees
+                if notional_value < 6.0:
+                    log_msg("WARNING", f"⚠️ Notional value {notional_value} is below safe minimum 6.0 for {symbol}.", market_type="futures")
                     return
 
                 qty = notional_value / current_price

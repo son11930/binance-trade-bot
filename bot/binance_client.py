@@ -19,7 +19,7 @@ def log_msg(level: str, msg: str, market_type: str = 'spot'):
 load_dotenv()
 
 API_KEY = os.getenv("BINANCE_API_KEY")
-SECRET_KEY = os.getenv("BINANCE_API_SECRET")
+SECRET_KEY = os.getenv("BINANCE_API_SECRET") or os.getenv("BINANCE_SECRET_KEY")
 
 client = Client(API_KEY, SECRET_KEY)
 twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=SECRET_KEY)

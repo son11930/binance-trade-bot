@@ -50,10 +50,11 @@ class WebSocketManager:
 
     def process_kline_message(self, msg: Dict):
         try:
-            if msg['e'] != 'kline':
+            event_type = msg.get('e')
+            if event_type not in ['kline', 'continuous_kline']:
                 return
                 
-            symbol = msg['s']
+            symbol = msg.get('s') or msg.get('ps')
             k = msg['k']
             is_closed = k['x']
             current_price = float(k['c'])

@@ -58,7 +58,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "risk_score": risk_score
         }
             
-        update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload)
+        update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
         if decision == "BUY" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
@@ -67,7 +67,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 slippage = (live_price - current_price) / current_price
                 if slippage > 0.005:  # Price drifted more than 0.5% while waiting for AI
                     log_msg("WARNING", f"⚠️ Slippage Guard: Aborting {symbol} trade. Price moved +{slippage*100:.2f}% ({current_price} -> {live_price}) while waiting for AI.")
-                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol)
+                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol, market_type='spot')
                     state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
                     return
                 # Update current_price to live_price for accurate execution tracking
@@ -122,7 +122,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
 
 def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
     try:
-        update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol)
+        update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol, market_type='spot')
         
         df = apply_indicators(df)
         signal_plan = analyze_market(df)
@@ -145,7 +145,7 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
                     log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping BUY signal.")
                     return
 
-            update_bot_state(state_manager, f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol)
+            update_bot_state(state_manager, f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol, market_type='spot')
             
             latest_kline = df.iloc[-1]
             adx_val = latest_kline.get('ADX', 'N/A')
@@ -183,3 +183,88 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
     except Exception as e:
         log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
         state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES) + timedelta(minutes=5))
+
+def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
+    try:
+        from .strategy import analyze_futures_market
+        from .trade_executor import execute_futures_trade
+        
+        df = apply_indicators(df)
+        signal_plan = analyze_futures_market(df)
+        
+        signal = signal_plan.action
+        position_side = signal_plan.position_side
+        strategy_used = signal_plan.strategy_used
+        
+        state = state_manager.get_state(symbol)
+        
+        # Futures logic is faster (5m), no AI bottleneck for now, executes directly for high APY
+        if signal in ["BUY", "SELL"] and position_side:
+            # Check if opening new position
+            if "LONG" in strategy_used or "SHORT" in strategy_used:
+                if state.position > 0:
+                    # Fix: Handle reversals - if we get an opposite signal, close the current position.
+                    if ("SHORT" in strategy_used and state.position_side == "LONG") or \
+                       ("LONG" in strategy_used and state.position_side == "SHORT"):
+                        log_msg("INFO", f"📉 FUTURES REVERSAL EXIT for {symbol} via {strategy_used}...", market_type="futures")
+                        exit_side = "SELL" if state.position_side == "LONG" else "BUY"
+                        trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=PAPER_TRADING)
+                        if trade:
+                            state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+                    return # Already in a position
+                
+                # Opening new position
+                from .config import FUTURES_QUANTITY_USDT, FUTURES_LEVERAGE
+                from .binance_client import futures_account_balance
+                
+                # Sizing and balance check
+                notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
+                if not PAPER_TRADING:
+                    live_usdt = futures_account_balance("USDT")
+                    if live_usdt is not None:
+                        # Safety: Don't spend more than we have (leaving 5% buffer)
+                        margin_to_use = min(FUTURES_QUANTITY_USDT, live_usdt * 0.95)
+                        notional_value = margin_to_use * FUTURES_LEVERAGE
+                        if margin_to_use < 2.0:
+                            log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol}.", market_type="futures")
+                            return
+
+                if notional_value < 5.0:
+                    log_msg("WARNING", f"⚠️ Notional value {notional_value} is below Binance minimum 5.0 for {symbol}.", market_type="futures")
+                    return
+
+                qty = notional_value / current_price
+                
+                if qty <= 0:
+                    return
+
+                log_msg("INFO", f"🚀 Executing FUTURES {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
+                trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
+                if trade:
+                    state_manager.update_state(
+                        symbol, 
+                        position=trade.get('quantity', qty) if isinstance(trade, dict) else qty, 
+                        buy_price=current_price, 
+                        highest_price=current_price, 
+                        active_strategy=strategy_used, 
+                        last_trade_time=datetime.now(timezone.utc),
+                        dynamic_sl=getattr(signal_plan, 'stop_loss', 0.0),
+                        dynamic_tp=getattr(signal_plan, 'take_profit', 0.0),
+                        position_side=position_side
+                    )
+            
+            # Check if exiting position
+            elif "EXIT" in strategy_used:
+                if state.position > 0 and state.position_side == position_side:
+                    log_msg("INFO", f"📉 FUTURES EXIT {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
+                    trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
+                    if trade:
+                        state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+        else:
+            if getattr(signal_plan, 'near_miss_reason', ""):
+                log_msg("NEAR_MISS", f"[{symbol}] Futures Near Miss ({strategy_used}): {signal_plan.near_miss_reason}", market_type="futures")
+            else:
+                log_msg("INFO", f"🕯️ Evaluated Futures {symbol} at {current_price:.4f} -> Result: HOLD", market_type="futures")
+                
+    except Exception as e:
+        log_msg("ERROR", f"❌ Error processing futures {symbol}: {e}", market_type="futures")

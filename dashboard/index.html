@@ -31,7 +31,7 @@
             background-attachment: fixed;
         }
         .glass-card {
-            background: rgba(15, 23, 42, 0.85); /* Darker solid bg since blur is removed */
+            background: rgba(15, 23, 42, 0.85);
             border: 1px solid rgba(255, 255, 255, 0.05);
             box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -39,7 +39,7 @@
         .glass-card:hover {
             box-shadow: 0 0 25px rgba(0, 240, 255, 0.3);
         }
-                .text-glow-green { text-shadow: 0 0 15px rgba(57, 255, 20, 0.9); }
+        .text-glow-green { text-shadow: 0 0 15px rgba(57, 255, 20, 0.9); }
         .text-glow-red { text-shadow: 0 0 15px rgba(255, 0, 60, 0.9); }
         .border-glow-pink { box-shadow: 0 0 20px rgba(255, 0, 255, 0.4); }
         .border-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
@@ -55,6 +55,14 @@
         @keyframes aiPulse {
             0%, 100% { opacity: 1; }
             50% { opacity: .4; }
+        }
+        
+        /* Market toggle active states */
+        .tab-active {
+            background: rgba(0, 240, 255, 0.2);
+            border-color: rgba(0, 240, 255, 0.5);
+            color: #00F0FF;
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
         }
     </style>
 </head>
@@ -93,8 +101,28 @@
                 <h1 class="text-4xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink">
                     AI Trading Engine
                 </h1>
-                <p class="text-slate-400 text-sm mt-1 font-light tracking-wide">Multi-Coin Auto Sync & MACD Strategy</p>
+                <p class="text-slate-400 text-sm mt-1 font-light tracking-wide">Multi-Coin Dual-Engine Architecture</p>
             </div>
+            
+            <!-- Market Toggle -->
+            <div class="flex flex-col items-center mb-4 md:mb-0 space-y-2">
+                <div class="flex items-center space-x-4">
+                    <div class="flex bg-slate-900/50 p-1 rounded-xl border border-slate-800">
+                        <button onclick="setMarket('spot')" id="tab-spot" class="tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all">Spot Engine</button>
+                        <button onclick="setMarket('futures')" id="tab-futures" class="px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent">Futures Engine</button>
+                    </div>
+                </div>
+                <!-- Futures specific badge (hidden in spot mode) -->
+                <div id="futures-badge" class="hidden flex items-center space-x-2">
+                    <span class="px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 text-xs font-bold border border-purple-500/30 uppercase tracking-widest">
+                        Leverage: 3x
+                    </span>
+                    <span class="px-3 py-1 rounded-full bg-orange-500/10 text-orange-400 text-xs font-bold border border-orange-500/30 uppercase tracking-widest">
+                        Margin: ISOLATED
+                    </span>
+                </div>
+            </div>
+
             <div class="flex items-center space-x-6">
                 <div class="flex items-center space-x-2">
                     <span class="relative flex h-3 w-3">
@@ -186,7 +214,7 @@
             
             <div class="glass-card p-6 rounded-2xl relative overflow-hidden">
                 <div class="absolute -right-4 -top-4 w-24 h-24 bg-neonGreen/10 rounded-full blur-2xl"></div>
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Live USDT Balance</h3>
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2" id="live-balance-header">Live Balance (Spot)</h3>
                 <div class="flex items-baseline space-x-1">
                     <span class="text-slate-400 text-lg">$</span>
                     <p class="text-3xl font-extrabold text-white tracking-tight" id="live-usdt">--</p>
@@ -224,7 +252,7 @@
 
         <div class="glass-card rounded-2xl overflow-hidden mb-8">
             <div class="p-6 border-b border-slate-800/50 bg-slate-900/30 flex justify-between items-center">
-                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">Live Positions</h2>
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200" id="positions-header">Live Positions (Spot)</h2>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
@@ -246,7 +274,7 @@
 
         <div class="glass-card rounded-2xl overflow-hidden">
             <div class="p-6 border-b border-slate-800/50 bg-slate-900/30">
-                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">Execution Log</h2>
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200" id="trades-header">Execution Log (Spot)</h2>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
@@ -271,7 +299,7 @@
         <!-- System Debug Log -->
         <div class="glass-card rounded-2xl overflow-hidden mt-8">
             <div class="p-6 border-b border-slate-800/50 bg-slate-900/30 flex justify-between items-center">
-                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200">System Debug Log</h2>
+                <h2 class="text-lg font-bold uppercase tracking-widest text-slate-200" id="logs-header">System Debug Log (Spot)</h2>
                 <div class="flex items-center space-x-4">
                     <label class="flex items-center space-x-2 cursor-pointer">
                         <input type="checkbox" id="toggle-routine-evals" class="form-checkbox h-4 w-4 text-neonCyan bg-slate-800 border-slate-600 rounded focus:ring-neonCyan">
@@ -310,6 +338,47 @@
         let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
         let ws;
         let reconnectTimeout = 1000;
+        
+        let currentMarket = 'spot'; // 'spot' or 'futures'
+
+        // Data Storage
+        let dataStore = {
+            spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
+            futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
+        };
+
+        function setMarket(market) {
+            currentMarket = market;
+            
+            // UI Toggle
+            const spotTab = document.getElementById('tab-spot');
+            const futuresTab = document.getElementById('tab-futures');
+            
+            if (market === 'spot') {
+                spotTab.className = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
+                futuresTab.className = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
+            } else {
+                futuresTab.className = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
+                spotTab.className = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
+            }
+            
+            document.getElementById('positions-header').innerText = `Live Positions (${market === 'spot' ? 'Spot' : 'Futures'})`;
+            document.getElementById('trades-header').innerText = `Execution Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
+            document.getElementById('logs-header').innerText = `System Debug Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
+            document.getElementById('live-balance-header').innerText = `Live Balance (${market === 'spot' ? 'Spot' : 'Futures'})`;
+            
+            if (market === 'futures') {
+                document.getElementById('futures-badge').classList.remove('hidden');
+            } else {
+                document.getElementById('futures-badge').classList.add('hidden');
+            }
+            
+            // Re-render everything
+            if (dataStore[market].status) updateStatusUI(dataStore[market].status, dataStore[market].globalConfig);
+            if (dataStore[market].trades) updateTradesUI(dataStore[market].trades);
+            if (dataStore[market].logs) renderLogsUI(dataStore[market].logs);
+            if (dataStore[market].stats) renderStatsUI(dataStore[market].stats);
+        }
 
         function startApp() {
             document.getElementById('login-modal').classList.add('hidden');
@@ -325,20 +394,38 @@
 
             ws.onopen = () => {
                 console.log("WebSocket connected.");
-                reconnectTimeout = 1000; // reset
+                reconnectTimeout = 1000;
                 ws.send(JSON.stringify({ type: "auth", token: authToken }));
             };
 
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
+                const market = message.market_type || 'spot'; // Default to spot if not provided
+                
                 if (message.type === "status_update") {
-                    updateStatus(message.data);
+                    dataStore['spot'].globalConfig = message.data;
+                    dataStore['futures'].globalConfig = message.data;
+                    dataStore['spot'].status = message.data.spot;
+                    dataStore['futures'].status = message.data.futures;
+                    if (currentMarket === 'spot') updateStatusUI(message.data.spot, message.data);
+                    else updateStatusUI(message.data.futures, message.data);
                 } else if (message.type === "trades_update") {
-                    updateTrades(message.data);
+                    if (message.is_delta) {
+                        dataStore[market].trades = [...message.data, ...dataStore[market].trades].slice(0, 50);
+                    } else {
+                        dataStore[market].trades = message.data;
+                    }
+                    if (currentMarket === market) updateTradesUI(message.data, message.is_delta);
                 } else if (message.type === "logs_update") {
-                    updateLogs(message.data);
+                    if (message.is_delta) {
+                        dataStore[market].logs = [...message.data, ...dataStore[market].logs].slice(0, 1000);
+                    } else {
+                        dataStore[market].logs = message.data;
+                    }
+                    if (currentMarket === market) renderLogsUI(message.data, message.is_delta);
                 } else if (message.type === "stats_update") {
-                    updateStats(message.data);
+                    dataStore[market].stats = message.data;
+                    if (currentMarket === market) renderStatsUI(message.data);
                 }
             };
 
@@ -350,7 +437,7 @@
                 }
                 console.log("WebSocket disconnected. Reconnecting in " + reconnectTimeout + "ms");
                 setTimeout(connectWebSocket, reconnectTimeout);
-                reconnectTimeout = Math.min(reconnectTimeout * 2, 30000); // Max 30s
+                reconnectTimeout = Math.min(reconnectTimeout * 2, 30000);
             };
 
             ws.onerror = (error) => {
@@ -400,10 +487,11 @@
             window.location.reload();
         }
 
-        function updateStatus(data) {
-            document.getElementById('symbol-display').innerText = data.symbols ? data.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
+        function updateStatusUI(aiStatus, globalConfig) {
+            if (!aiStatus || !globalConfig) return;
+            document.getElementById('symbol-display').innerText = globalConfig.symbols ? globalConfig.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
             
-            const isPaper = data.paper_trading === "True";
+            const isPaper = globalConfig.paper_trading === "True";
             const modeBadge = document.getElementById('mode-badge');
             if (isPaper) {
                 modeBadge.innerText = "Simulated Paper Trading";
@@ -413,11 +501,9 @@
             } else {
                 modeBadge.innerText = "LIVE EXCHANGE SYNC";
                 modeBadge.className = "px-4 py-1.5 rounded-full bg-neonRed/10 text-neonRed text-sm font-bold border border-neonRed/30 uppercase tracking-widest animate-pulse";
-                document.getElementById('live-usdt').innerText = data.live_usdt.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                document.getElementById('live-usdt').innerText = (aiStatus.live_usdt || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
                 document.getElementById('live-usdt').classList.remove('text-lg', 'text-slate-400');
             }
-            
-            const aiStatus = data.ai_status || {};
             
             if (aiStatus.is_thinking) {
                 document.getElementById('ui-ai-spinner').classList.remove('hidden');
@@ -449,6 +535,8 @@
                     
                     if (debate.decision === 'BUY') {
                         document.getElementById('ui-chief-decision').className = 'text-xl font-extrabold tracking-widest text-neonGreen text-glow';
+                    } else if (debate.decision === 'SELL') {
+                        document.getElementById('ui-chief-decision').className = 'text-xl font-extrabold tracking-widest text-neonRed text-glow-red';
                     } else {
                         document.getElementById('ui-chief-decision').className = 'text-xl font-extrabold tracking-widest text-slate-500';
                     }
@@ -492,16 +580,22 @@
                 .replace(/'/g, '&#39;');
         }
 
-        function updateTrades(trades) {
-            document.getElementById('total-trades').innerText = trades.length;
+        function updateTradesUI(trades, isDelta = false) {
+            document.getElementById('total-trades').innerText = dataStore[currentMarket].trades.length;
             
-            if (trades.length > 0 && trades[0].ai_risk_score !== null) {
-                const risk = trades[0].ai_risk_score;
+            if (dataStore[currentMarket].trades.length > 0 && dataStore[currentMarket].trades[0].ai_risk_score !== null) {
+                const risk = dataStore[currentMarket].trades[0].ai_risk_score;
                 document.getElementById('last-risk').innerText = `Last Risk: ${risk}/100`;
+            } else {
+                document.getElementById('last-risk').innerText = `Last Risk: --`;
             }
 
             const tbody = document.getElementById('trade-table-body');
-            tbody.innerHTML = '';
+            if (!isDelta) {
+                tbody.innerHTML = '';
+            }
+            
+            const fragment = document.createDocumentFragment();
             
             trades.forEach(trade => {
                 const tr = document.createElement('tr');
@@ -517,9 +611,10 @@
                 const safeReasoning = escapeHTML(trade.ai_reasoning || '--');
                 const safeSide = escapeHTML(trade.side);
                 
-                const feeStr = (trade.fee !== null && trade.fee !== undefined) ? `${trade.fee.toFixed(4)} ${trade.fee_asset || ''}` : '--';
+                const safeFeeAsset = escapeHTML(trade.fee_asset || '');
+                const feeStr = (trade.fee !== null && trade.fee !== undefined) ? `${trade.fee.toFixed(4)} ${safeFeeAsset}` : '--';
                 const pnlClass = trade.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (trade.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
-                    const pnlStr = trade.pnl_amount !== null ? `<span class="${pnlClass}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
+                const pnlStr = trade.pnl_amount !== null ? `<span class="${pnlClass}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
                 
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
@@ -531,27 +626,43 @@
                     <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
                     <td class="p-4 text-sm text-slate-400 whitespace-normal break-words max-w-xs" title="${safeReasoning}">${safeReasoning}</td>
                 `;
-                tbody.appendChild(tr);
+                fragment.appendChild(tr);
             });
+            
+            if (isDelta) {
+                tbody.insertBefore(fragment, tbody.firstChild);
+                // Prune old rows if too many
+                while (tbody.children.length > 50) {
+                    tbody.removeChild(tbody.lastChild);
+                }
+            } else {
+                tbody.appendChild(fragment);
+            }
         }
 
-        let globalLogsData = [];
-        
         document.getElementById('toggle-near-miss').addEventListener('change', () => {
-            renderLogs();
+            renderLogsUI(dataStore[currentMarket].logs);
         });
         document.getElementById('toggle-routine-evals').addEventListener('change', () => {
-            renderLogs();
+            renderLogsUI(dataStore[currentMarket].logs);
         });
 
-        function renderLogs() {
-            if(!globalLogsData) return;
+        function renderLogsUI(logsData, isDelta = false) {
+            if(!logsData) return;
             const container = document.getElementById('debug-log-container');
-            container.innerHTML = '';
+            
+            if (!isDelta) {
+                container.innerHTML = '';
+            }
             
             const showNearMiss = document.getElementById('toggle-near-miss').checked;
             const showRoutineEvals = document.getElementById('toggle-routine-evals').checked;
-            const sortedLogs = [...globalLogsData].slice(0, 500).reverse();
+            
+            // For delta, logsData are newest first, we want them appended at the bottom, so reverse them.
+            // Same for initial load.
+            const sortedLogs = [...logsData].reverse();
+            
+            const fragment = document.createDocumentFragment();
             
             sortedLogs.forEach(log => {
                 if (log.level === 'NEAR_MISS' && !showNearMiss) return;
@@ -573,28 +684,29 @@
                 const safeMessage = escapeHTML(log.message);
                 
                 div.innerHTML = `<span class="text-slate-500 mr-2">[${escapeHTML(timeStr)}]</span> <span class="${colorClass}">[${safeLevel}] ${safeMessage}</span>`;
-                container.appendChild(div);
+                fragment.appendChild(div);
             });
+            
+            container.appendChild(fragment);
+            
+            // Prune old logs to prevent DOM bloat
+            while (container.children.length > 500) {
+                container.removeChild(container.firstChild);
+            }
             
             container.scrollTop = container.scrollHeight;
         }
 
-        function updateLogs(logs) {
-            globalLogsData = logs;
-            renderLogs();
-        }
-
-        let globalStatsData = null;
         let selectedTimeframe = "ALL";
 
         document.getElementById('pnl-timeframe').addEventListener('change', (e) => {
             selectedTimeframe = e.target.value;
-            if(globalStatsData) renderStats();
+            renderStatsUI(dataStore[currentMarket].stats);
         });
 
-        function renderStats() {
-            if(!globalStatsData || !globalStatsData[selectedTimeframe]) return;
-            const data = globalStatsData[selectedTimeframe];
+        function renderStatsUI(statsData) {
+            if(!statsData || !statsData[selectedTimeframe]) return;
+            const data = statsData[selectedTimeframe];
             document.getElementById('win-rate').innerText = `${data.win_rate.toFixed(1)}%`;
             document.getElementById('win-loss-count').innerText = `${data.wins}W - ${data.losses}L`;
             
@@ -605,12 +717,6 @@
             const pctEl = document.getElementById('pnl-percent');
             pctEl.innerText = `${data.pnl_percent >= 0 ? '+' : ''}${data.pnl_percent.toFixed(2)}%`;
             pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
-        }
-
-        function updateStats(data) {
-            // Data is now a dict with keys 1D, 7D, 1M, ALL
-            globalStatsData = data;
-            renderStats();
         }
     </script>
 </body>

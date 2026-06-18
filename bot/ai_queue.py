@@ -35,9 +35,10 @@ class AIQueueManager:
                 self.q.task_done()
                 
     def submit(self, score, symbol, task_func, *args, **kwargs):
-        # Dynamic Load Shedding: Drop weak signals immediately if queue is backed up
         if self.q.qsize() >= 2 and score < 2.0:
             log_msg("WARNING", f"⚠️ Load shedding {symbol} at submission (vol_surge {score:.2f}x < 2.0x) due to backlog.")
+            if args and hasattr(args[0], 'update_state'):
+                args[0].update_state(symbol, active_strategy="NONE")
             return
 
         # We use negative score so that higher score is lower priority number (processed first)

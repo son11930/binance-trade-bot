@@ -1,4 +1,4 @@
-import threading
+from concurrent.futures import ThreadPoolExecutor
 import requests
 from datetime import datetime, timezone
 
@@ -6,8 +6,12 @@ from .config import WEBHOOK_URL, WEBHOOK_TOKEN
 from .logger import log_msg
 from .risk_manager import calculate_pnl
 from .state import StateManager
+from .database import sanitize_text
 
-def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None):
+# Use a single executor for webhooks to prevent thread explosion
+_webhook_executor = ThreadPoolExecutor(max_workers=5)
+
+def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
     positions_data = []
     
     states = state_manager.get_all_states()
@@ -23,19 +27,32 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
                 "pnl_percent": pnl_pct
             })
 
+    # Sanitize inputs to prevent API key leaks
+    safe_status = sanitize_text(status_msg)
+    safe_ai_debate = None
+    if ai_debate:
+        import json
+        # serialize, sanitize, and deserialize
+        safe_ai_debate = json.loads(sanitize_text(json.dumps(ai_debate)))
+
     payload = {
-        "status_message": status_msg,
+        "market_type": market_type,
+        "status_message": safe_status,
         "is_thinking": thinking,
         "symbol_active": symbol,
         "live_usdt": state_manager.live_usdt_balance,
         "positions": positions_data,
-        "ai_debate": ai_debate,
+        "ai_debate": safe_ai_debate,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     
     def _send():
         import time
-        headers = {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
+        headers = {}
+        # Only attach token if hitting our internal API
+        if "127.0.0.1" in WEBHOOK_URL or "localhost" in WEBHOOK_URL:
+            headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
+            
         for attempt in range(3):
             try:
                 response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
@@ -47,4 +64,4 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
                 else:
                     time.sleep(2)
             
-    threading.Thread(target=_send, daemon=True).start()
+    _webhook_executor.submit(_send)

@@ -25,7 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 load_dotenv()
 
-from bot.database import Trade, init_db, SystemLog, SessionLocal, setup_logging
+from bot.database import Trade, init_db, SystemLog, SessionLocalSpot, SessionLocalFutures, setup_logging
 
 setup_logging()
 
@@ -109,14 +109,26 @@ def get_stats_for_period(db: Session, start_time=None):
         "win_rate": win_rate
     }
 
-def get_trade_stats(db: Session):
+import time
+
+_stats_cache = {'spot': None, 'futures': None}
+_stats_cache_expiry = {'spot': 0, 'futures': 0}
+
+def get_trade_stats(db: Session, market_type: str = 'spot'):
+    global _stats_cache, _stats_cache_expiry
+    now_ts = time.time()
+    if _stats_cache_expiry.get(market_type, 0) > now_ts and _stats_cache.get(market_type) is not None:
+        return _stats_cache[market_type]
+
     now = datetime.now(timezone.utc)
-    return {
-        "1D": get_stats_for_period(db, now - timedelta(days=1)),
-        "7D": get_stats_for_period(db, now - timedelta(days=7)),
-        "1M": get_stats_for_period(db, now - timedelta(days=30)),
-        "ALL": get_stats_for_period(db, None)
+    _stats_cache[market_type] = {
+        "1D": get_stats_for_period(db, now - timedelta(days=1), market_type=market_type),
+        "7D": get_stats_for_period(db, now - timedelta(days=7), market_type=market_type),
+        "1M": get_stats_for_period(db, now - timedelta(days=30), market_type=market_type),
+        "ALL": get_stats_for_period(db, None, market_type=market_type)
     }
+    _stats_cache_expiry[market_type] = now_ts + 5 # Cache for 5 seconds
+    return _stats_cache[market_type]
 
 def format_trade(t):
     return {
@@ -161,7 +173,8 @@ def format_logs(logs):
         })
     return formatted_logs
 
-latest_bot_state = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
+latest_bot_state_spot = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
+latest_bot_state_futures = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
 
 from bot.config import SYMBOLS
 
@@ -170,70 +183,117 @@ def get_bot_status():
         "status": "online",
         "symbols": SYMBOLS,
         "paper_trading": os.getenv("PAPER_TRADING", "True"),
-        "live_usdt": latest_bot_state.get("live_usdt", 0.0),
-        "ai_status": latest_bot_state
+        "spot": latest_bot_state_spot,
+        "futures": latest_bot_state_futures
     }
+
+async def db_polling_task():
+    # Poll database for new logs and trades every 2 seconds to decouple from status broadcasts
+    last_ids = {
+        'spot': {'trade': 0, 'log': 0},
+        'futures': {'trade': 0, 'log': 0}
+    }
+    
+    # Initialize last_ids
+    for m in ['spot', 'futures']:
+        try:
+            db = SessionLocalFutures() if m == 'futures' else SessionLocalSpot()
+            t = db.query(Trade).order_by(Trade.id.desc()).first()
+            if t: last_ids[m]['trade'] = t.id
+            l = db.query(SystemLog).order_by(SystemLog.id.desc()).first()
+            if l: last_ids[m]['log'] = l.id
+            db.close()
+        except:
+            pass
+
+    while True:
+        try:
+            await asyncio.sleep(2)
+            if not manager.active_connections:
+                continue # Don't poll if no one is listening
+                
+            for market in ['spot', 'futures']:
+                trades_data, logs_data, stats_data = await run_in_threadpool(
+                    get_db_updates, market, last_ids[market]['trade'], last_ids[market]['log']
+                )
+                
+                if trades_data:
+                    last_ids[market]['trade'] = max([t['id'] for t in trades_data])
+                    await manager.broadcast({"type": "trades_update", "market_type": market, "is_delta": True, "data": trades_data})
+                if logs_data:
+                    last_ids[market]['log'] = max([l['id'] for l in logs_data])
+                    await manager.broadcast({"type": "logs_update", "market_type": market, "is_delta": True, "data": logs_data})
+                
+                # Send stats update occasionally since it's cached anyway
+                await manager.broadcast({"type": "stats_update", "market_type": market, "data": stats_data})
+        except Exception as e:
+            logging.error(f"Error in db_polling_task: {e}")
+            await asyncio.sleep(5)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    asyncio.create_task(db_polling_task())
     yield
 
 app = FastAPI(title="AI Trading Dashboard", lifespan=lifespan)
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["127.0.0.1", "localhost", "::1"])
 
 
-def get_db_updates():
-    db = SessionLocal()
+def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log_id: int = 0):
+    db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
     try:
-        trades = db.query(Trade).order_by(Trade.id.desc()).limit(50).all()
+        trades_query = db.query(Trade).filter(Trade.market_type == market_type)
+        if since_trade_id > 0:
+            trades_query = trades_query.filter(Trade.id > since_trade_id)
+        trades = trades_query.order_by(Trade.id.desc()).limit(50).all()
         
-        twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-        
-        # Fetch important logs from last 24h (Exclude noise)
-        important_logs = db.query(SystemLog).filter(
-            SystemLog.timestamp >= twenty_four_hours_ago,
-            ~SystemLog.message.like('%Result: HOLD%'),
-            ~SystemLog.message.like('%Order Book Check%'),
-            ~SystemLog.message.like('%Load shedding%'),
-            ~SystemLog.message.like('%in cooldown%')
-        ).all()
-        
-        # Fetch recent noisy logs from last 1h only
-        recent_noisy_logs = db.query(SystemLog).filter(
-            SystemLog.timestamp >= one_hour_ago,
-            (SystemLog.message.like('%Result: HOLD%')) | 
-            (SystemLog.message.like('%Order Book Check%')) | 
-            (SystemLog.message.like('%Load shedding%')) |
-            (SystemLog.message.like('%in cooldown%'))
-        ).all()
-        
-        # Combine, sort by ID descending, and limit to 1000
-        combined_logs = important_logs + recent_noisy_logs
-        combined_logs.sort(key=lambda x: x.id, reverse=True)
-        logs = combined_logs[:1000]
+        logs_query = db.query(SystemLog).filter(SystemLog.market_type == market_type)
+        if since_log_id > 0:
+            logs = logs_query.filter(SystemLog.id > since_log_id).order_by(SystemLog.id.desc()).limit(100).all()
+        else:
+            twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            
+            important_logs = db.query(SystemLog).filter(
+                SystemLog.market_type == market_type,
+                SystemLog.timestamp >= twenty_four_hours_ago,
+                ~SystemLog.message.like('%Result: HOLD%'),
+                ~SystemLog.message.like('%Order Book Check%'),
+                ~SystemLog.message.like('%Load shedding%'),
+                ~SystemLog.message.like('%in cooldown%')
+            ).all()
+            
+            recent_noisy_logs = db.query(SystemLog).filter(
+                SystemLog.market_type == market_type,
+                SystemLog.timestamp >= one_hour_ago,
+                (SystemLog.message.like('%Result: HOLD%')) | 
+                (SystemLog.message.like('%Order Book Check%')) | 
+                (SystemLog.message.like('%Load shedding%')) |
+                (SystemLog.message.like('%in cooldown%'))
+            ).all()
+            
+            combined_logs = important_logs + recent_noisy_logs
+            combined_logs.sort(key=lambda x: x.id, reverse=True)
+            logs = combined_logs[:1000]
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)
-        stats_data = get_trade_stats(db)
+        stats_data = get_trade_stats(db, market_type=market_type)
         
         return trades_data, logs_data, stats_data
     except Exception as e:
         import traceback
-        err_msg = str(e)
-        logging.error(f"Broadcast DB error: {err_msg}")
-        traceback.print_exc()
-        
-        # Return the error as a fake log so it appears on the dashboard
+        logging.error(f"Broadcast DB error: {e}")
         error_log = [{
             "id": 999999,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": "ERROR",
-            "message": f"CRITICAL DB ERROR: {err_msg}"
+            "message": "CRITICAL DB ERROR: Database operation failed. Please check server logs."
         }]
         return [], error_log, {}
     finally:
@@ -253,6 +313,7 @@ class PositionModel(BaseModel):
     pnl_percent: float
 
 class BroadcastState(BaseModel):
+    market_type: str = 'spot'
     status_message: str
     is_thinking: bool
     symbol_active: Optional[str] = None
@@ -263,19 +324,15 @@ class BroadcastState(BaseModel):
 
 @app.post("/api/internal/broadcast")
 async def receive_broadcast(state: BroadcastState, auth: bool = Depends(verify_token)):
-    global latest_bot_state
-    latest_bot_state = state.model_dump()
+    global latest_bot_state_spot, latest_bot_state_futures
     
-    # Push state update
+    if state.market_type == 'futures':
+        latest_bot_state_futures = state.model_dump()
+    else:
+        latest_bot_state_spot = state.model_dump()
+    
+    # Push ONLY state update
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
-    
-    # Push DB updates without blocking the event loop
-    trades_data, logs_data, stats_data = await run_in_threadpool(get_db_updates)
-    
-    if trades_data or logs_data or stats_data:
-        await manager.broadcast({"type": "trades_update", "data": trades_data})
-        await manager.broadcast({"type": "logs_update", "data": logs_data})
-        await manager.broadcast({"type": "stats_update", "data": stats_data})
     
     return {"status": "ok"}
 
@@ -300,7 +357,6 @@ def login(req: LoginRequest, request: Request):
     try:
         password_matches = bcrypt.checkpw(req.password.encode('utf-8'), PASS.encode('utf-8'))
     except Exception:
-        # If PASS is not a valid bcrypt hash, this will catch the exception
         password_matches = False
 
     if secrets.compare_digest(req.username, USER) and password_matches:
@@ -311,12 +367,17 @@ def login(req: LoginRequest, request: Request):
 
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    # WS rate limit (tracked via ip)
+    # WS rate limit & stale connection purge (tracked via ip)
     client_ip = websocket.client.host if websocket.client else "unknown"
     if not hasattr(app.state, "ws_connections"):
         app.state.ws_connections = {}
     
     now = time.time()
+    
+    # Periodic cleanup of stale IPs to prevent memory leak
+    if len(app.state.ws_connections) > 1000:
+        app.state.ws_connections = {ip: times for ip, times in app.state.ws_connections.items() if times and (now - times[-1]) < 60}
+        
     if client_ip in app.state.ws_connections:
         conns = [t for t in app.state.ws_connections[client_ip] if now - t < 60]
         if len(conns) >= 20:
@@ -332,11 +393,18 @@ async def websocket_endpoint(websocket: WebSocket):
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
         if auth_msg.get("type") == "auth" and await manager.authenticate(websocket, auth_msg.get("token")):
             await websocket.send_json({"type": "status_update", "data": get_bot_status()})
-            trades_data, logs_data, stats_data = await run_in_threadpool(get_db_updates)
             
-            await websocket.send_json({"type": "trades_update", "data": trades_data})
-            await websocket.send_json({"type": "logs_update", "data": logs_data})
-            await websocket.send_json({"type": "stats_update", "data": stats_data})
+            # Send initial spot data
+            spot_trades, spot_logs, spot_stats = await run_in_threadpool(get_db_updates, 'spot')
+            await websocket.send_json({"type": "trades_update", "market_type": "spot", "data": spot_trades})
+            await websocket.send_json({"type": "logs_update", "market_type": "spot", "data": spot_logs})
+            await websocket.send_json({"type": "stats_update", "market_type": "spot", "data": spot_stats})
+            
+            # Send initial futures data
+            fut_trades, fut_logs, fut_stats = await run_in_threadpool(get_db_updates, 'futures')
+            await websocket.send_json({"type": "trades_update", "market_type": "futures", "data": fut_trades})
+            await websocket.send_json({"type": "logs_update", "market_type": "futures", "data": fut_logs})
+            await websocket.send_json({"type": "stats_update", "market_type": "futures", "data": fut_stats})
             
             while True:
                 msg = await websocket.receive_text()

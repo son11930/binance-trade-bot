@@ -3,6 +3,10 @@ import time
 import threading
 from unittest.mock import MagicMock
 from bot.ai_queue import AIQueueManager, AITask
+from unittest.mock import MagicMock, patch
+
+# Mock log_msg to avoid UnicodeEncodeError on Windows console
+patch('bot.ai_queue.log_msg', MagicMock()).start()
 
 def test_ai_task_sorting():
     # Test that AITask sorts correctly based on priority and timestamp
@@ -85,33 +89,35 @@ def test_dynamic_load_shedding():
     # 3 tasks < 2.0 (LOW1, LOW2, LOW3)
     # Order in queue: HIGH, LOW1, LOW2, LOW3
     # When LOW1 is processed: qsize=2. Score < 2.0 -> SHED
-    # When LOW2 is processed: qsize=1. Score < 2.0 -> EXECUTED (qsize < 2)
-    # When LOW3 is processed: qsize=0. Score < 2.0 -> EXECUTED (qsize < 2)
-    
-    mock_state_manager = MagicMock()
+    class DummyStateManager:
+        def __init__(self):
+            self.called_with = None
+        def update_state(self, symbol, active_strategy=None):
+            self.called_with = (symbol, active_strategy)
+            
+    mock_state_manager = DummyStateManager()
     
     qm.submit(3.0, "HIGH", mock_task, "HIGH")
     
-    # We'll pass mock_state_manager as the first argument to verify unlock logic
-    qm.submit(1.2, "LOW1", mock_task, mock_state_manager, "LOW1")
-    qm.submit(1.1, "LOW2", mock_task, "LOW2")
+    # We'll pass mock_state_manager as the first argument to verify unlock logic for LOW2
+    qm.submit(1.2, "LOW1", mock_task, "LOW1")
+    qm.submit(1.1, "LOW2", mock_task, mock_state_manager, "LOW2")
     qm.submit(1.0, "LOW3", mock_task, "LOW3")
     
     block_event.set()
     qm.q.join()
     
-    # LOW1 should be dropped because when it's popped, qsize=2.
-    # Let's verify mock_state_manager.update_state was called
-    mock_state_manager.update_state.assert_called_once_with("LOW1")
+    # LOW2 should be dropped because when it's submitted, qsize >= 2.
+    assert mock_state_manager.called_with == ("LOW2", "NONE")
     
     # LOW1 is dropped, so it's not in execution_order. 
     # Notice mock_task for LOW1 expects two arguments (mock_state_manager, "LOW1"), 
     # but the shed logic just calls update_state and drops it.
     
     assert "HIGH" in execution_order
-    assert "LOW1" not in execution_order
-    assert "LOW2" in execution_order
-    assert "LOW3" in execution_order
+    assert "LOW1" in execution_order
+    assert "LOW2" not in execution_order
+    assert "LOW3" not in execution_order
 
 from unittest.mock import patch
 

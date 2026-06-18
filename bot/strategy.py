@@ -10,6 +10,7 @@ class SignalPlan(NamedTuple):
     take_profit: float
     time_in_trade: int
     near_miss_reason: str = ""
+    position_side: str = ""
 
 
 def apply_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -232,5 +233,61 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
         stop_loss=0.0,
         take_profit=0.0,
         time_in_trade=0,
-        near_miss_reason=near_miss_reason
+        near_miss_reason=near_miss_reason,
+        position_side=""
     )
+
+def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
+    """
+    Analyzes the latest 5m candle for Futures Long/Short trading.
+    """
+    default_signal = SignalPlan(
+        action="HOLD", strategy_used="NONE", stop_loss=0.0, 
+        take_profit=0.0, time_in_trade=0, near_miss_reason="", position_side=""
+    )
+    
+    if len(df) < 200:
+        return default_signal
+        
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    required_cols = ['SMA_200', 'RSI', 'MACD', 'MACD_Signal', 'ATR']
+    if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']):
+        return default_signal
+        
+    price = latest['close']
+    atr = latest['ATR']
+    sma_200 = latest['SMA_200']
+    macd_curr = latest['MACD']
+    sig_curr = latest['MACD_Signal']
+    macd_prev = prev['MACD']
+    sig_prev = prev['MACD_Signal']
+    rsi_curr = latest['RSI']
+    
+    macd_cross_up = macd_curr > sig_curr and macd_prev <= sig_prev
+    macd_cross_down = macd_curr < sig_curr and macd_prev >= sig_prev
+    
+    # Long Entry
+    if price > sma_200 and macd_cross_up and rsi_curr < 70:
+        return SignalPlan(
+            action="BUY", strategy_used="FUTURES_5M_LONG",
+            stop_loss=price - (atr * 2.0), take_profit=price + (atr * 4.0),
+            time_in_trade=24, near_miss_reason="", position_side="LONG"
+        )
+        
+    # Short Entry
+    if price < sma_200 and macd_cross_down and rsi_curr > 30:
+        return SignalPlan(
+            action="SELL", strategy_used="FUTURES_5M_SHORT",
+            stop_loss=price + (atr * 2.0), take_profit=price - (atr * 4.0),
+            time_in_trade=24, near_miss_reason="", position_side="SHORT"
+        )
+        
+    # Exits: Reversals
+    if macd_cross_down:
+        return SignalPlan("SELL", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
+    if macd_cross_up:
+        return SignalPlan("BUY", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
+        
+    return default_signal

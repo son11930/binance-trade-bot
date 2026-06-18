@@ -110,3 +110,11 @@ Due to performance issues with sending high-frequency "Queued" and "Order Book C
 1. The database continues to store all events completely intact.
 2. The `api/server.py` queries critical logs (aborts, errors, trades) over a 24-hour window, but limits noisy logs (queued, order book checks) to a 1-hour window.
 3. The WebSocket limit is reverted to 1000 rows to ensure snappy UI loading, while still technically spanning 24+ hours of relevant critical history.
+
+## Phase 11: Dual-Engine Architecture (Spot & Futures)
+The system will be upgraded to a concurrent Dual-Engine architecture, running both Spot and Futures trading bots simultaneously.
+- **Goal**: Run Spot (15m) and Futures (5m) bots simultaneously.
+- **Database Separation**: Databases must be completely and clearly separated (using `DATABASE_URL_SPOT` and `DATABASE_URL_FUTURES` or separate schemas/DBs, not just a column).
+- **UI/UX Dashboard**: Implement a unified web dashboard that visually separates Spot and Futures with tabs or toggles, ensuring data on the UI never mixes.
+- **Futures Logic**: Support Long/Short positions, use 3x Leverage, ISOLATED margin, and aim for high APY (no grid bot).
+- **Core Engine Upgrade**: Refactor `bot/main.py`, `bot/binance_client.py`, and `bot/trade_executor.py` to route and manage dual execution paths independently.

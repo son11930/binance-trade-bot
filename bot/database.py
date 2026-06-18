@@ -3,13 +3,17 @@ import urllib.parse
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.sql import func
 import logging
 
-def sanitize_text(text: str) -> str:
-    if not text:
-        return text
-    text_str = str(text)
-    
+# Cache secrets at module level to avoid re-hashing on every log
+_SECRETS_CACHE = None
+
+def _get_secrets_cache():
+    global _SECRETS_CACHE
+    if _SECRETS_CACHE is not None:
+        return _SECRETS_CACHE
+        
     secrets = [
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
         ("BINANCE_API_KEY", os.getenv("BINANCE_API_KEY")),
@@ -34,23 +38,38 @@ def sanitize_text(text: str) -> str:
         secrets.append(("WEBHOOK_TOKEN", webhook_token))
         secrets.append(("JWT_SECRET", jwt_secret))
     
-    db_url = os.getenv("DATABASE_URL")
-    if db_url:
-        secrets.append(("DATABASE_URL", db_url))
-        if "://" in db_url and "@" in db_url:
-            try:
-                parsed = urllib.parse.urlparse(db_url)
-                if parsed.password:
-                    secrets.append(("DB_PASS", parsed.password))
-                if parsed.hostname:
-                    secrets.append(("DB_HOST", parsed.hostname))
-            except Exception:
-                pass
-                
+    for url_name in ["DATABASE_URL_SPOT", "DATABASE_URL_FUTURES", "DATABASE_URL"]:
+        db_url = os.getenv(url_name)
+        if db_url:
+            secrets.append((url_name, db_url))
+            if "://" in db_url and "@" in db_url:
+                try:
+                    parsed = urllib.parse.urlparse(db_url)
+                    if parsed.password:
+                        secrets.append(("DB_PASS", parsed.password))
+                    if parsed.hostname:
+                        secrets.append(("DB_HOST", parsed.hostname))
+                except Exception:
+                    pass
+    
+    _SECRETS_CACHE = [(name, val) for name, val in secrets if val and len(val) > 3]
+    return _SECRETS_CACHE
+
+def sanitize_text(text: str) -> str:
+    if not text:
+        return text
+    text_str = str(text)
+    
+    # We must allow the cache to be reset if env vars change (mostly for tests)
+    if os.environ.get("TEST_RESET_SECRETS") == "1":
+        global _SECRETS_CACHE
+        _SECRETS_CACHE = None
+    
+    secrets = _get_secrets_cache()
+    
     for name, val in secrets:
-        if val and len(val) > 3:
-            text_str = text_str.replace(val, f"***MASKED_{name}***")
-            text_str = text_str.replace(urllib.parse.quote(val), f"***MASKED_{name}***")
+        text_str = text_str.replace(val, f"***MASKED_{name}***")
+        text_str = text_str.replace(urllib.parse.quote(val), f"***MASKED_{name}***")
             
     return text_str
 
@@ -75,27 +94,35 @@ def setup_logging():
             for handler in logger_obj.handlers:
                 handler.setFormatter(formatter)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trades.db")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+def get_engine(db_url: str):
+    if db_url and db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    if db_url and db_url.startswith("postgres"):
+        return create_engine(
+            db_url, 
+            pool_pre_ping=True, 
+            pool_size=5, 
+            max_overflow=10
+        )
+    else:
+        # SQLite
+        engine = create_engine(db_url, connect_args={"check_same_thread": False, "timeout": 15})
+        # Enable WAL mode for concurrent write support
+        with engine.connect() as conn:
+            conn.execute(sqlalchemy.text("PRAGMA journal_mode=WAL;"))
+        return engine
 
-if DATABASE_URL.startswith("postgres"):
-    # PostgreSQL configuration (Supabase/Neon)
-    # pool_pre_ping=True ensures dropped connections are automatically reconnected
-    engine = create_engine(
-        DATABASE_URL, 
-        pool_pre_ping=True, 
-        pool_size=5, 
-        max_overflow=10
-    )
-else:
-    # Local SQLite fallback
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+import sqlalchemy
+from bot.config import DATABASE_URL_SPOT, DATABASE_URL_FUTURES
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine_spot = get_engine(DATABASE_URL_SPOT)
+engine_futures = get_engine(DATABASE_URL_FUTURES)
+
+SessionLocalSpot = sessionmaker(autocommit=False, autoflush=False, bind=engine_spot)
+SessionLocalFutures = sessionmaker(autocommit=False, autoflush=False, bind=engine_futures)
+
 Base = declarative_base()
-
-from sqlalchemy.sql import func
 
 class Trade(Base):
     __tablename__ = "trades"
@@ -105,7 +132,6 @@ class Trade(Base):
     side = Column(String)  # BUY or SELL
     price = Column(Float)
     quantity = Column(Float)
-    # timezone=True is required for PostgreSQL compatibility
     timestamp = Column(DateTime(timezone=True), default=func.now())
     ai_risk_score = Column(Float, nullable=True)
     ai_reasoning = Column(String, nullable=True)
@@ -114,6 +140,8 @@ class Trade(Base):
     fee_asset = Column(String, nullable=True)
     pnl_amount = Column(Float, nullable=True)
     pnl_percent = Column(Float, nullable=True)
+    position_side = Column(String, nullable=True)
+    market_type = Column(String, default="spot")
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
@@ -122,12 +150,17 @@ class SystemLog(Base):
     timestamp = Column(DateTime(timezone=True), default=func.now())
     level = Column(String, index=True) # INFO, WARNING, ERROR
     message = Column(String)
+    market_type = Column(String, default="spot")
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine_spot)
+    Base.metadata.create_all(bind=engine_futures)
 
-def get_db():
-    db = SessionLocal()
+def get_db(market_type: str = 'spot'):
+    if market_type == 'futures':
+        db = SessionLocalFutures()
+    else:
+        db = SessionLocalSpot()
     try:
         yield db
     finally:
@@ -135,22 +168,22 @@ def get_db():
 
 class TradeRepository:
     @staticmethod
-    def get_last_buy_price(symbol: str) -> float:
-        db = SessionLocal()
+    def get_last_buy_price(symbol: str, market_type: str = 'spot') -> float:
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
         try:
-            trade = db.query(Trade).filter(Trade.symbol == symbol).order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
+            trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.market_type == market_type).order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
             if trade and trade.side == 'BUY':
                 return trade.price
             return 0.0
         except Exception:
-            logging.exception(f"Error fetching last buy price for {symbol}")
+            logging.exception(f"Error fetching last buy price for {symbol} ({market_type})")
             return 0.0
         finally:
             db.close()
 
     @staticmethod
-    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True, fee: float = None, fee_asset: str = None, pnl_amount: float = None, pnl_percent: float = None):
-        db = SessionLocal()
+    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True, fee: float = None, fee_asset: str = None, pnl_amount: float = None, pnl_percent: float = None, market_type: str = 'spot', position_side: str = None):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
         try:
             trade = Trade(
                 symbol=symbol,
@@ -163,14 +196,35 @@ class TradeRepository:
                 fee=fee,
                 fee_asset=fee_asset,
                 pnl_amount=pnl_amount,
-                pnl_percent=pnl_percent
+                pnl_percent=pnl_percent,
+                position_side=position_side,
+                market_type=market_type
             )
             db.add(trade)
             db.commit()
             db.refresh(trade)
-            return trade
+            
+            # Convert to dictionary before closing session to avoid DetachedInstanceError
+            trade_dict = {
+                "id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "price": trade.price,
+                "quantity": trade.quantity,
+                "ai_risk_score": trade.ai_risk_score,
+                "ai_reasoning": trade.ai_reasoning,
+                "paper_trade": trade.paper_trade,
+                "fee": trade.fee,
+                "fee_asset": trade.fee_asset,
+                "pnl_amount": trade.pnl_amount,
+                "pnl_percent": trade.pnl_percent,
+                "position_side": trade.position_side,
+                "market_type": trade.market_type,
+                "timestamp": trade.timestamp
+            }
+            return trade_dict
         except Exception:
-            logging.exception(f"Error creating trade for {symbol}")
+            logging.exception(f"Error creating trade for {symbol} ({market_type})")
             db.rollback()
             return None
         finally:
@@ -178,11 +232,11 @@ class TradeRepository:
 
 class LogRepository:
     @staticmethod
-    def log_event(level: str, message: str):
-        db = SessionLocal()
+    def log_event(level: str, message: str, market_type: str = 'spot'):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
         try:
             safe_message = sanitize_text(message)
-            log_entry = SystemLog(level=level, message=safe_message)
+            log_entry = SystemLog(level=level, message=safe_message, market_type=market_type)
             db.add(log_entry)
             db.commit()
         except Exception as e:
@@ -193,10 +247,10 @@ class LogRepository:
             db.close()
 
     @staticmethod
-    def get_recent_logs(limit: int = 100):
-        db = SessionLocal()
+    def get_recent_logs(limit: int = 100, market_type: str = 'spot'):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
         try:
-            return db.query(SystemLog).order_by(SystemLog.timestamp.desc()).limit(limit).all()
+            return db.query(SystemLog).filter(SystemLog.market_type == market_type).order_by(SystemLog.timestamp.desc()).limit(limit).all()
         except Exception:
             return []
         finally:

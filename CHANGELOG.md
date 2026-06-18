@@ -1,3 +1,19 @@
+## [4.3.0] - 2026-06-18
+### Dual-Engine (Spot & Futures) & Security Hardening
+**English:**
+- **Dual-Engine Architecture**: Integrated a simultaneous Dual-Engine system running 15m Spot and 5m Futures strategies concurrently.
+- **Futures Core Features**: Added support for Hedge Mode (Dual-Side), 3x Leverage Position Sizing, and Short position trailing stops (`lowest_price` tracking).
+- **Strict Data Isolation**: Implemented `market_type` filtering to completely segregate Spot and Futures trades, states, and logs in the database.
+- **Security Patches**: Fixed webhook thread explosion risks, sanitized API outputs to prevent API Key leaks, and restricted WebSocket broadcast auth headers.
+- **Resilience**: Added robust error handling for Binance API network failures.
+
+**Thai (ภาษาไทย):**
+- **สถาปัตยกรรม 2 เครื่องยนต์ (Dual-Engine)**: รันระบบเทรด Spot (กราฟ 15 นาที) และ Futures (กราฟ 5 นาที) ไปพร้อมๆ กัน
+- **รองรับการเทรด Futures เต็มรูปแบบ**: เพิ่มการทำงานแบบ Hedge Mode, คุม Leverage 3x, และแก้ระบบ Trailing Stop ให้รองรับการเล่นขาลง (SHORT) ได้แม่นยำ
+- **แยกฐานข้อมูล Spot/Futures เด็ดขาด**: ปรับจูนระบบทั้งหมดให้แยกข้อมูลตารางเทรดและการแสดงผลระหว่างสองตลาดออกจากกัน 100%
+- **อุดช่องโหว่ความปลอดภัยระดับร้ายแรง**: ป้องกันหน้าเว็บหลุด Token/API Key, แก้ปัญหาแจ้งเตือน Webhook กิน RAM เครื่อง, และจำกัดคนเข้าถึง Dashboard
+- **เพิ่มความเสถียร (Resilience)**: ดักจับ Error ตอนเน็ตกระตุกหรือ Binance ล่ม เพื่อไม่ให้บอทดับตอนเทรดจริง
+
 ## [4.2.0] - 2026-06-16
 ### Near Miss Tracking & API Security
 **English:**

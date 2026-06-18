@@ -16,6 +16,10 @@ class WebSocketManager:
 
     def process_ticker_message(self, msg: Dict):
         try:
+            # Unwrap multiplex payload if present
+            if 'data' in msg:
+                msg = msg['data']
+                
             if msg.get('e') == '24hrTicker':
                 sym = msg['s']
                 self.state_manager.update_state(sym, last_price=float(msg['c']))
@@ -50,6 +54,10 @@ class WebSocketManager:
 
     def process_kline_message(self, msg: Dict):
         try:
+            # Unwrap multiplex payload if present
+            if 'data' in msg:
+                msg = msg['data']
+                
             event_type = msg.get('e')
             if event_type not in ['kline', 'continuous_kline']:
                 return

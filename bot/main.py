@@ -54,20 +54,27 @@ def main():
     # Start ThreadedWebsocketManager
     twm.start()
     
-    # Subscribe to streams
+    # Subscribe to streams using multiplexing
+    spot_streams = []
+    futures_streams = []
     for sym in SYMBOLS:
-        # Spot Streams
-        twm.start_symbol_ticker_socket(callback=ws_manager_spot.process_ticker_message, symbol=sym)
-        twm.start_kline_socket(callback=ws_manager_spot.process_kline_message, symbol=sym, interval='15m')
-        
-        # Futures Streams
-        try:
-            if hasattr(twm, 'start_kline_futures_socket'):
-                twm.start_kline_futures_socket(callback=ws_manager_futures.process_kline_message, symbol=sym, interval='5m')
-            else:
-                log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_kline_futures_socket", market_type='futures')
-        except Exception as e:
-            log_msg("ERROR", f"Failed to start futures kline socket for {sym}: {e}", market_type='futures')
+        sym_lower = sym.lower()
+        spot_streams.append(f"{sym_lower}@ticker")
+        spot_streams.append(f"{sym_lower}@kline_15m")
+        futures_streams.append(f"{sym_lower}@continuousKline_perpetual_5m")
+    
+    # Start Spot Multiplex Streams
+    twm.start_multiplex_socket(callback=ws_manager_spot.process_ticker_message, streams=[s for s in spot_streams if 'ticker' in s])
+    twm.start_multiplex_socket(callback=ws_manager_spot.process_kline_message, streams=[s for s in spot_streams if 'kline' in s])
+    
+    # Start Futures Multiplex Streams
+    try:
+        if hasattr(twm, 'start_futures_multiplex_socket'):
+            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_kline_message, streams=futures_streams)
+        else:
+            log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_futures_multiplex_socket", market_type='futures')
+    except Exception as e:
+        log_msg("ERROR", f"Failed to start futures multiplex socket: {e}", market_type='futures')
         
     log_msg("INFO", "WebSocket streams active. Waiting for candle closes...")
     # Initial state broadcast

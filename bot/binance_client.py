@@ -266,7 +266,8 @@ def futures_set_margin_type(symbol: str, margin_type: str = "ISOLATED", is_paper
         client.futures_change_margin_type(symbol=symbol, marginType=margin_type)
         log_msg("INFO", f"Margin type set to {margin_type} for {symbol}", market_type='futures')
     except Exception as e:
-        if isinstance(e, BinanceAPIException) and "No need to change margin type" in str(e):
+        err_str = str(e)
+        if isinstance(e, BinanceAPIException) and ("No need to change margin type" in err_str or "-4047" in err_str):
             return
         log_msg("ERROR", f"Failed to set margin type for {symbol}: {e}", market_type='futures')
 

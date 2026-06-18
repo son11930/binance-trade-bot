@@ -21,8 +21,12 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
 
     try:
         order = place_market_order(symbol, side, qty, is_paper=is_paper)
-        avg_price = order.get('parsed_avg_price', price)
-        exec_qty = order.get('parsed_exec_qty', qty)
+        avg_price = order.get('parsed_avg_price')
+        if not avg_price:
+            avg_price = price
+        exec_qty = order.get('parsed_exec_qty')
+        if not exec_qty:
+            exec_qty = qty
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
     except Exception as e:
@@ -84,8 +88,12 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
                     return None
 
         order = futures_place_order(symbol, side, positionSide, qty, is_paper=is_paper)
-        avg_price = order.get('parsed_avg_price', price)
-        exec_qty = order.get('parsed_exec_qty', qty)
+        avg_price = order.get('parsed_avg_price')
+        if not avg_price:
+            avg_price = price
+        exec_qty = order.get('parsed_exec_qty')
+        if not exec_qty:
+            exec_qty = qty
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
     except Exception as e:

@@ -16,8 +16,8 @@ COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "15"))
 STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://127.0.0.1:8000/api/internal/broadcast")
 
-DATABASE_URL_SPOT = os.getenv("DATABASE_URL_SPOT", "sqlite:///./trades_spot.db")
-DATABASE_URL_FUTURES = os.getenv("DATABASE_URL_FUTURES", "sqlite:///./trades_futures.db")
+DATABASE_URL_SPOT = os.getenv("DATABASE_URL_SPOT", os.getenv("DATABASE_URL", "sqlite:///./trades_spot.db"))
+DATABASE_URL_FUTURES = os.getenv("DATABASE_URL_FUTURES", os.getenv("DATABASE_URL", "sqlite:///./trades_futures.db"))
 
 USER = os.getenv("DASHBOARD_USER")
 PASS = os.getenv("DASHBOARD_PASS")

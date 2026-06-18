@@ -61,6 +61,7 @@ def main():
         sym_lower = sym.lower()
         spot_streams.append(f"{sym_lower}@ticker")
         spot_streams.append(f"{sym_lower}@kline_15m")
+        futures_streams.append(f"{sym_lower}@ticker")
         futures_streams.append(f"{sym_lower}@continuousKline_perpetual_5m")
     
     # Start Spot Multiplex Streams
@@ -70,7 +71,8 @@ def main():
     # Start Futures Multiplex Streams
     try:
         if hasattr(twm, 'start_futures_multiplex_socket'):
-            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_kline_message, streams=futures_streams)
+            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_ticker_message, streams=[s for s in futures_streams if 'ticker' in s])
+            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_kline_message, streams=[s for s in futures_streams if 'kline' in s.lower()])
         else:
             log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_futures_multiplex_socket", market_type='futures')
     except Exception as e:

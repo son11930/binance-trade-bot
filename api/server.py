@@ -144,7 +144,8 @@ def format_trade(t):
         "fee": getattr(t, 'fee', None),
         "fee_asset": getattr(t, 'fee_asset', None),
         "pnl_amount": getattr(t, 'pnl_amount', None),
-        "pnl_percent": getattr(t, 'pnl_percent', None)
+        "pnl_percent": getattr(t, 'pnl_percent', None),
+        "market_type": getattr(t, 'market_type', 'spot')
     }
 
 def format_logs(logs):

@@ -62,7 +62,7 @@ def main():
         spot_streams.append(f"{sym_lower}@ticker")
         spot_streams.append(f"{sym_lower}@kline_15m")
         futures_streams.append(f"{sym_lower}@ticker")
-        futures_streams.append(f"{sym_lower}@continuousKline_perpetual_5m")
+        futures_streams.append(f"{sym_lower}@kline_5m")
     
     # Start Spot Multiplex Streams
     twm.start_multiplex_socket(callback=ws_manager_spot.process_ticker_message, streams=[s for s in spot_streams if 'ticker' in s])

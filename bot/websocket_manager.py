@@ -95,6 +95,9 @@ class WebSocketManager:
                             net_return = gross_return - fee
                             self.state_manager.add_to_balance(net_return)
                             self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
+                            
+                            from .webhook_notifier import update_bot_state
+                            update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='spot')
             elif self.market_type == 'futures':
                 state = self.state_manager.get_state(symbol)
                 if state.position > 0:
@@ -130,9 +133,14 @@ class WebSocketManager:
                             futures_cancel_all_orders(symbol)
                             
                             # Update local balance if we track it (optional for futures but let's do it)
-                            if trade.pnl_amount:
-                                self.state_manager.add_to_balance(trade.pnl_amount)
+                            pnl_amount = trade.get('pnl_amount')
+                            if pnl_amount:
+                                self.state_manager.add_to_balance(pnl_amount)
                             self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0)
+                            
+                            # Broadcast immediately to clear it from UI
+                            from .webhook_notifier import update_bot_state
+                            update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='futures')
                     
             # 2. Strategy evaluation on candle close
             if is_closed:

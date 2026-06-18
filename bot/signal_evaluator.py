@@ -106,6 +106,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                     position=qty, 
                     buy_price=current_price, 
                     highest_price=current_price, 
+                    lowest_price=current_price,
                     last_trade_time=datetime.now(timezone.utc),
                     trade_entry_time=datetime.now(timezone.utc),
                     active_strategy=strategy_used,
@@ -126,9 +127,6 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
         
         df = apply_indicators(df)
         signal_plan = analyze_market(df)
-    
-        states = state_manager.get_all_states()
-        current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else get_current_price(s.symbol)) for s in states.values() if s.position > 0)
         
         signal = signal_plan.action
         strategy_used = signal_plan.strategy_used
@@ -214,9 +212,12 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         if trade:
                             from .binance_client import futures_cancel_all_orders
                             futures_cancel_all_orders(symbol)
-                            state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+                            state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
-                    return # Already in a position
+                            state = state_manager.get_state(symbol)
+                            
+                    if state.position > 0:
+                        return # Exit failed or not a reversal, still in a position
                 
                 # Opening new position
                 from .config import FUTURES_QUANTITY_USDT, FUTURES_LEVERAGE
@@ -273,6 +274,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         position=trade.get('quantity', qty) if isinstance(trade, dict) else qty, 
                         buy_price=current_price, 
                         highest_price=current_price, 
+                        lowest_price=current_price,
                         active_strategy=strategy_used, 
                         last_trade_time=datetime.now(timezone.utc),
                         dynamic_sl=sl_target,
@@ -289,7 +291,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     if trade:
                         from .binance_client import futures_cancel_all_orders
                         futures_cancel_all_orders(symbol)
-                        state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
+                        state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                         update_bot_state(state_manager, f"FUTURES EXIT executed for {symbol}", symbol=symbol, market_type='futures')
         else:
             if getattr(signal_plan, 'near_miss_reason', ""):

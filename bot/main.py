@@ -86,6 +86,13 @@ def main():
     try:
         while True:
             time.sleep(60)
+            
+            if not twm.is_alive():
+                log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot...")
+                import sys
+                import os
+                os.execv(sys.executable, ['python'] + sys.argv)
+
             try:
                 update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All", market_type='spot')
                 update_bot_state(state_manager_futures, "Monitoring Futures markets...", symbol="All", market_type='futures')

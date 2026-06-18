@@ -8,6 +8,9 @@ from .risk_manager import check_risk_management
 from .trade_executor import execute_trade
 from .signal_evaluator import evaluate_strategy_for_symbol
 from .logger import log_msg
+from concurrent.futures import ThreadPoolExecutor
+
+_execution_pool = ThreadPoolExecutor(max_workers=10)
 
 class WebSocketManager:
     def __init__(self, state_manager: StateManager, market_type: str = 'spot'):
@@ -83,21 +86,26 @@ class WebSocketManager:
                     
                     atr_value = 2.5
                     if not df.empty and 'ATR' in df.columns:
-                        atr_value = df.iloc[-1]['ATR']
+                        if pd.notna(df.iloc[-1].get('ATR')):
+                            atr_value = df.iloc[-1]['ATR']
+                        elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
+                            atr_value = df.iloc[-2]['ATR']
                         
                     rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT)
                     if rm_signal:
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
-                        trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
-                        if trade:
-                            gross_return = state.position * current_price
-                            fee = gross_return * 0.001
-                            net_return = gross_return - fee
-                            self.state_manager.add_to_balance(net_return)
-                            self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
-                            
-                            from .webhook_notifier import update_bot_state
-                            update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='spot')
+                        def _execute_spot_rm():
+                            trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
+                            if trade:
+                                gross_return = state.position * current_price
+                                fee = gross_return * 0.001
+                                net_return = gross_return - fee
+                                self.state_manager.add_to_balance(net_return)
+                                self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
+                                
+                                from .webhook_notifier import update_bot_state
+                                update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='spot')
+                        _execution_pool.submit(_execute_spot_rm)
             elif self.market_type == 'futures':
                 state = self.state_manager.get_state(symbol)
                 if state.position > 0:
@@ -114,41 +122,48 @@ class WebSocketManager:
                     
                     atr_value = 2.5
                     if not df.empty and 'ATR' in df.columns:
-                        atr_value = df.iloc[-1]['ATR']
+                        if pd.notna(df.iloc[-1].get('ATR')):
+                            atr_value = df.iloc[-1]['ATR']
+                        elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
+                            atr_value = df.iloc[-2]['ATR']
                         
                     rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT, market_type='futures')
                     if rm_signal:
                         log_msg("WARNING", f"🚨 FUTURES {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         
-                        # Execute trade to close position
-                        close_side = "BUY" if state.position_side == "SHORT" else "SELL"
-                        
-                        from .trade_executor import execute_futures_trade
-                        trade = execute_futures_trade(
-                            self.state_manager, symbol, close_side, state.position_side, 
-                            state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING
-                        )
-                        if trade:
-                            from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol)
+                        def _execute_futures_rm():
+                            # Execute trade to close position
+                            close_side = "BUY" if state.position_side == "SHORT" else "SELL"
                             
-                            # Update local balance if we track it (optional for futures but let's do it)
-                            pnl_amount = trade.get('pnl_amount')
-                            if pnl_amount:
-                                self.state_manager.add_to_balance(pnl_amount)
-                            self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0)
-                            
-                            # Broadcast immediately to clear it from UI
-                            from .webhook_notifier import update_bot_state
-                            update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='futures')
+                            from .trade_executor import execute_futures_trade
+                            trade = execute_futures_trade(
+                                self.state_manager, symbol, close_side, state.position_side, 
+                                state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING
+                            )
+                            if trade:
+                                from .binance_client import futures_cancel_all_orders
+                                futures_cancel_all_orders(symbol)
+                                
+                                # Update local balance if we track it (optional for futures but let's do it)
+                                pnl_amount = trade.get('pnl_amount')
+                                if pnl_amount:
+                                    self.state_manager.add_to_balance(pnl_amount)
+                                self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+                                
+                                # Broadcast immediately to clear it from UI
+                                from .webhook_notifier import update_bot_state
+                                update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='futures')
+                                
+                        _execution_pool.submit(_execute_futures_rm)
                     
             # 2. Strategy evaluation on candle close
             if is_closed:
                 if self.market_type == 'futures':
                     from .signal_evaluator import evaluate_futures_strategy_for_symbol
-                    evaluate_futures_strategy_for_symbol(self.state_manager, symbol, df, current_price)
+                    _execution_pool.submit(evaluate_futures_strategy_for_symbol, self.state_manager, symbol, df.copy(), current_price)
                 else:
-                    evaluate_strategy_for_symbol(self.state_manager, symbol, df, current_price)
+                    from .signal_evaluator import evaluate_strategy_for_symbol
+                    _execution_pool.submit(evaluate_strategy_for_symbol, self.state_manager, symbol, df.copy(), current_price)
         except Exception as e:
             import traceback
             log_msg("ERROR", f"Unhandled exception in process_kline_message: {e}\n{traceback.format_exc()}", market_type=self.market_type)

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import math
 from .state import SymbolState
 from .config import FUTURES_LEVERAGE
 
@@ -46,7 +47,8 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
         
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
-            if minutes_elapsed >= state.max_time_in_trade * 15:
+            candle_interval_minutes = 5 if market_type == "futures" else 15
+            if minutes_elapsed >= state.max_time_in_trade * candle_interval_minutes:
                 return f"Time-in-Trade Stop ({state.max_time_in_trade} periods) ⏰"
 
         # Fix Dynamic TP and SL for Short vs Long
@@ -61,7 +63,7 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
             if state.dynamic_sl > 0 and current_price <= state.dynamic_sl:
                 return f"Dynamic Stop Loss ({state.dynamic_sl}) 🚨"
             
-        atr_percent = (atr_value / current_price) * 100 if atr_value else 2.5
+        atr_percent = (atr_value / current_price) * 100 if atr_value and not math.isnan(atr_value) else 2.5
         
         # ATR Trailing Stop (Chandelier Exit)
         # 1. We must be in profit by at least 1.5x ATR (scaled by leverage for PNL)
@@ -80,7 +82,5 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"
-            
-    return None
             
     return None

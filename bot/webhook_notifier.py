@@ -8,6 +8,15 @@ from .risk_manager import calculate_pnl
 from .state import StateManager
 from .database import sanitize_text
 
+def sanitize_dict(d):
+    if isinstance(d, dict):
+        return {k: sanitize_dict(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [sanitize_dict(v) for v in d]
+    elif isinstance(d, str):
+        return sanitize_text(d)
+    return d
+
 # Use a single executor for webhooks to prevent thread explosion
 _webhook_executor = ThreadPoolExecutor(max_workers=5)
 
@@ -36,19 +45,17 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
 
     # Sanitize inputs to prevent API key leaks
     safe_status = sanitize_text(status_msg)
-    safe_ai_debate = None
-    if ai_debate:
-        import json
-        # serialize, sanitize, and deserialize
-        safe_ai_debate = json.loads(sanitize_text(json.dumps(ai_debate)))
+    safe_symbol = sanitize_text(symbol)
+    safe_ai_debate = sanitize_dict(ai_debate) if ai_debate else None
+    safe_positions = sanitize_dict(positions_data)
 
     payload = {
         "market_type": market_type,
         "status_message": safe_status,
         "is_thinking": thinking,
-        "symbol_active": symbol,
+        "symbol_active": safe_symbol,
         "live_usdt": state_manager.live_usdt_balance,
-        "positions": positions_data,
+        "positions": safe_positions,
         "ai_debate": safe_ai_debate,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
@@ -56,8 +63,10 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     def _send():
         import time
         headers = {}
-        # Only attach token if hitting our internal API (which ends in /api/internal/broadcast)
-        if "127.0.0.1" in WEBHOOK_URL or "localhost" in WEBHOOK_URL or "/api/internal/broadcast" in WEBHOOK_URL:
+        # Only attach token if hitting our internal API securely
+        from urllib.parse import urlparse
+        parsed = urlparse(WEBHOOK_URL)
+        if parsed.hostname in ['127.0.0.1', 'localhost'] and parsed.path.endswith("/api/internal/broadcast"):
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
         for attempt in range(3):

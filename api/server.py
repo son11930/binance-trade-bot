@@ -326,7 +326,8 @@ class BroadcastState(BaseModel):
     updated_at: Optional[str] = None
 
 @app.post("/api/internal/broadcast")
-async def receive_broadcast(state: BroadcastState, auth: bool = Depends(verify_token)):
+@limiter.limit("120/minute")
+async def receive_broadcast(state: BroadcastState, request: Request, auth: bool = Depends(verify_token)):
     global latest_bot_state_spot, latest_bot_state_futures
     
     if state.market_type == 'futures':
@@ -359,6 +360,9 @@ class LoginRequest(BaseModel):
 def login(req: LoginRequest, request: Request):
     try:
         password_matches = bcrypt.checkpw(req.password.encode('utf-8'), PASS.encode('utf-8'))
+    except ValueError:
+        # Fallback to secure plain-text comparison if PASS is not hashed
+        password_matches = secrets.compare_digest(req.password, PASS)
     except Exception:
         password_matches = False
 

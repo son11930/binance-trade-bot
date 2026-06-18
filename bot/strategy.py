@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import ta
 from typing import NamedTuple
 
@@ -156,8 +155,8 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
             near_miss_reason=""
         )
         
-    # SELL: MACD crosses BELOW Signal Line
-    if macd_curr < sig_curr and macd_prev >= sig_prev:
+    # SELL: MACD is BELOW Signal Line
+    if macd_curr < sig_curr:
         return SignalPlan(
             action="SELL",
             strategy_used="TREND_MACD",
@@ -285,9 +284,9 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         )
         
     # Exits: Reversals
-    if macd_cross_down:
+    if macd_curr < sig_curr:
         return SignalPlan("SELL", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
-    if macd_cross_up:
+    if macd_curr > sig_curr:
         return SignalPlan("BUY", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
         
     near_miss_reason = ""

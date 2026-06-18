@@ -86,6 +86,21 @@ def get_live_asset_balance(asset: str) -> float | None:
         log_msg("ERROR", f"Error fetching balance for {asset}: {e}")
         return None
 
+def futures_get_live_balance(asset: str = "USDT") -> float | None:
+    """
+    Fetch actual balance from Binance Futures wallet.
+    Returns None if the API fails.
+    """
+    try:
+        futures_account = client.futures_account()
+        for a in futures_account.get('assets', []):
+            if a['asset'] == asset:
+                return float(a['availableBalance'])
+        return 0.0
+    except Exception as e:
+        log_msg("ERROR", f"Error fetching futures balance for {asset}: {e}", market_type='futures')
+        return None
+
 STEP_SIZE_CACHE = {}
 FUTURES_STEP_SIZE_CACHE = {}
 

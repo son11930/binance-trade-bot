@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from .config import SYMBOLS, PAPER_TRADING
-from .binance_client import get_live_asset_balance, get_current_price, futures_get_position
+from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance
 from .database import TradeRepository
 from .logger import log_msg
 
@@ -130,6 +130,10 @@ class StateManager:
 
             if self.market_type == 'spot':
                 bal = get_live_asset_balance("USDT")
+                if bal is not None:
+                    self._live_usdt_balance = bal
+            elif self.market_type == 'futures':
+                bal = futures_get_live_balance("USDT")
                 if bal is not None:
                     self._live_usdt_balance = bal
                     

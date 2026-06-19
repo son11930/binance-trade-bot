@@ -49,7 +49,7 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
         
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
-            candle_interval_minutes = 5 if market_type == "futures" else 15
+            candle_interval_minutes = 15 # Both spot and futures are now 15m
             if minutes_elapsed >= state.max_time_in_trade * candle_interval_minutes:
                 return f"Time-in-Trade Stop ({state.max_time_in_trade} periods) ⏰"
 

@@ -103,11 +103,16 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                     dynamic_sl=sl_target,
                     dynamic_tp=tp_target,
                     max_time_in_trade=time_limit,
-                    position_side=position_side
+                    position_side=position_side,
+                    ai_hold_cooldown_until=None
                 )
         else:
-            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying cooldown.")
-            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.")
+            state_manager.update_state(symbol, 
+                last_trade_time=datetime.now(timezone.utc),
+                ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(hours=2),
+                cooldown_start_price=current_price
+            )
             
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_futures_trade_signal for {symbol}: {e}")
@@ -321,10 +326,23 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         
                 # OPENING a NEW position - Evaluate with AI Council
                 # (Reversals also reach here after closing the old position above)
+                latest_kline = df.iloc[-1]
+                vol_sma = latest_kline.get('SMA_20_Vol', 0)
+                vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0
+                atr_val = latest_kline.get('ATR', 0)
+                
+                if state.ai_hold_cooldown_until and datetime.now(timezone.utc) < state.ai_hold_cooldown_until:
+                    price_diff = abs(current_price - state.cooldown_start_price)
+                    if vol_surge_val > 3.0 or (atr_val > 0 and price_diff > 1.5 * atr_val):
+                        log_msg("INFO", f"💥 Breakout Override! Bypassing {symbol} AI HOLD cooldown.", market_type='futures')
+                    else:
+                        log_msg("DEBUG", f"⏳ {symbol} in AI HOLD cooldown. Skipping Futures {signal} signal.", market_type='futures')
+                        return
+                        
                 if state.last_trade_time and state.position == 0:
                     time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
                     if time_since_trade < COOLDOWN_MINUTES:
-                        log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping Futures {signal} signal.")
+                        log_msg("DEBUG", f"⏳ {symbol} in execution cooldown. Skipping Futures {signal} signal.")
                         return
 
                 update_bot_state(state_manager, f"{signal} {position_side} Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol, market_type='futures')
@@ -333,11 +351,8 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 adx_val = latest_kline.get('ADX', 'N/A')
                 rsi_val = latest_kline.get('RSI', 'N/A')
                 macd_histogram_val = latest_kline.get('MACD_Histogram', 'N/A')
-                atr_val = latest_kline.get('ATR', 'N/A')
                 bb_width_val = latest_kline.get('Bollinger_Band_Width', 'N/A')
                 dist_sma_200_val = latest_kline.get('Distance_to_SMA_200', 'N/A')
-                vol_sma = latest_kline.get('SMA_20_Vol', 0)
-                vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0
                 
                 from .ai_queue import ai_queue_manager
                 ai_queue_manager.submit(

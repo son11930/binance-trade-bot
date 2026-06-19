@@ -25,6 +25,8 @@ class SymbolState:
     highest_price: float = 0.0
     lowest_price: float = 0.0
     position_side: str = "" # "LONG" or "SHORT" for futures
+    ai_hold_cooldown_until: datetime | None = None
+    cooldown_start_price: float = 0.0
 
 class StateManager:
     def __init__(self, market_type: str = 'spot'):
@@ -48,6 +50,8 @@ class StateManager:
                                 s_data["last_trade_time"] = datetime.fromisoformat(s_data["last_trade_time"])
                             if s_data.get("trade_entry_time"):
                                 s_data["trade_entry_time"] = datetime.fromisoformat(s_data["trade_entry_time"])
+                            if s_data.get("ai_hold_cooldown_until"):
+                                s_data["ai_hold_cooldown_until"] = datetime.fromisoformat(s_data["ai_hold_cooldown_until"])
                             valid_keys = {f.name for f in fields(self._states[sym])}
                             filtered_data = {k: v for k, v in s_data.items() if k in valid_keys}
                             self._states[sym] = replace(self._states[sym], **filtered_data)
@@ -64,6 +68,8 @@ class StateManager:
                     s_dict["last_trade_time"] = s_dict["last_trade_time"].isoformat()
                 if s_dict["trade_entry_time"]:
                     s_dict["trade_entry_time"] = s_dict["trade_entry_time"].isoformat()
+                if s_dict.get("ai_hold_cooldown_until"):
+                    s_dict["ai_hold_cooldown_until"] = s_dict["ai_hold_cooldown_until"].isoformat()
                 data[sym] = s_dict
             tmp_file = f"{self._state_file}.tmp"
             with open(tmp_file, "w") as f:

@@ -22,6 +22,7 @@ def apply_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Moving Averages
     df['SMA_200'] = ta.trend.sma_indicator(df['close'], window=200)
     df['SMA_50'] = ta.trend.sma_indicator(df['close'], window=50)
+    df['EMA_50'] = ta.trend.ema_indicator(df['close'], window=50)
     
     # MACD (12, 26, 9)
     df['MACD'] = ta.trend.macd(df['close'], window_slow=26, window_fast=12)
@@ -251,19 +252,21 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    required_cols = ['SMA_200', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol']
+    required_cols = ['SMA_200', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol']
     if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']) or pd.isna(latest['ADX']):
         return default_signal
         
     price = latest['close']
     atr = latest['ATR']
     sma_200 = latest['SMA_200']
+    ema_50 = latest['EMA_50']
     macd_curr = latest['MACD']
     sig_curr = latest['MACD_Signal']
     macd_prev = prev['MACD']
     sig_prev = prev['MACD_Signal']
     rsi_curr = latest['RSI']
     adx_curr = latest['ADX']
+    adx_prev = prev['ADX']
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
@@ -288,22 +291,22 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 2.5
     tp_multiplier = 5.0
     
-    # Momentum Filter: ADX must be > 15 for a trend
-    strong_trend = adx_curr > 15
+    # Momentum Filter: ADX must be > 20 and rising for a solid trend
+    strong_trend = adx_curr > 20 and adx_curr > adx_prev
     
     # Volume Filter: Relaxed to allow AI Council to decide
     strong_volume = True
     
-    # Long Entry (Removed SMA200 requirement so AI can decide counter-trend bounces)
-    if macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
+    # Long Entry (Requires price > EMA50 to filter out weak bounces)
+    if price > ema_50 and macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
         return SignalPlan(
             action="BUY", strategy_used="FUTURES_15M_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry (Removed SMA200 requirement so AI can decide counter-trend drops)
-    if macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
+    # Short Entry (Requires price < EMA50 to filter out weak drops)
+    if price < ema_50 and macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
         return SignalPlan(
             action="SELL", strategy_used="FUTURES_15M_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
@@ -326,17 +329,21 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     if macd_cross_up:
         strategy_used = "FUTURES_15M_LONG"
-        if rsi_curr >= 70:
+        if price <= ema_50:
+            near_miss_reason = f"Price below EMA50 ({price:.2f} <= {ema_50:.2f})"
+        elif rsi_curr >= 70:
             near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
         elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
             
     elif macd_cross_down:
         strategy_used = "FUTURES_15M_SHORT"
-        if rsi_curr <= 30:
+        if price >= ema_50:
+            near_miss_reason = f"Price above EMA50 ({price:.2f} >= {ema_50:.2f})"
+        elif rsi_curr <= 30:
             near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
         elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
             
     if near_miss_reason:
         return SignalPlan(

@@ -85,7 +85,7 @@ def main():
     
     try:
         while True:
-            time.sleep(60)
+            time.sleep(5)
             
             if not twm.is_alive():
                 log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot...")

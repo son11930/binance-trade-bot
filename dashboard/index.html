@@ -284,9 +284,9 @@
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Action</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Price</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size</th>
+                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin (USDT)</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Fee</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL</th>
-                            <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-center">AI Risk</th>
                             <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Intelligence Reason</th>
                         </tr>
                     </thead>
@@ -438,17 +438,17 @@
                     } else {
                         dataStore[market].trades = message.data;
                     }
-                    if (currentMarket === market) updateTradesUI(message.data, message.is_delta);
+                    if (currentMarket === market) updateTradesUI(dataStore[market].trades, message.is_delta);
                 } else if (message.type === "logs_update") {
                     if (message.is_delta) {
                         dataStore[market].logs = [...message.data, ...dataStore[market].logs].slice(0, 1000);
                     } else {
                         dataStore[market].logs = message.data;
                     }
-                    if (currentMarket === market) renderLogsUI(message.data, message.is_delta);
+                    if (currentMarket === market) renderLogsUI(dataStore[market].logs, message.is_delta);
                 } else if (message.type === "stats_update") {
                     dataStore[market].stats = message.data;
-                    if (currentMarket === market) renderStatsUI(message.data);
+                    if (currentMarket === market) renderStatsUI(dataStore[market].stats);
                 }
             };
 
@@ -580,7 +580,7 @@
                     
                     if (currentMarket === 'futures') {
                         const sideColor = pos.position_side === 'LONG' ? 'text-neonGreen' : 'text-neonRed';
-                        const sideLabel = pos.position_side || 'N/A';
+                        const sideLabel = escapeHTML(pos.position_side || 'N/A');
                         
                         tr.innerHTML = `
                             <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
@@ -595,8 +595,8 @@
                         tr.innerHTML = `
                             <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
                             <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
-                            <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toFixed(4)}</td>
-                            <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toFixed(4)}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6})}</td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6})}</td>
                             <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${pos.pnl_amount.toFixed(2)}</td>
                             <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
                         `;
@@ -670,11 +670,11 @@
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>
                     <td class="p-4 font-extrabold tracking-wider ${sideClass}">${actionText} <span class="text-white text-xs ml-1">${safeSymbol}</span></td>
-                    <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+                    <td class="p-4 text-sm font-mono text-slate-200 text-right">$${trade.price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 6})}</td>
                     <td class="p-4 text-sm font-mono text-slate-400 text-right">${trade.quantity.toFixed(5)}</td>
+                    <td class="p-4 text-sm font-mono text-slate-400 text-right">$${trade.margin !== undefined && trade.margin !== null ? trade.margin.toFixed(2) : '--'}</td>
                     <td class="p-4 text-sm font-mono text-slate-400 text-right">${feeStr}</td>
                     <td class="p-4 text-sm font-mono text-right">${pnlStr}</td>
-                    <td class="p-4 text-sm font-bold text-center ${trade.ai_risk_score > 40 ? 'text-orange-400' : 'text-neonCyan'}">${trade.ai_risk_score !== null ? trade.ai_risk_score : '--'}</td>
                     <td class="p-4 text-sm text-slate-400 whitespace-normal break-words max-w-xs" title="${safeReasoning}">${safeReasoning}</td>
                 `;
                 fragment.appendChild(tr);

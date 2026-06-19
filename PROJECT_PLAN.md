@@ -118,3 +118,15 @@ The system will be upgraded to a concurrent Dual-Engine architecture, running bo
 - **UI/UX Dashboard**: Implement a unified web dashboard that visually separates Spot and Futures with tabs or toggles, ensuring data on the UI never mixes.
 - **Futures Logic**: Support Long/Short positions, use 3x Leverage, ISOLATED margin, and aim for high APY (no grid bot).
 - **Core Engine Upgrade**: Refactor `bot/main.py`, `bot/binance_client.py`, and `bot/trade_executor.py` to route and manage dual execution paths independently.
+
+## Phase 12: TDD Stabilization & Live PNL Accuracy (Completed)
+- **Goal**: Restore the test suite to 100% passing after major async/sync threading refactors, and fix UI PNL delays.
+- **TDD Restored**: Fixed deep mocking issues in `pytest` where `_execution_pool.submit` was running real threads and breaking synchronous state assertions.
+- **PNL Calculation Shift**: The system now locally calculates the exact PNL %, Margin, and Fee instantly at the time of execution. It no longer waits for Binance's delayed REST API.
+- **UI Expansion**: Added Margin (USDT) and Fee columns to the Execution Log. Removed the deprecated AI Risk column to clean up the dashboard.
+
+## Phase 13: UI Refinements & Security Hardening (Completed)
+- **Goal**: Reduce dashboard lag, fix minor fee accounting bugs, and patch security vulnerabilities.
+- **Performance**: Reduced polling latency from 60s to 5s.
+- **Accounting**: Enforced 0.01 USDT minimum fee and swapped availableBalance for marginBalance to correctly calculate capacity.
+- **Security**: Handled dictionary injection vulnerability in Webhooks and masked Binance exception payloads from the dashboard UI.

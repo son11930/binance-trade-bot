@@ -84,8 +84,13 @@ def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot'
         func.sum(case((Trade.pnl_amount > 0, 1), else_=0)).label('wins'),
         func.sum(case((Trade.pnl_amount < 0, 1), else_=0)).label('losses'),
         func.count(Trade.id).label('total_closed'),
-        func.sum(case((Trade.pnl_amount != None, (Trade.price * Trade.quantity) - Trade.pnl_amount), else_=0)).label('cumulative_capital')
-    ).filter(Trade.pnl_amount != None, Trade.market_type == market_type)
+        func.sum(case(
+            (Trade.pnl_amount.isnot(None), 
+                case((Trade.market_type == 'futures', ((Trade.price * Trade.quantity) / 3) - Trade.pnl_amount), 
+                else_=((Trade.price * Trade.quantity) - Trade.pnl_amount))
+            ), else_=0
+        )).label('cumulative_capital')
+    ).filter(Trade.pnl_amount.isnot(None), Trade.market_type == market_type)
     
     if start_time:
         query = query.filter(Trade.timestamp >= start_time)
@@ -120,7 +125,7 @@ def get_trade_stats(db: Session, market_type: str = 'spot'):
     if _stats_cache_expiry.get(market_type, 0) > now_ts and _stats_cache.get(market_type) is not None:
         return _stats_cache[market_type]
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     _stats_cache[market_type] = {
         "1D": get_stats_for_period(db, now - timedelta(days=1), market_type=market_type),
         "7D": get_stats_for_period(db, now - timedelta(days=7), market_type=market_type),
@@ -131,6 +136,21 @@ def get_trade_stats(db: Session, market_type: str = 'spot'):
     return _stats_cache[market_type]
 
 def format_trade(t):
+    from bot.config import FUTURES_LEVERAGE
+    market_type = getattr(t, 'market_type', 'spot')
+    notional = t.price * t.quantity
+    
+    margin = notional / FUTURES_LEVERAGE if market_type == 'futures' else notional
+    fee = getattr(t, 'fee', 0.0)
+    fee_asset = getattr(t, 'fee_asset', 'USDT')
+    
+    if not fee or fee == 0.0:
+        fee = notional * 0.0005 if market_type == 'futures' else notional * 0.001
+        fee_asset = 'USDT'
+        
+    if fee < 0.01 and fee_asset == 'USDT':
+        fee = 0.01
+        
     return {
         "id": t.id,
         "symbol": t.symbol,
@@ -141,11 +161,12 @@ def format_trade(t):
         "ai_risk_score": t.ai_risk_score,
         "ai_reasoning": t.ai_reasoning,
         "paper_trade": t.paper_trade,
-        "fee": getattr(t, 'fee', None),
-        "fee_asset": getattr(t, 'fee_asset', None),
+        "fee": fee,
+        "fee_asset": fee_asset,
+        "margin": margin,
         "pnl_amount": getattr(t, 'pnl_amount', None),
         "pnl_percent": getattr(t, 'pnl_percent', None),
-        "market_type": getattr(t, 'market_type', 'spot')
+        "market_type": market_type
     }
 
 def format_logs(logs):
@@ -188,7 +209,11 @@ def get_bot_status():
         "futures": latest_bot_state_futures
     }
 
+db_poll_event = None
+
 async def db_polling_task():
+    global db_poll_event
+    
     # Poll database for new logs and trades every 2 seconds to decouple from status broadcasts
     last_ids = {
         'spot': {'trade': 0, 'log': 0},
@@ -209,7 +234,12 @@ async def db_polling_task():
 
     while True:
         try:
-            await asyncio.sleep(2)
+            try:
+                await asyncio.wait_for(db_poll_event.wait(), timeout=2.0)
+                db_poll_event.clear()
+            except asyncio.TimeoutError:
+                pass
+            
             if not manager.active_connections:
                 continue # Don't poll if no one is listening
                 
@@ -220,7 +250,7 @@ async def db_polling_task():
                 
                 if trades_data:
                     last_ids[market]['trade'] = max([t['id'] for t in trades_data])
-                    await manager.broadcast({"type": "trades_update", "market_type": market, "is_delta": True, "data": trades_data})
+                    await manager.broadcast({"type": "trades_update", "market_type": market, "is_delta": False, "data": trades_data})
                 if logs_data:
                     last_ids[market]['log'] = max([l['id'] for l in logs_data])
                     await manager.broadcast({"type": "logs_update", "market_type": market, "is_delta": True, "data": logs_data})
@@ -234,6 +264,8 @@ async def db_polling_task():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global db_poll_event
+    db_poll_event = asyncio.Event()
     init_db()
     asyncio.create_task(db_polling_task())
     yield
@@ -249,16 +281,14 @@ def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log
     db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
     try:
         trades_query = db.query(Trade).filter(Trade.market_type == market_type)
-        if since_trade_id > 0:
-            trades_query = trades_query.filter(Trade.id > since_trade_id)
         trades = trades_query.order_by(Trade.id.desc()).limit(50).all()
         
         logs_query = db.query(SystemLog).filter(SystemLog.market_type == market_type)
         if since_log_id > 0:
             logs = logs_query.filter(SystemLog.id > since_log_id).order_by(SystemLog.id.desc()).limit(100).all()
         else:
-            twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).replace(tzinfo=None)
+            one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(tzinfo=None)
             
             important_logs = db.query(SystemLog).filter(
                 SystemLog.market_type == market_type,
@@ -338,6 +368,9 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
     # Push ONLY state update
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
     
+    if db_poll_event:
+        db_poll_event.set()
+    
     return {"status": "ok"}
 
 
@@ -361,8 +394,8 @@ def login(req: LoginRequest, request: Request):
     try:
         password_matches = bcrypt.checkpw(req.password.encode('utf-8'), PASS.encode('utf-8'))
     except ValueError:
-        # Fallback to secure plain-text comparison if PASS is not hashed
-        password_matches = secrets.compare_digest(req.password, PASS)
+        # Prevent downgrade attacks if PASS is misconfigured
+        password_matches = False
     except Exception:
         password_matches = False
 
@@ -384,6 +417,10 @@ async def websocket_endpoint(websocket: WebSocket):
     # Periodic cleanup of stale IPs to prevent memory leak
     if len(app.state.ws_connections) > 1000:
         app.state.ws_connections = {ip: times for ip, times in app.state.ws_connections.items() if times and (now - times[-1]) < 60}
+        # Hard cap at 1000 most recently active IPs to prevent DoS
+        if len(app.state.ws_connections) > 1000:
+            sorted_items = sorted(app.state.ws_connections.items(), key=lambda x: x[1][-1], reverse=True)
+            app.state.ws_connections = dict(sorted_items[:1000])
         
     if client_ip in app.state.ws_connections:
         conns = [t for t in app.state.ws_connections[client_ip] if now - t < 60]

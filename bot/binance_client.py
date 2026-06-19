@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 from .database import LogRepository, sanitize_text
 from .config import PAPER_TRADING
 
+def sanitize_error(e: Exception) -> str:
+    err_str = str(e)
+    if 'signature' in err_str.lower() or 'timestamp' in err_str.lower() or 'api-key' in err_str.lower():
+        return 'API connection or authentication error (details sanitized)'
+    return err_str
+
 def log_msg(level: str, msg: str, market_type: str = 'spot'):
     safe_msg = sanitize_text(msg)
     print(f"[{market_type.upper()}] {safe_msg}")
@@ -69,7 +75,7 @@ def analyze_order_book_walls(symbol: str, depth: int = 50) -> dict:
             "total_ask_qty": total_ask_qty
         }
     except Exception as e:
-        log_msg("ERROR", f"Error fetching order book for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching order book for {symbol}: {sanitize_error(e)}")
         return {
             "largest_bid_price": 0.0, "largest_bid_qty": 0.0,
             "largest_ask_price": 0.0, "largest_ask_qty": 0.0
@@ -84,7 +90,7 @@ def get_live_asset_balance(asset: str) -> float | None:
         balance = client.get_asset_balance(asset=asset)
         return float(balance['free']) if balance else 0.0
     except Exception as e:
-        log_msg("ERROR", f"Error fetching balance for {asset}: {e}")
+        log_msg("ERROR", f"Error fetching balance for {asset}: {sanitize_error(e)}")
         return None
 
 def futures_get_live_balance(asset: str = "USDT") -> float | None:
@@ -96,10 +102,10 @@ def futures_get_live_balance(asset: str = "USDT") -> float | None:
         futures_account = client.futures_account()
         for a in futures_account.get('assets', []):
             if a['asset'] == asset:
-                return float(a['availableBalance'])
+                return float(a['marginBalance'])
         return 0.0
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures balance for {asset}: {e}", market_type='futures')
+        log_msg("ERROR", f"Error fetching futures balance for {asset}: {sanitize_error(e)}", market_type='futures')
         return None
 
 STEP_SIZE_CACHE = {}
@@ -116,7 +122,7 @@ def get_step_size(symbol: str) -> float:
                 STEP_SIZE_CACHE[symbol] = step_size
                 return step_size
     except Exception as e:
-        log_msg("ERROR", f"Error fetching step size for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching step size for {symbol}: {sanitize_error(e)}")
     return 0.00001 # safe fallback
 
 def futures_get_step_size(symbol: str) -> float:
@@ -132,7 +138,7 @@ def futures_get_step_size(symbol: str) -> float:
                         FUTURES_STEP_SIZE_CACHE[symbol] = step_size
                         return step_size
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures step size for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching futures step size for {symbol}: {sanitize_error(e)}")
     return 0.001 # common fallback for futures
 
 from decimal import Decimal, ROUND_DOWN
@@ -145,7 +151,7 @@ def round_step_size(quantity: float, step_size: float) -> float:
         rounded = (dec_qty // dec_step) * dec_step
         return float(rounded)
     except Exception as e:
-        log_msg("ERROR", f"Error in round_step_size: {e}")
+        log_msg("ERROR", f"Error in round_step_size: {sanitize_error(e)}")
         # Fallback to math
         precision = int(round(-math.log(step_size, 10), 0))
         return math.floor(quantity * (10**precision)) / (10**precision)
@@ -155,7 +161,7 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     Places a market order. If is_paper is True, it simulates the execution.
     side: 'BUY' or 'SELL'
     """
-    if is_paper:
+    if is_paper or PAPER_TRADING:
         price = get_current_price(symbol)
         log_msg("INFO", f"[PAPER TRADE] {side} {quantity} of {symbol} at approx {price}")
         return {
@@ -228,7 +234,7 @@ def futures_get_klines(symbol: str, interval: str, limit: int = 100) -> pd.DataF
         df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
         return df
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures klines for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Error fetching futures klines for {symbol}: {sanitize_error(e)}", market_type='futures')
         return pd.DataFrame()
 
 def futures_set_leverage(symbol: str, leverage: int = 3, is_paper: bool = True):
@@ -242,7 +248,7 @@ def futures_set_leverage(symbol: str, leverage: int = 3, is_paper: bool = True):
     except Exception as e:
         if isinstance(e, BinanceAPIException) and "No need to change leverage" in str(e):
             return
-        log_msg("ERROR", f"Failed to set leverage for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Failed to set leverage for {symbol}: {sanitize_error(e)}", market_type='futures')
 
 def futures_set_position_mode(is_paper: bool = True):
     """Set Hedge Mode (Dual-Side Position) for Futures trading."""
@@ -255,7 +261,7 @@ def futures_set_position_mode(is_paper: bool = True):
     except Exception as e:
         if isinstance(e, BinanceAPIException) and "No need to change position side" in str(e):
             return
-        log_msg("ERROR", f"Failed to set Hedge Mode for Futures: {e}", market_type='futures')
+        log_msg("ERROR", f"Failed to set Hedge Mode for Futures: {sanitize_error(e)}", market_type='futures')
 
 def futures_set_margin_type(symbol: str, margin_type: str = "ISOLATED", is_paper: bool = True):
     """Set margin type for a specific futures symbol (ISOLATED or CROSSED)."""
@@ -269,14 +275,14 @@ def futures_set_margin_type(symbol: str, margin_type: str = "ISOLATED", is_paper
         err_str = str(e)
         if isinstance(e, BinanceAPIException) and ("No need to change margin type" in err_str or "-4047" in err_str):
             return
-        log_msg("ERROR", f"Failed to set margin type for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Failed to set margin type for {symbol}: {sanitize_error(e)}", market_type='futures')
 
 def futures_get_current_price(symbol: str) -> float:
     try:
         ticker = client.futures_symbol_ticker(symbol=symbol)
         return float(ticker['price'])
     except Exception as e:
-        log_msg("ERROR", f"Failed to get futures price for {symbol}: {e}")
+        log_msg("ERROR", f"Failed to get futures price for {symbol}: {sanitize_error(e)}")
         return 0.0
 
 def futures_place_order(symbol: str, side: str, positionSide: str, quantity: float, is_paper: bool = True):
@@ -285,7 +291,7 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     side: 'BUY' or 'SELL'
     positionSide: 'LONG' or 'SHORT'
     """
-    if is_paper:
+    if is_paper or PAPER_TRADING:
         price = futures_get_current_price(symbol)
         log_msg("INFO", f"[FUTURES PAPER] {side} {positionSide} {quantity} of {symbol} at approx {price}")
         return {
@@ -336,7 +342,7 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
             "parsed_commission_asset": "USDT"
         }
     except Exception as e:
-        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {e}")
+        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}")
         raise e
 from dataclasses import replace
 import logging
@@ -353,7 +359,7 @@ def futures_cancel_all_orders(symbol: str):
         log_msg("INFO", f"Cancelled all open orders for {symbol}", market_type='futures')
         return True
     except Exception as e:
-        log_msg("ERROR", f"Failed to cancel orders for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Failed to cancel orders for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
 def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float):
@@ -394,7 +400,7 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
             )
         return True
     except Exception as e:
-        log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
 
@@ -421,7 +427,7 @@ def futures_get_position(symbol: str, positionSide: str = None) -> dict | None:
         # If API returns empty list, it means no position exists
         return {"positionAmt": "0", "entryPrice": "0", "positionSide": positionSide or "LONG"}
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures position for {symbol}: {e}", market_type='futures')
+        log_msg("ERROR", f"Error fetching futures position for {symbol}: {sanitize_error(e)}", market_type='futures')
         return None
 
 def futures_account_balance(asset: str = "USDT") -> float | None:
@@ -433,5 +439,5 @@ def futures_account_balance(asset: str = "USDT") -> float | None:
                 return float(b['availableBalance']) # available for trading
         return 0.0
     except Exception as e:
-        log_msg("ERROR", f"Error fetching futures balance for {asset}: {e}")
+        log_msg("ERROR", f"Error fetching futures balance for {asset}: {sanitize_error(e)}")
         return None

@@ -1,4 +1,4 @@
-from .binance_client import place_market_order, get_live_asset_balance, futures_place_order, futures_set_leverage, futures_set_margin_type
+from .binance_client import place_market_order, get_live_asset_balance, futures_place_order, futures_set_leverage, futures_set_margin_type, sanitize_error
 from .database import TradeRepository
 from .logger import log_msg
 from .risk_manager import calculate_pnl
@@ -29,8 +29,13 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
             exec_qty = qty
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
+        if is_paper or commission == 0.0:
+            commission = (exec_qty * avg_price) * 0.001
+            commission_asset = "USDT"
+        if commission < 0.01 and commission_asset == "USDT":
+            commission = 0.01
     except Exception as e:
-        log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {e}")
+        log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {sanitize_error(e)}")
         return None
         
     pnl_amount = None
@@ -96,8 +101,13 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
             exec_qty = qty
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
+        if is_paper or commission == 0.0:
+            commission = (exec_qty * avg_price) * 0.0005
+            commission_asset = "USDT"
+        if commission < 0.01 and commission_asset == "USDT":
+            commission = 0.01
     except Exception as e:
-        log_msg("ERROR", f"⚠️ Futures Exchange Execution Failed for {symbol}: {e}", market_type="futures")
+        log_msg("ERROR", f"⚠️ Futures Exchange Execution Failed for {symbol}: {sanitize_error(e)}", market_type="futures")
         return None
         
     pnl_amount = None

@@ -10,7 +10,7 @@ from .database import sanitize_text
 
 def sanitize_dict(d):
     if isinstance(d, dict):
-        return {k: sanitize_dict(v) for k, v in d.items()}
+        return {sanitize_text(k) if isinstance(k, str) else k: sanitize_dict(v) for k, v in d.items()}
     elif isinstance(d, list):
         return [sanitize_dict(v) for v in d]
     elif isinstance(d, str):
@@ -63,10 +63,10 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     def _send():
         import time
         headers = {}
-        # Only attach token if hitting our internal API endpoint
+        # Only attach token if hitting our internal API endpoint on localhost
         from urllib.parse import urlparse
         parsed = urlparse(WEBHOOK_URL)
-        if parsed.path.endswith("/api/internal/broadcast"):
+        if parsed.hostname in ['localhost', '127.0.0.1'] and parsed.path.endswith("/api/internal/broadcast"):
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
         for attempt in range(3):

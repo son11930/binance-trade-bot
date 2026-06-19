@@ -7,6 +7,8 @@ def calculate_pnl(entry_price: float, current_price: float, quantity: float, fee
     """Returns (pnl_amount, pnl_percent). pnl_percent reflects return on margin if short/futures."""
     if entry_price <= 0 or quantity <= 0:
         return 0.0, 0.0
+    if market_type == "futures":
+        fee_rate = 0.0005
         
     fee = (entry_price + current_price) * quantity * fee_rate
     
@@ -63,7 +65,7 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
             if state.dynamic_sl > 0 and current_price <= state.dynamic_sl:
                 return f"Dynamic Stop Loss ({state.dynamic_sl}) 🚨"
             
-        atr_percent = (atr_value / current_price) * 100 if atr_value and not math.isnan(atr_value) else 2.5
+        atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
         # ATR Trailing Stop (Chandelier Exit)
         # 1. We must be in profit by at least 1.5x ATR (scaled by leverage for PNL)

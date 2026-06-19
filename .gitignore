@@ -61,3 +61,9 @@ task.md
 
 # Convenience Scripts
 restart_bot.bat
+scratch*.py
+*.db
+*.json
+fix_db*.py
+sync_binance_history.py
+img/

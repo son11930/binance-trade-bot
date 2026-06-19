@@ -281,7 +281,7 @@ def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log
     db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
     try:
         trades_query = db.query(Trade).filter(Trade.market_type == market_type)
-        trades = trades_query.order_by(Trade.id.desc()).limit(50).all()
+        trades = trades_query.order_by(Trade.timestamp.desc()).limit(50).all()
         
         logs_query = db.query(SystemLog).filter(SystemLog.market_type == market_type)
         if since_log_id > 0:

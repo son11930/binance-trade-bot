@@ -620,7 +620,11 @@
         }
 
         function updateTradesUI(trades, isDelta = false) {
-            document.getElementById('total-trades').innerText = dataStore[currentMarket].trades.length;
+            if (dataStore[currentMarket].stats && dataStore[currentMarket].stats['ALL']) {
+                document.getElementById('total-trades').innerText = dataStore[currentMarket].stats['ALL'].wins + dataStore[currentMarket].stats['ALL'].losses;
+            } else {
+                document.getElementById('total-trades').innerText = dataStore[currentMarket].trades.length;
+            }
             
             if (dataStore[currentMarket].trades.length > 0 && dataStore[currentMarket].trades[0].ai_risk_score !== null) {
                 const risk = dataStore[currentMarket].trades[0].ai_risk_score;
@@ -768,6 +772,10 @@
             const pctEl = document.getElementById('pnl-percent');
             pctEl.innerText = `${data.pnl_percent >= 0 ? '+' : ''}${data.pnl_percent.toFixed(2)}%`;
             pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
+            
+            if (statsData['ALL']) {
+                document.getElementById('total-trades').innerText = statsData['ALL'].wins + statsData['ALL'].losses;
+            }
         }
     </script>
 </body>

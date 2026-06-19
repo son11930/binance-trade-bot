@@ -13,6 +13,7 @@ FUTURES_MARGIN_TYPE = os.getenv("FUTURES_MARGIN_TYPE", "ISOLATED")
 
 PAPER_TRADING = os.getenv("PAPER_TRADING", "True").lower() == "true"
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "15"))
+MAX_CONCURRENT_TRADES = int(os.getenv("MAX_CONCURRENT_TRADES", "5"))
 STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://127.0.0.1:8000/api/internal/broadcast")
 

@@ -243,6 +243,12 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
         state = state_manager.get_state(symbol)
         
         if signal == "BUY" and state.position == 0:
+            from .config import MAX_CONCURRENT_TRADES
+            active_positions = sum(1 for s in state_manager.get_all_states().values() if s.position > 0)
+            if active_positions >= MAX_CONCURRENT_TRADES:
+                log_msg("DEBUG", f"🔒 Max Concurrent Trades ({MAX_CONCURRENT_TRADES}) reached. Skipping Spot {signal} for {symbol}.", market_type='spot')
+                return
+
             if state.last_trade_time:
                 time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
                 if time_since_trade < COOLDOWN_MINUTES:
@@ -326,6 +332,12 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         
                 # OPENING a NEW position - Evaluate with AI Council
                 # (Reversals also reach here after closing the old position above)
+                from .config import MAX_CONCURRENT_TRADES
+                active_positions = sum(1 for s in state_manager.get_all_states().values() if s.position > 0)
+                if active_positions >= MAX_CONCURRENT_TRADES:
+                    log_msg("DEBUG", f"🔒 Max Concurrent Trades ({MAX_CONCURRENT_TRADES}) reached. Skipping Futures {signal} for {symbol}.", market_type='futures')
+                    return
+
                 latest_kline = df.iloc[-1]
                 vol_sma = latest_kline.get('SMA_20_Vol', 0)
                 vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0

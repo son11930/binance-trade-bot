@@ -267,7 +267,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # Check if MACD crossed within last 5 periods
+    # Check if MACD crossed within last 5 periods. Only take the MOST RECENT cross.
     recent_macd_cross_up = False
     recent_macd_cross_down = False
     if len(df) >= 5:
@@ -276,8 +276,10 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
             idx_prev = -i - 1
             if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
                 recent_macd_cross_up = True
+                break
             if df.iloc[idx_curr]['MACD'] < df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] >= df.iloc[idx_prev]['MACD_Signal']:
                 recent_macd_cross_down = True
+                break
     
     macd_cross_up = recent_macd_cross_up
     macd_cross_down = recent_macd_cross_down
@@ -292,16 +294,16 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     # Volume Filter: Relaxed to allow AI Council to decide
     strong_volume = True
     
-    # Long Entry
-    if price > sma_200 and macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
+    # Long Entry (Removed SMA200 requirement so AI can decide counter-trend bounces)
+    if macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
         return SignalPlan(
             action="BUY", strategy_used="FUTURES_15M_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry
-    if price < sma_200 and macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
+    # Short Entry (Removed SMA200 requirement so AI can decide counter-trend drops)
+    if macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
         return SignalPlan(
             action="SELL", strategy_used="FUTURES_15M_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
@@ -324,18 +326,14 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     if macd_cross_up:
         strategy_used = "FUTURES_15M_LONG"
-        if price <= sma_200:
-            near_miss_reason = f"Price below SMA200 ({price:.2f} <= {sma_200:.2f})"
-        elif rsi_curr >= 70:
+        if rsi_curr >= 70:
             near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
         elif not strong_trend:
             near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"
             
     elif macd_cross_down:
         strategy_used = "FUTURES_15M_SHORT"
-        if price >= sma_200:
-            near_miss_reason = f"Price above SMA200 ({price:.2f} >= {sma_200:.2f})"
-        elif rsi_curr <= 30:
+        if rsi_curr <= 30:
             near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
         elif not strong_trend:
             near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"

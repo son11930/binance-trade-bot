@@ -11,6 +11,107 @@ from .webhook_notifier import update_bot_state
 from .binance_client import get_current_price
 from .state import StateManager
 
+def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
+    try:
+        tech_data = {
+            "strategy_used": strategy_used,
+            "adx": adx_val,
+            "rsi": rsi_val,
+            "macd_histogram": macd_histogram_val,
+            "atr": atr_val,
+            "bb_width": bb_width_val,
+            "dist_sma_200": dist_sma_200_val,
+            "vol_surge_multiplier": vol_surge_val
+        }
+        
+        latest_news = state_manager.latest_news
+        ai_result = analyze_sentiment(latest_news, symbol, tech_data)
+        
+        if not isinstance(ai_result, dict):
+            log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting futures trade.")
+            return
+            
+        decision = ai_result.get('decision')
+        risk_score = ai_result.get('risk_score')
+        reason = str(ai_result.get('reason', 'No reason provided'))[:255]
+        committee_debate = ai_result.get('committee_debate', {})
+        
+        if risk_score is None or not isinstance(risk_score, (int, float)):
+            risk_score = 100
+            
+        ai_debate_payload = {
+            "symbol": symbol,
+            "strategy": strategy_used,
+            "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
+            "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
+            "chief_reason": sanitize_text(reason),
+            "decision": decision,
+            "risk_score": risk_score
+        }
+            
+        update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
+        
+        # In futures, the AI decision can be BUY, SELL, or HOLD. 
+        # But our signal already dictated BUY (for Long) or SELL (for Short).
+        # We will only proceed if the AI agrees with entering the market (either it says BUY or SELL, but basically not HOLD/abort if the risk is acceptable).
+        # To be safe, we just check if it's not HOLD and risk is acceptable.
+        if decision != "HOLD" and risk_score <= 65:
+            # Check Slippage
+            from .binance_client import futures_get_current_price
+            live_price = futures_get_current_price(symbol)
+            if live_price is not None:
+                slippage = abs(live_price - current_price) / current_price
+                if slippage > 0.005:
+                    log_msg("WARNING", f"⚠️ Slippage Guard: Aborting Futures {symbol} trade. Price moved >0.5% ({current_price} -> {live_price}).")
+                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol, market_type='futures')
+                    state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+                    return
+                current_price = live_price
+                
+            log_msg("INFO", f"🚀 Executing {signal} ({position_side}) for {symbol} via {strategy_used} at {current_price}...")
+            
+            # Allocation based on Risk
+            allocation_percentage = ai_result.get('allocation_percentage', 20)
+            if not isinstance(allocation_percentage, (int, float)): allocation_percentage = 20
+            if allocation_percentage < 10: allocation_percentage = 10
+            if allocation_percentage > 40: allocation_percentage = 40
+            
+            total_margin = state_manager.futures_balance
+            if total_margin < 5.0:
+                log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol} (Balance: {total_margin}). Aborting trade.", market_type="futures")
+                return
+                
+            trade_margin = total_margin * (allocation_percentage / 100.0)
+            if trade_margin < 5.0: trade_margin = 5.0
+            
+            from .config import FUTURES_LEVERAGE
+            notional_value = trade_margin * FUTURES_LEVERAGE
+            qty = notional_value / current_price
+            
+            from .trade_executor import execute_futures_trade
+            trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=PAPER_TRADING)
+            
+            if trade:
+                state_manager.update_state(symbol, 
+                    position=qty, 
+                    buy_price=current_price, 
+                    highest_price=current_price, 
+                    lowest_price=current_price,
+                    last_trade_time=datetime.now(timezone.utc),
+                    trade_entry_time=datetime.now(timezone.utc),
+                    active_strategy=strategy_used,
+                    dynamic_sl=sl_target,
+                    dynamic_tp=tp_target,
+                    max_time_in_trade=time_limit,
+                    position_side=position_side
+                )
+        else:
+            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying cooldown.")
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            
+    except Exception as e:
+        log_msg("ERROR", f"❌ Error in _evaluate_futures_trade_signal for {symbol}: {e}")
+
 def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
     try:
         # Calculate holding value dynamically at the time of evaluation, not at queue time
@@ -198,7 +299,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         
         state = state_manager.get_state(symbol)
         
-        # Futures logic is faster (5m), no AI bottleneck for now, executes directly for high APY
+        # Futures logic now uses AI Council to prevent whipsaws
         if signal in ["BUY", "SELL"] and position_side:
             # Check if opening new position
             if "LONG" in strategy_used or "SHORT" in strategy_used:
@@ -214,78 +315,38 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                             futures_cancel_all_orders(symbol)
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
-                            state = state_manager.get_state(symbol)
                             
-                    if state.position > 0:
-                        return # Exit failed or not a reversal, still in a position
-                
-                # Opening new position
-                from .config import FUTURES_QUANTITY_USDT, FUTURES_LEVERAGE
-                from .binance_client import futures_account_balance
-                
-                # Sizing and balance check
-                if not PAPER_TRADING:
-                    live_usdt = futures_account_balance("USDT")
-                    if live_usdt is not None:
-                        # Dynamic Portfolio Allocation (10% - 25%)
-                        adx = df.iloc[-1].get('ADX', 0) if not df.empty else 0
-                        allocation_percent = 0.10
+                        # Now that the old position is closed, we MUST drop into the AI Council evaluation to open the new position.
+                        # Do not return here. Allow it to fall through to the AI queue submission below.
                         
-                        if adx > 25:
-                            # Scale linearly between 25 and 50 ADX, up to 25% max allocation
-                            extra_alloc = ((min(adx, 50) - 25) / 25) * 0.15
-                            allocation_percent += extra_alloc
-                            
-                        # Safety: Don't spend more than we have (leaving 5% buffer just in case)
-                        margin_to_use = min(live_usdt * allocation_percent, live_usdt * 0.95)
-                        notional_value = margin_to_use * FUTURES_LEVERAGE
-                        
-                        if margin_to_use < 2.0:
-                            log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol}.", market_type="futures")
-                            return
-                    else:
-                        log_msg("ERROR", f"❌ Failed to fetch USDT balance for {symbol}.", market_type="futures")
+                # OPENING a NEW position - Evaluate with AI Council
+                # (Reversals also reach here after closing the old position above)
+                if state.last_trade_time and state.position == 0:
+                    time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
+                    if time_since_trade < COOLDOWN_MINUTES:
+                        log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping Futures {signal} signal.")
                         return
-                else:
-                    notional_value = FUTURES_QUANTITY_USDT * FUTURES_LEVERAGE
 
-                # Set minimum to 6.0 instead of 5.0 to account for slippage and fees
-                if notional_value < 6.0:
-                    log_msg("WARNING", f"⚠️ Notional value {notional_value} is below safe minimum 6.0 for {symbol}.", market_type="futures")
-                    return
-
-                qty = notional_value / current_price
+                update_bot_state(state_manager, f"{signal} {position_side} Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol, market_type='futures')
                 
-                if qty <= 0:
-                    return
+                latest_kline = df.iloc[-1]
+                adx_val = latest_kline.get('ADX', 'N/A')
+                rsi_val = latest_kline.get('RSI', 'N/A')
+                macd_histogram_val = latest_kline.get('MACD_Histogram', 'N/A')
+                atr_val = latest_kline.get('ATR', 'N/A')
+                bb_width_val = latest_kline.get('Bollinger_Band_Width', 'N/A')
+                dist_sma_200_val = latest_kline.get('Distance_to_SMA_200', 'N/A')
+                vol_sma = latest_kline.get('SMA_20_Vol', 0)
+                vol_surge_val = (latest_kline.get('volume', 0) / vol_sma) if vol_sma > 0 else 1.0
+                
+                from .ai_queue import ai_queue_manager
+                ai_queue_manager.submit(
+                    vol_surge_val, symbol, _evaluate_futures_trade_signal, 
+                    state_manager, symbol, current_price, signal, position_side, strategy_used, 
+                    signal_plan.stop_loss, signal_plan.take_profit, signal_plan.time_in_trade, 
+                    adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
+                )
 
-                log_msg("INFO", f"🚀 Executing FUTURES {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
-                trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=strategy_used, is_paper=PAPER_TRADING)
-                if trade:
-                    sl_target = getattr(signal_plan, 'stop_loss', 0.0)
-                    tp_target = getattr(signal_plan, 'take_profit', 0.0)
-                    
-                    from .binance_client import futures_set_tp_sl
-                    if sl_target > 0 or tp_target > 0:
-                        futures_set_tp_sl(symbol, position_side, tp_target, sl_target)
-                        log_msg("INFO", f"🎯 Placed TP at {tp_target} and SL at {sl_target} for {symbol}", market_type="futures")
-                        
-                    state_manager.update_state(
-                        symbol, 
-                        position=trade.get('quantity', qty) if isinstance(trade, dict) else qty, 
-                        buy_price=current_price, 
-                        highest_price=current_price, 
-                        lowest_price=current_price,
-                        active_strategy=strategy_used, 
-                        last_trade_time=datetime.now(timezone.utc),
-                        trade_entry_time=datetime.now(timezone.utc),
-                        max_time_in_trade=signal_plan.time_in_trade,
-                        dynamic_sl=sl_target,
-                        dynamic_tp=tp_target,
-                        position_side=position_side
-                    )
-                    update_bot_state(state_manager, f"FUTURES {signal} {position_side} executed for {symbol}", symbol=symbol, market_type='futures')
-            
             # Check if exiting position
             elif "EXIT" in strategy_used:
                 if state.position > 0 and state.position_side == position_side:

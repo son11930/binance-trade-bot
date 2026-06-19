@@ -39,9 +39,9 @@ def main():
         state_manager_spot.set_kline_buffer(sym, klines)
         
     # Fetch initial history for Futures
-    log_msg("INFO", "Fetching initial Futures 5m history...", market_type='futures')
+    log_msg("INFO", "Fetching initial Futures 15m history...", market_type='futures')
     for sym in SYMBOLS:
-        f_klines = futures_get_klines(sym, "5m", limit=250)
+        f_klines = futures_get_klines(sym, "15m", limit=250)
         state_manager_futures.set_kline_buffer(sym, f_klines)
         
     # Start background threads (Shared news)
@@ -62,7 +62,7 @@ def main():
         spot_streams.append(f"{sym_lower}@ticker")
         spot_streams.append(f"{sym_lower}@kline_15m")
         futures_streams.append(f"{sym_lower}@ticker")
-        futures_streams.append(f"{sym_lower}@kline_5m")
+        futures_streams.append(f"{sym_lower}@kline_15m")
     
     # Start Spot Multiplex Streams
     twm.start_multiplex_socket(callback=ws_manager_spot.process_ticker_message, streams=[s for s in spot_streams if 'ticker' in s])

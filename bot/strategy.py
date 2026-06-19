@@ -238,7 +238,7 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
 
 def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     """
-    Analyzes the latest 5m candle for Futures Long/Short trading.
+    Analyzes the latest 15m candle for Futures Long/Short trading.
     """
     default_signal = SignalPlan(
         action="HOLD", strategy_used="NONE", stop_loss=0.0, 
@@ -251,8 +251,8 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    required_cols = ['SMA_200', 'RSI', 'MACD', 'MACD_Signal', 'ATR']
-    if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']):
+    required_cols = ['SMA_200', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol']
+    if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']) or pd.isna(latest['ADX']):
         return default_signal
         
     price = latest['close']
@@ -263,48 +263,86 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     macd_prev = prev['MACD']
     sig_prev = prev['MACD_Signal']
     rsi_curr = latest['RSI']
+    adx_curr = latest['ADX']
+    vol_curr = latest['volume']
+    vol_sma = latest['SMA_20_Vol']
     
-    macd_cross_up = macd_curr > sig_curr and macd_prev <= sig_prev
-    macd_cross_down = macd_curr < sig_curr and macd_prev >= sig_prev
+    # Check if MACD crossed within last 3 periods
+    recent_macd_cross_up = False
+    recent_macd_cross_down = False
+    if len(df) >= 3:
+        for i in range(1, 4):
+            idx_curr = -i
+            idx_prev = -i - 1
+            if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
+                recent_macd_cross_up = True
+            if df.iloc[idx_curr]['MACD'] < df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] >= df.iloc[idx_prev]['MACD_Signal']:
+                recent_macd_cross_down = True
+    
+    macd_cross_up = recent_macd_cross_up
+    macd_cross_down = recent_macd_cross_down
+    
+    # 15M needs more room to breathe, wide stop loss (2.5x ATR) and high take profit (5.0x ATR)
+    sl_multiplier = 2.5
+    tp_multiplier = 5.0
+    
+    # Momentum Filter: ADX must be > 20 for a strong trend
+    strong_trend = adx_curr > 20
+    
+    # Volume Filter: Breakout volume should be above average
+    strong_volume = vol_curr > vol_sma
     
     # Long Entry
-    if price > sma_200 and macd_cross_up and rsi_curr < 70:
+    if price > sma_200 and macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
         return SignalPlan(
-            action="BUY", strategy_used="FUTURES_5M_LONG",
-            stop_loss=price - (atr * 2.0), take_profit=price + (atr * 4.0),
+            action="BUY", strategy_used="FUTURES_15M_LONG",
+            stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
     # Short Entry
-    if price < sma_200 and macd_cross_down and rsi_curr > 30:
+    if price < sma_200 and macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
         return SignalPlan(
-            action="SELL", strategy_used="FUTURES_5M_SHORT",
-            stop_loss=price + (atr * 2.0), take_profit=price - (atr * 4.0),
+            action="SELL", strategy_used="FUTURES_15M_SHORT",
+            stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="SHORT"
         )
         
-    # Exits: Reversals
-    if macd_curr < sig_curr:
-        return SignalPlan("SELL", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
-    if macd_curr > sig_curr:
-        return SignalPlan("BUY", "FUTURES_5M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
+    # Exits: Reversals (Wait for definitive cross, or rely on SL/TP)
+    # Since we are on 15M, a simple MACD reverse cross is less frequent, but still happens. 
+    # Let's add an RSI condition to prevent exiting purely on minor pullbacks.
+    # We exit LONG if MACD crosses down AND RSI was overbought recently (> 65)
+    if macd_cross_down and rsi_curr > 65:
+        return SignalPlan("SELL", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
+        
+    # We exit SHORT if MACD crosses up AND RSI was oversold recently (< 35)
+    if macd_cross_up and rsi_curr < 35:
+        return SignalPlan("BUY", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
         
     near_miss_reason = ""
     strategy_used = "NONE"
     
     if macd_cross_up:
-        strategy_used = "FUTURES_5M_LONG"
+        strategy_used = "FUTURES_15M_LONG"
         if price <= sma_200:
             near_miss_reason = f"Price below SMA200 ({price:.2f} <= {sma_200:.2f})"
         elif rsi_curr >= 70:
             near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
+        elif not strong_trend:
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 20)"
+        elif not strong_volume:
+            near_miss_reason = f"Low Volume Breakout"
             
     elif macd_cross_down:
-        strategy_used = "FUTURES_5M_SHORT"
+        strategy_used = "FUTURES_15M_SHORT"
         if price >= sma_200:
             near_miss_reason = f"Price above SMA200 ({price:.2f} >= {sma_200:.2f})"
         elif rsi_curr <= 30:
             near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
+        elif not strong_trend:
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 20)"
+        elif not strong_volume:
+            near_miss_reason = f"Low Volume Breakout"
             
     if near_miss_reason:
         return SignalPlan(

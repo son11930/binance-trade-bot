@@ -166,6 +166,7 @@ def format_trade(t):
         "margin": margin,
         "pnl_amount": getattr(t, 'pnl_amount', None),
         "pnl_percent": getattr(t, 'pnl_percent', None),
+        "position_side": getattr(t, 'position_side', None),
         "market_type": market_type
     }
 

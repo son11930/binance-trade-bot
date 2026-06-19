@@ -650,12 +650,25 @@
                 
                 if (trade.market_type === 'futures') {
                     const isClosing = trade.pnl_amount !== null && trade.pnl_amount !== undefined;
-                    if (isClosing) {
-                        actionText = isBuy ? 'CLOSE SHORT' : 'CLOSE LONG';
-                        sideClass = 'text-slate-400';
+                    
+                    // Use actual position_side from API if available
+                    if (trade.position_side) {
+                        if (isClosing) {
+                            actionText = 'CLOSE ' + trade.position_side;
+                            sideClass = 'text-slate-400';
+                        } else {
+                            actionText = trade.position_side; // LONG or SHORT
+                            sideClass = trade.position_side === 'LONG' ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
+                        }
                     } else {
-                        actionText = isBuy ? 'LONG' : 'SHORT';
-                        sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
+                        // Fallback logic if position_side is missing
+                        if (isClosing) {
+                            actionText = isBuy ? 'CLOSE SHORT' : 'CLOSE LONG';
+                            sideClass = 'text-slate-400';
+                        } else {
+                            actionText = isBuy ? 'LONG' : 'SHORT';
+                            sideClass = isBuy ? 'text-neonGreen glow-green' : 'text-neonRed glow-red';
+                        }
                     }
                 }
                 

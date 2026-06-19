@@ -8,13 +8,15 @@ from .risk_manager import calculate_pnl
 from .state import StateManager
 from .database import sanitize_text
 
-def sanitize_dict(d):
+def sanitize_dict(d, depth=0):
+    if depth > 3:
+        return "[MAX_DEPTH_EXCEEDED]"
     if isinstance(d, dict):
-        return {sanitize_text(k) if isinstance(k, str) else k: sanitize_dict(v) for k, v in d.items()}
+        return {sanitize_text(k) if isinstance(k, str) else k: sanitize_dict(v, depth+1) for k, v in d.items()}
     elif isinstance(d, list):
-        return [sanitize_dict(v) for v in d]
+        return [sanitize_dict(v, depth+1) for v in d]
     elif isinstance(d, str):
-        return sanitize_text(d)
+        return sanitize_text(d)[:1000] # Cap all strings
     return d
 
 # Use a single executor for webhooks to prevent thread explosion
@@ -72,7 +74,7 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
         headers = {}
         from urllib.parse import urlparse
         parsed = urlparse(WEBHOOK_URL)
-        if parsed.path.endswith("/api/internal/broadcast"):
+        if parsed.hostname in ["localhost", "127.0.0.1"] and parsed.path.endswith("/api/internal/broadcast"):
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
         for attempt in range(3):

@@ -2,7 +2,7 @@ import threading
 import json
 import os
 from dataclasses import dataclass, replace, asdict, fields
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from .config import SYMBOLS, PAPER_TRADING, FUTURES_LEVERAGE
@@ -124,127 +124,148 @@ class StateManager:
             return self._kline_buffers.copy()
 
     def sync_state_with_binance(self, calculate_pnl_func):
-        with self._lock:
-            if PAPER_TRADING:
-                return
+        if PAPER_TRADING:
+            return
 
-            if self.market_type == 'spot':
-                bal = get_live_asset_balance("USDT")
-                if bal is not None:
-                    self._live_usdt_balance = bal
-            elif self.market_type == 'futures':
-                bal = futures_get_live_balance("USDT")
-                if bal is not None:
-                    self._live_usdt_balance = bal
-                    
-            for symbol in SYMBOLS:
-                state = self._states[symbol]
-                current_price = state.last_price if state.last_price > 0 else get_current_price(symbol)
+        # 1. FETCH ALL API DATA OUTSIDE THE LOCK
+        usdt_bal = None
+        all_futures_positions = {}
+        
+        if self.market_type == 'spot':
+            usdt_bal = get_live_asset_balance("USDT")
+        elif self.market_type == 'futures':
+            usdt_bal = futures_get_live_balance("USDT")
+            try:
+                positions_res = client.futures_position_information()
+                for pos in positions_res:
+                    all_futures_positions[pos['symbol']] = pos
+            except Exception as e:
+                log_msg("ERROR", f"Failed to fetch futures positions: {e}", market_type='futures')
                 
-                if self.market_type == 'futures':
-                    pos_info = futures_get_position(symbol)
-                    if pos_info is None:
-                        log_msg("WARNING", f"Skipping sync for {symbol} due to API error.", market_type='futures')
-                        continue
+        # To avoid blocking websocket, prepare state updates in a temporary dictionary
+        new_states = {}
+        
+        # 2. PROCESS EACH SYMBOL
+        for symbol in SYMBOLS:
+            # We copy the state to read it without lock blocking for long
+            with self._lock:
+                state = self._states[symbol]
+                
+            current_price = state.last_price if state.last_price > 0 else get_current_price(symbol)
+            
+            if self.market_type == 'futures':
+                pos_info = all_futures_positions.get(symbol)
+                if pos_info is None:
+                    continue
+                    
+                amt = float(pos_info.get("positionAmt", "0"))
+                entry_price = float(pos_info.get("entryPrice", "0"))
+                pos_side = pos_info.get("positionSide", "LONG" if amt > 0 else ("SHORT" if amt < 0 else ""))
+                
+                real_bal = abs(amt)
+                
+                if real_bal < 0.0001:
+                    # Position closed on Binance
+                    from bot.database import SessionLocalFutures, Trade
+                    db = SessionLocalFutures()
+                    try:
+                        last_trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.market_type == 'futures').order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
                         
-                    amt = float(pos_info.get("positionAmt", "0"))
-                    entry_price = float(pos_info.get("entryPrice", "0"))
-                    pos_side = pos_info.get("positionSide", "LONG" if amt > 0 else ("SHORT" if amt < 0 else ""))
-                    
-                    real_bal = abs(amt)
-                    
-                    if real_bal < 0.0001:
-                        # Position closed on Binance
-                        # We must check if the DB has an open position
-                        from bot.database import SessionLocalFutures, Trade
-                        db = SessionLocalFutures()
-                        try:
-                            last_trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.market_type == 'futures').order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
+                        is_open = False
+                        if last_trade:
+                            is_open = (last_trade.position_side == "LONG" and last_trade.side == "BUY") or \
+                                      (last_trade.position_side == "SHORT" and last_trade.side == "SELL")
+                                      
+                        if is_open:
+                            log_msg("WARNING", f"Missing native close trade detected for {symbol} (Futures). Syncing state.", market_type='futures')
+                            b_trades = client.futures_account_trades(symbol=symbol, limit=20)
+                            close_side = "SELL" if last_trade.position_side == "LONG" else "BUY"
                             
-                            is_open = False
-                            if last_trade:
-                                is_open = (last_trade.position_side == "LONG" and last_trade.side == "BUY") or \
-                                          (last_trade.position_side == "SHORT" and last_trade.side == "SELL")
-                                          
-                            if is_open:
-                                log_msg("WARNING", f"Missing native close trade detected for {symbol} (Futures). Syncing state.", market_type='futures')
-                                b_trades = client.futures_account_trades(symbol=symbol, limit=20)
-                                close_side = "SELL" if last_trade.position_side == "LONG" else "BUY"
+                            agg_qty = 0.0
+                            agg_pnl = 0.0
+                            agg_fee = 0.0
+                            last_price = 0.0
+                            fee_asset = "USDT"
+                            ts = None
+                            
+                            # Aggregate all partial fills that happened after the opening trade
+                            for bt in reversed(b_trades):
+                                bt_ts = datetime.fromtimestamp(bt['time'] / 1000.0, timezone.utc)
+                                if bt['side'] == close_side and bt_ts > last_trade.timestamp:
+                                    agg_qty += float(bt['qty'])
+                                    agg_pnl += float(bt.get('realizedPnl', 0))
+                                    agg_fee += float(bt['commission'])
+                                    last_price = float(bt['price'])
+                                    fee_asset = bt['commissionAsset']
+                                    if ts is None or bt_ts > ts:
+                                        ts = bt_ts
+                                    
+                            if agg_qty > 0:
+                                margin = (last_trade.price * agg_qty) / FUTURES_LEVERAGE
+                                pnl_pct = (agg_pnl / margin * 100) if margin > 0 else 0.0
                                 
-                                close_trade = None
-                                for bt in reversed(b_trades):
-                                    if bt['side'] == close_side and float(bt.get('realizedPnl', 0)) != 0:
-                                        close_trade = bt
-                                        break
-                                        
-                                if close_trade:
-                                    price = float(close_trade['price'])
-                                    qty = float(close_trade['qty'])
-                                    pnl = float(close_trade['realizedPnl'])
-                                    fee = float(close_trade['commission'])
-                                    fee_asset = close_trade['commissionAsset']
-                                    ts = datetime.fromtimestamp(close_trade['time'] / 1000.0, timezone.utc)
-                                    
-                                    margin = (last_trade.price * qty) / FUTURES_LEVERAGE
-                                    pnl_pct = (pnl / margin * 100) if margin > 0 else 0.0
-                                    
-                                    new_t = Trade(
-                                        symbol=symbol,
-                                        side=close_side,
-                                        price=price,
-                                        quantity=qty,
-                                        market_type='futures',
-                                        position_side=last_trade.position_side,
-                                        ai_reasoning="Binance Native SL/TP (Auto-Sync)",
-                                        pnl_amount=pnl,
-                                        pnl_percent=pnl_pct,
-                                        fee=fee,
-                                        fee_asset=fee_asset,
-                                        timestamp=ts
-                                    )
-                                    db.add(new_t)
-                                    db.commit()
-                                    log_msg("INFO", f"Synced missing close trade for {symbol} at {price}", market_type='futures')
-                                else:
-                                    log_msg("ERROR", f"Could not find matching close trade on Binance for {symbol}!", market_type='futures')
-                        except Exception as e:
-                            log_msg("ERROR", f"Error syncing missing trade for {symbol}: {e}", market_type='futures')
-                        finally:
-                            db.close()
-                            
-                        self._states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
-                    else:
-                        if state.buy_price == 0.0:
-                            log_msg("WARNING", f"Manual Position detected for {symbol} (Futures). Syncing state.", market_type='futures')
-                            self._states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
-                        else:
-                            self._states[symbol] = replace(state, position=real_bal, position_side=pos_side)
-
-                else:
-                    # Spot sync
-                    asset = symbol.replace("USDT", "")
-                    real_bal = get_live_asset_balance(asset)
-                    
-                    if real_bal is None:
-                        log_msg("WARNING", f"Skipping sync for {symbol} due to API error.", market_type='spot')
-                        continue
+                                new_t = Trade(
+                                    symbol=symbol,
+                                    side=close_side,
+                                    price=last_price,
+                                    quantity=agg_qty,
+                                    market_type='futures',
+                                    position_side=last_trade.position_side,
+                                    ai_reasoning="Binance Native SL/TP (Auto-Sync)",
+                                    pnl_amount=agg_pnl,
+                                    pnl_percent=pnl_pct,
+                                    fee=agg_fee,
+                                    fee_asset=fee_asset,
+                                    timestamp=ts
+                                )
+                                db.add(new_t)
+                                db.commit()
+                                log_msg("INFO", f"Synced missing close trade for {symbol} at avg price ~{last_price}", market_type='futures')
+                            else:
+                                log_msg("ERROR", f"Could not find matching close trade on Binance for {symbol}!", market_type='futures')
+                    except Exception as e:
+                        log_msg("ERROR", f"Error syncing missing trade for {symbol}: {e}", market_type='futures')
+                    finally:
+                        db.close()
                         
-                    if real_bal * current_price < 2.0:
-                        if state.position > 0:
-                            log_msg("WARNING", f"Detected manual SELL for {symbol} (Spot). Syncing state.", market_type='spot')
-                            pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position)
-                            TradeRepository.create_trade(
-                                symbol, "SELL", current_price, state.position, None, "Startup Sync (Time is now)", PAPER_TRADING,
-                                0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
-                            )
-                        self._states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0)
+                    new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
+                else:
+                    if state.buy_price == 0.0:
+                        new_states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
                     else:
-                        if state.buy_price == 0.0:
-                            db_price = TradeRepository.get_last_buy_price(symbol, market_type='spot')
-                            bp = db_price if db_price > 0 else current_price
-                            if db_price == 0:
-                                log_msg("WARNING", f"Manual BUY detected for {symbol} or DB missing. Using current price as baseline.", market_type='spot')
-                            self._states[symbol] = replace(state, position=real_bal, buy_price=bp)
+                        new_states[symbol] = replace(state, position=real_bal, position_side=pos_side)
+
+            else:
+                # Spot sync
+                asset = symbol.replace("USDT", "")
+                real_bal = get_live_asset_balance(asset)
+                
+                if real_bal is None:
+                    continue
+                    
+                if real_bal < 0.0001:
+                    if state.position > 0:
+                        log_msg("WARNING", f"Detected manual SELL for {symbol} (Spot). Syncing state.", market_type='spot')
+                        pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, market_type='spot')
+                        TradeRepository.create_trade(
+                            symbol, "SELL", current_price, state.position, None, "Startup Sync", PAPER_TRADING,
+                            0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
+                        )
+                    new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0)
+                else:
+                    if state.buy_price == 0.0:
+                        db_price = TradeRepository.get_last_buy_price(symbol, market_type='spot')
+                        if db_price > 0:
+                            new_states[symbol] = replace(state, position=real_bal, buy_price=db_price)
                         else:
-                            self._states[symbol] = replace(state, position=real_bal)
+                            new_states[symbol] = replace(state, position=real_bal, buy_price=current_price)
+                    else:
+                        new_states[symbol] = replace(state, position=real_bal)
+                        
+        # 3. APPLY ALL STATE UPDATES RAPIDLY UNDER LOCK
+        with self._lock:
+            if usdt_bal is not None:
+                self._live_usdt_balance = usdt_bal
+            for symbol, st in new_states.items():
+                self._states[symbol] = st
             self._save_state()

@@ -462,8 +462,10 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             await websocket.close(code=1008)
     except (WebSocketDisconnect, asyncio.exceptions.CancelledError):
-        manager.disconnect(websocket)
+        pass
     except Exception as e:
+        pass
+    finally:
         manager.disconnect(websocket)
         
 app.mount("/", StaticFiles(directory="dashboard", html=True), name="dashboard")

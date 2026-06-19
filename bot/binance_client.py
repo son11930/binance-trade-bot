@@ -28,7 +28,8 @@ API_KEY = os.getenv("BINANCE_API_KEY")
 SECRET_KEY = os.getenv("BINANCE_API_SECRET") or os.getenv("BINANCE_SECRET_KEY")
 
 client = Client(API_KEY, SECRET_KEY)
-twm = ThreadedWebsocketManager(api_key=API_KEY, api_secret=SECRET_KEY)
+# Do not initialize ThreadedWebsocketManager with API keys for public streams to prevent unnecessary exposure
+twm = ThreadedWebsocketManager()
 # twm.start() is now called in main.py to avoid hanging tests
 
 def get_historical_klines(symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
@@ -343,7 +344,7 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
         }
     except Exception as e:
         log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}")
-        raise e
+        raise Exception(f"Binance API Execution Error: {sanitize_error(e)}")
 from dataclasses import replace
 import logging
 from bot.database import sanitize_text

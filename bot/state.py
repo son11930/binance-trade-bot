@@ -5,8 +5,8 @@ from dataclasses import dataclass, replace, asdict, fields
 from datetime import datetime
 from typing import Dict, Optional
 
-from .config import SYMBOLS, PAPER_TRADING
-from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance
+from .config import SYMBOLS, PAPER_TRADING, FUTURES_LEVERAGE
+from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance, client
 from .database import TradeRepository
 from .logger import log_msg
 
@@ -152,16 +152,66 @@ class StateManager:
                     pos_side = pos_info.get("positionSide", "LONG" if amt > 0 else ("SHORT" if amt < 0 else ""))
                     
                     real_bal = abs(amt)
+                    
                     if real_bal < 0.0001:
-                        # Position closed
-                        if state.position > 0:
-                            log_msg("WARNING", f"Detected manual SELL for {symbol} (Futures). Syncing state.", market_type='futures')
-                            pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, position_side=state.position_side, market_type='futures')
-                            # Log as closed trade
-                            TradeRepository.create_trade(
-                                symbol, "BUY" if state.position_side == "SHORT" else "SELL", current_price, state.position, None, "Startup Sync (Time is now)", PAPER_TRADING,
-                                0.0, "USDT", pnl_amount, pnl_percent, market_type='futures', position_side=state.position_side
-                            )
+                        # Position closed on Binance
+                        # We must check if the DB has an open position
+                        from bot.database import SessionLocalFutures, Trade
+                        db = SessionLocalFutures()
+                        try:
+                            last_trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.market_type == 'futures').order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
+                            
+                            is_open = False
+                            if last_trade:
+                                is_open = (last_trade.position_side == "LONG" and last_trade.side == "BUY") or \
+                                          (last_trade.position_side == "SHORT" and last_trade.side == "SELL")
+                                          
+                            if is_open:
+                                log_msg("WARNING", f"Missing native close trade detected for {symbol} (Futures). Syncing state.", market_type='futures')
+                                b_trades = client.futures_account_trades(symbol=symbol, limit=20)
+                                close_side = "SELL" if last_trade.position_side == "LONG" else "BUY"
+                                
+                                close_trade = None
+                                for bt in reversed(b_trades):
+                                    if bt['side'] == close_side and float(bt.get('realizedPnl', 0)) != 0:
+                                        close_trade = bt
+                                        break
+                                        
+                                if close_trade:
+                                    price = float(close_trade['price'])
+                                    qty = float(close_trade['qty'])
+                                    pnl = float(close_trade['realizedPnl'])
+                                    fee = float(close_trade['commission'])
+                                    fee_asset = close_trade['commissionAsset']
+                                    ts = datetime.fromtimestamp(close_trade['time'] / 1000.0, timezone.utc)
+                                    
+                                    margin = (last_trade.price * qty) / FUTURES_LEVERAGE
+                                    pnl_pct = (pnl / margin * 100) if margin > 0 else 0.0
+                                    
+                                    new_t = Trade(
+                                        symbol=symbol,
+                                        side=close_side,
+                                        price=price,
+                                        quantity=qty,
+                                        market_type='futures',
+                                        position_side=last_trade.position_side,
+                                        ai_reasoning="Binance Native SL/TP (Auto-Sync)",
+                                        pnl_amount=pnl,
+                                        pnl_percent=pnl_pct,
+                                        fee=fee,
+                                        fee_asset=fee_asset,
+                                        timestamp=ts
+                                    )
+                                    db.add(new_t)
+                                    db.commit()
+                                    log_msg("INFO", f"Synced missing close trade for {symbol} at {price}", market_type='futures')
+                                else:
+                                    log_msg("ERROR", f"Could not find matching close trade on Binance for {symbol}!", market_type='futures')
+                        except Exception as e:
+                            log_msg("ERROR", f"Error syncing missing trade for {symbol}: {e}", market_type='futures')
+                        finally:
+                            db.close()
+                            
                         self._states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
                     else:
                         if state.buy_price == 0.0:

@@ -267,11 +267,11 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # Check if MACD crossed within last 3 periods
+    # Check if MACD crossed within last 5 periods
     recent_macd_cross_up = False
     recent_macd_cross_down = False
-    if len(df) >= 3:
-        for i in range(1, 4):
+    if len(df) >= 5:
+        for i in range(1, 6):
             idx_curr = -i
             idx_prev = -i - 1
             if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
@@ -286,11 +286,11 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 2.5
     tp_multiplier = 5.0
     
-    # Momentum Filter: ADX must be > 20 for a strong trend
-    strong_trend = adx_curr > 20
+    # Momentum Filter: ADX must be > 15 for a trend
+    strong_trend = adx_curr > 15
     
-    # Volume Filter: Breakout volume should be above average
-    strong_volume = vol_curr > vol_sma
+    # Volume Filter: Relaxed to allow AI Council to decide
+    strong_volume = True
     
     # Long Entry
     if price > sma_200 and macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
@@ -329,9 +329,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         elif rsi_curr >= 70:
             near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
         elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 20)"
-        elif not strong_volume:
-            near_miss_reason = f"Low Volume Breakout"
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"
             
     elif macd_cross_down:
         strategy_used = "FUTURES_15M_SHORT"
@@ -340,9 +338,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         elif rsi_curr <= 30:
             near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
         elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 20)"
-        elif not strong_volume:
-            near_miss_reason = f"Low Volume Breakout"
+            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f} <= 15)"
             
     if near_miss_reason:
         return SignalPlan(

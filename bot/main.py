@@ -47,6 +47,19 @@ def main():
     # Start background threads (Shared news)
     threading.Thread(target=news_updater_loop, args=(state_manager_spot,), daemon=True).start()
     
+    # Start auto-sync background thread
+    def auto_sync_loop():
+        import time
+        while True:
+            time.sleep(60) # Sync every 1 minute
+            try:
+                state_manager_futures.sync_state_with_binance(calculate_pnl)
+                state_manager_spot.sync_state_with_binance(calculate_pnl)
+            except Exception as e:
+                log_msg("ERROR", f"Auto-sync failed: {e}")
+                
+    threading.Thread(target=auto_sync_loop, daemon=True).start()
+    
     # Initialize WebSocket Managers
     ws_manager_spot = WebSocketManager(state_manager_spot, market_type='spot')
     ws_manager_futures = WebSocketManager(state_manager_futures, market_type='futures')

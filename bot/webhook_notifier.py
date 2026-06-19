@@ -74,7 +74,7 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
         headers = {}
         from urllib.parse import urlparse
         parsed = urlparse(WEBHOOK_URL)
-        if parsed.hostname in ["localhost", "127.0.0.1"] and parsed.path.endswith("/api/internal/broadcast"):
+        if parsed.hostname in ["localhost", "127.0.0.1", "45.136.254.62"] and parsed.path.endswith("/api/internal/broadcast"):
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
         for attempt in range(3):

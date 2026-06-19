@@ -19,6 +19,7 @@ def sanitize_dict(d):
 
 # Use a single executor for webhooks to prevent thread explosion
 _webhook_executor = ThreadPoolExecutor(max_workers=5)
+# Note: we will check _webhook_executor._work_queue.qsize() to prevent queue buildup
 
 def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
     positions_data = []
@@ -46,6 +47,12 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     # Sanitize inputs to prevent API key leaks
     safe_status = sanitize_text(status_msg)
     safe_symbol = sanitize_text(symbol)
+    
+    # Prevent massive payloads from crashing the process
+    if ai_debate:
+        for key in ["bull", "bear"]:
+            if key in ai_debate and isinstance(ai_debate[key], str):
+                ai_debate[key] = ai_debate[key][:500] + "..." if len(ai_debate[key]) > 500 else ai_debate[key]
     safe_ai_debate = sanitize_dict(ai_debate) if ai_debate else None
     safe_positions = sanitize_dict(positions_data)
 
@@ -79,4 +86,9 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
                 else:
                     time.sleep(2)
             
+    # Protect against unbounded queue growth (DoS mitigation)
+    if _webhook_executor._work_queue.qsize() > 50:
+        log_msg("WARNING", "⚠️ Webhook queue overloaded. Dropping update to prevent OOM.", market_type=market_type)
+        return
+        
     _webhook_executor.submit(_send)

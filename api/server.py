@@ -223,15 +223,18 @@ async def db_polling_task():
     
     # Initialize last_ids
     for m in ['spot', 'futures']:
+        db = None
         try:
             db = SessionLocalFutures() if m == 'futures' else SessionLocalSpot()
             t = db.query(Trade).order_by(Trade.id.desc()).first()
             if t: last_ids[m]['trade'] = t.id
             l = db.query(SystemLog).order_by(SystemLog.id.desc()).first()
             if l: last_ids[m]['log'] = l.id
-            db.close()
         except:
             pass
+        finally:
+            if db:
+                db.close()
 
     while True:
         try:

@@ -383,8 +383,7 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
                 positionSide=positionSide,
                 type='TAKE_PROFIT_MARKET',
                 stopPrice=str(round(tp_price, 4)),
-                closePosition=True,
-                timeInForce='GTC'
+                closePosition=True
             )
             
         # Place Stop Loss
@@ -395,8 +394,7 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
                 positionSide=positionSide,
                 type='STOP_MARKET',
                 stopPrice=str(round(sl_price, 4)),
-                closePosition=True,
-                timeInForce='GTC'
+                closePosition=True
             )
         return True
     except Exception as e:

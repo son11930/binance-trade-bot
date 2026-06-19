@@ -51,7 +51,7 @@ class StateManager:
                             valid_keys = {f.name for f in fields(self._states[sym])}
                             filtered_data = {k: v for k, v in s_data.items() if k in valid_keys}
                             self._states[sym] = replace(self._states[sym], **filtered_data)
-                log_msg("INFO", f"✅ Successfully loaded internal {self.market_type} state.")
+                log_msg("INFO", f"Successfully loaded internal {self.market_type} state.")
             except Exception as e:
                 log_msg("ERROR", f"Failed to load internal state: {e}")
 
@@ -155,7 +155,7 @@ class StateManager:
                     if real_bal < 0.0001:
                         # Position closed
                         if state.position > 0:
-                            log_msg("WARNING", f"⚠️ Detected manual SELL for {symbol} (Futures). Syncing state.", market_type='futures')
+                            log_msg("WARNING", f"Detected manual SELL for {symbol} (Futures). Syncing state.", market_type='futures')
                             pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, position_side=state.position_side, market_type='futures')
                             # Log as closed trade
                             TradeRepository.create_trade(

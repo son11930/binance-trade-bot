@@ -76,7 +76,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             if allocation_percentage < 10: allocation_percentage = 10
             if allocation_percentage > 40: allocation_percentage = 40
             
-            total_margin = state_manager.futures_balance
+            total_margin = state_manager.live_usdt_balance
             if total_margin < 5.0:
                 log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol} (Balance: {total_margin}). Aborting trade.", market_type="futures")
                 return

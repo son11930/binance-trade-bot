@@ -127,10 +127,10 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
     vol_surge_multiplier = vol_curr / vol_sma if vol_sma > 0 else 1.0
     rsi_limit = 75 if vol_surge_multiplier >= 3.0 else 70
     
-    # Check if MACD crossed above signal within last 3 periods
+    # Check if MACD crossed above signal within last 5 periods
     recent_macd_cross = False
-    if len(df) >= 3:
-        for i in range(1, 4):
+    if len(df) >= 5:
+        for i in range(1, 6):
             idx_curr = -i
             idx_prev = -i - 1
             if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
@@ -141,11 +141,11 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
     if recent_macd_cross and price > sma_200:
         if rsi_curr >= rsi_limit:
             near_miss_reason = f"RSI too high ({rsi_curr:.1f} >= {rsi_limit})"
-        elif vol_curr <= (vol_sma * 1.5):
-            near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma * 1.5:.1f})"
+        elif vol_curr <= vol_sma:
+            near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma:.1f})"
 
-    # BUY: MACD crossed ABOVE Signal Line in last 3 periods AND Price > SMA 200 AND RSI < dynamic limit AND Volume > 1.5x SMA
-    if recent_macd_cross and price > sma_200 and rsi_curr < rsi_limit and vol_curr > (vol_sma * 1.5):
+    # BUY: MACD crossed ABOVE Signal Line in last 5 periods AND Price > SMA 200 AND RSI < dynamic limit AND Volume > SMA
+    if recent_macd_cross and price > sma_200 and rsi_curr < rsi_limit and vol_curr > vol_sma:
         return SignalPlan(
             action="BUY",
             strategy_used="TREND_MACD",

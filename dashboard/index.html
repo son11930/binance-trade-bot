@@ -665,7 +665,7 @@
                 const safeFeeAsset = escapeHTML(trade.fee_asset || '');
                 const feeStr = (trade.fee !== null && trade.fee !== undefined) ? `${trade.fee.toFixed(4)} ${safeFeeAsset}` : '--';
                 const pnlClass = trade.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (trade.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
-                const pnlStr = trade.pnl_amount !== null ? `<span class="${pnlClass}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
+                const pnlStr = (trade.pnl_amount !== null && trade.pnl_percent !== null) ? `<span class="${pnlClass}">$${trade.pnl_amount.toFixed(2)} (${trade.pnl_percent.toFixed(2)}%)</span>` : '--';
                 
                 tr.innerHTML = `
                     <td class="p-4 text-sm text-slate-300 font-medium whitespace-nowrap">${dateStr}</td>

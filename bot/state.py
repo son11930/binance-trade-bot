@@ -144,7 +144,7 @@ class StateManager:
                 if self.market_type == 'futures':
                     pos_info = futures_get_position(symbol)
                     if pos_info is None:
-                        log_msg("WARNING", f"⚠️ Skipping sync for {symbol} due to API error.", market_type='futures')
+                        log_msg("WARNING", f"Skipping sync for {symbol} due to API error.", market_type='futures')
                         continue
                         
                     amt = float(pos_info.get("positionAmt", "0"))
@@ -159,13 +159,13 @@ class StateManager:
                             pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, position_side=state.position_side, market_type='futures')
                             # Log as closed trade
                             TradeRepository.create_trade(
-                                symbol, "BUY" if state.position_side == "SHORT" else "SELL", current_price, state.position, None, "Manual Close", PAPER_TRADING,
+                                symbol, "BUY" if state.position_side == "SHORT" else "SELL", current_price, state.position, None, "Startup Sync (Time is now)", PAPER_TRADING,
                                 0.0, "USDT", pnl_amount, pnl_percent, market_type='futures', position_side=state.position_side
                             )
                         self._states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
                     else:
                         if state.buy_price == 0.0:
-                            log_msg("WARNING", f"⚠️ Manual Position detected for {symbol} (Futures). Syncing state.", market_type='futures')
+                            log_msg("WARNING", f"Manual Position detected for {symbol} (Futures). Syncing state.", market_type='futures')
                             self._states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
                         else:
                             self._states[symbol] = replace(state, position=real_bal, position_side=pos_side)
@@ -176,15 +176,15 @@ class StateManager:
                     real_bal = get_live_asset_balance(asset)
                     
                     if real_bal is None:
-                        log_msg("WARNING", f"⚠️ Skipping sync for {symbol} due to API error.", market_type='spot')
+                        log_msg("WARNING", f"Skipping sync for {symbol} due to API error.", market_type='spot')
                         continue
                         
                     if real_bal * current_price < 2.0:
                         if state.position > 0:
-                            log_msg("WARNING", f"⚠️ Detected manual SELL for {symbol} (Spot). Syncing state.", market_type='spot')
+                            log_msg("WARNING", f"Detected manual SELL for {symbol} (Spot). Syncing state.", market_type='spot')
                             pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position)
                             TradeRepository.create_trade(
-                                symbol, "SELL", current_price, state.position, None, "Manual SELL", PAPER_TRADING,
+                                symbol, "SELL", current_price, state.position, None, "Startup Sync (Time is now)", PAPER_TRADING,
                                 0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
                             )
                         self._states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0)
@@ -193,7 +193,7 @@ class StateManager:
                             db_price = TradeRepository.get_last_buy_price(symbol, market_type='spot')
                             bp = db_price if db_price > 0 else current_price
                             if db_price == 0:
-                                log_msg("WARNING", f"⚠️ Manual BUY detected for {symbol} or DB missing. Using current price as baseline.", market_type='spot')
+                                log_msg("WARNING", f"Manual BUY detected for {symbol} or DB missing. Using current price as baseline.", market_type='spot')
                             self._states[symbol] = replace(state, position=real_bal, buy_price=bp)
                         else:
                             self._states[symbol] = replace(state, position=real_bal)

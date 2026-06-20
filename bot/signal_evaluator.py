@@ -39,6 +39,17 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         if risk_score is None or not isinstance(risk_score, (int, float)):
             risk_score = 100
             
+        model_used = ai_result.get('model_used', 'UNKNOWN')
+        is_error = ai_result.get('is_error', False)
+        
+        if is_error:
+            log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='futures')
+            log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='futures')
+            update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='futures')
+            return
+            
+        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='futures')
+            
         ai_debate_payload = {
             "symbol": symbol,
             "strategy": strategy_used,
@@ -154,6 +165,17 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         if risk_score is None or not isinstance(risk_score, (int, float)):
             risk_score = 100
             
+        model_used = ai_result.get('model_used', 'UNKNOWN')
+        is_error = ai_result.get('is_error', False)
+        
+        if is_error:
+            log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='spot')
+            log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='spot')
+            update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='spot')
+            return
+            
+        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='spot')
+            
         ai_debate_payload = {
             "symbol": symbol,
             "strategy": strategy_used,
@@ -201,7 +223,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
                 return
                 
-            safe_trade_amount = trade_amount * 0.999 # 0.1% fee simulation
+            safe_trade_amount = trade_amount * 0.98 # 2% buffer for slippage and fees
             qty = safe_trade_amount / current_price 
             
             trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING)
@@ -221,7 +243,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                     max_time_in_trade=time_limit
                 )
         else:
-            log_msg("INFO", f"⚠️ AI aborted BUY for {symbol} (Risk {risk_score}). Applying cooldown.")
+            log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.")
             state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_buy_signal for {symbol}: {e}")

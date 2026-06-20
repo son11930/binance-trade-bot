@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from .config import SYMBOLS, PAPER_TRADING, FUTURES_LEVERAGE
-from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance, client
+from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance, get_all_spot_balances, client
 from .database import TradeRepository
 from .logger import log_msg
 
@@ -136,9 +136,11 @@ class StateManager:
         # 1. FETCH ALL API DATA OUTSIDE THE LOCK
         usdt_bal = None
         all_futures_positions = {}
+        all_spot_balances = {}
         
         if self.market_type == 'spot':
-            usdt_bal = get_live_asset_balance("USDT")
+            all_spot_balances = get_all_spot_balances() or {}
+            usdt_bal = all_spot_balances.get("USDT", get_live_asset_balance("USDT"))
         elif self.market_type == 'futures':
             usdt_bal = futures_get_live_balance("USDT")
             try:
@@ -235,6 +237,8 @@ class StateManager:
                         db.close()
                         
                     new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
+                elif real_bal * current_price < 5.0 and state.position == 0:
+                    new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
                 else:
                     if state.buy_price == 0.0:
                         new_states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
@@ -244,17 +248,22 @@ class StateManager:
             else:
                 # Spot sync
                 asset = symbol.replace("USDT", "")
-                real_bal = get_live_asset_balance(asset)
                 
-                if real_bal is None:
+                # Check if we successfully fetched all spot balances
+                if all_spot_balances is None:
                     continue
+                real_bal = all_spot_balances.get(asset, 0.0)
                     
-                if real_bal < 0.0001:
-                    if state.position > 0:
-                        log_msg("WARNING", f"Detected manual SELL for {symbol} (Spot). Syncing state.", market_type='spot')
+                value = real_bal * current_price
+                is_manual_sell = (state.position > 0 and real_bal < state.position * 0.5)
+                is_dust = (value < 5.0 and state.position == 0)
+                
+                if is_dust or is_manual_sell:
+                    if state.position > 0 and is_manual_sell:
+                        log_msg("WARNING", f"Detected manual SELL or dust for {symbol} (Spot). Syncing state.", market_type='spot')
                         pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, market_type='spot')
                         TradeRepository.create_trade(
-                            symbol, "SELL", current_price, state.position, None, "Startup Sync", PAPER_TRADING,
+                            symbol, "SELL", current_price, state.position, None, "Startup Sync / Manual Sell", PAPER_TRADING,
                             0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
                         )
                     new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0)
@@ -273,5 +282,21 @@ class StateManager:
             if usdt_bal is not None:
                 self._live_usdt_balance = usdt_bal
             for symbol, st in new_states.items():
-                self._states[symbol] = st
+                current = self._states[symbol]
+                if st.position == 0.0:
+                    self._states[symbol] = replace(
+                        current,
+                        position=0.0,
+                        buy_price=0.0,
+                        highest_price=0.0,
+                        lowest_price=0.0,
+                        position_side=""
+                    )
+                else:
+                    self._states[symbol] = replace(
+                        current,
+                        position=st.position,
+                        buy_price=st.buy_price,
+                        position_side=st.position_side
+                    )
             self._save_state()

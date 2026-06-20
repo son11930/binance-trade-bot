@@ -94,6 +94,23 @@ def get_live_asset_balance(asset: str) -> float | None:
         log_msg("ERROR", f"Error fetching balance for {asset}: {sanitize_error(e)}")
         return None
 
+def get_all_spot_balances() -> dict | None:
+    """
+    Fetch all actual balances from Binance Spot wallet in a single API call.
+    Returns a dictionary of {asset: free_balance_float} or None if API fails.
+    """
+    try:
+        account_info = client.get_account()
+        balances = {}
+        for b in account_info.get('balances', []):
+            free = float(b['free'])
+            if free > 0:
+                balances[b['asset']] = free
+        return balances
+    except Exception as e:
+        log_msg("ERROR", f"Error fetching all spot balances: {sanitize_error(e)}")
+        return None
+
 def futures_get_live_balance(asset: str = "USDT") -> float | None:
     """
     Fetch actual balance from Binance Futures wallet.

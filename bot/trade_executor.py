@@ -17,6 +17,11 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
 
     if qty <= 0:
         log_msg("WARNING", f"⚠️ Skipped {side} for {symbol} because quantity is <= 0.")
+        state = state_manager.get_state(symbol)
+        if side == "SELL" and state.position > 0:
+            log_msg("INFO", f"✅ SPOT {symbol} position already closed externally. Clearing local state.")
+            from datetime import datetime, timezone
+            state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0)
         return None
 
     try:
@@ -35,9 +40,13 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         if commission < 0.01 and commission_asset == "USDT":
             commission = 0.01
     except Exception as e:
-        log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {sanitize_error(e)}")
+        err_msg = sanitize_error(e)
+        log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {err_msg}")
+        if ("-1013" in err_msg or "-2010" in err_msg) and side == "SELL":
+            log_msg("WARNING", f"🧹 Unsellable dust or insufficient balance for {symbol}. Clearing local state to prevent infinite loop.")
+            from datetime import datetime, timezone
+            state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0)
         return None
-        
     pnl_amount = None
     pnl_percent = None
     
@@ -89,7 +98,7 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
                 if qty <= 0:
                     log_msg("INFO", f"✅ FUTURES {symbol} position already closed externally. Clearing local state.", market_type="futures")
                     from datetime import datetime, timezone
-                    state_manager.update_state(symbol, position=0.0, highest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+                    state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
                     return None
 
         order = futures_place_order(symbol, side, positionSide, qty, is_paper=is_paper)
@@ -107,7 +116,12 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         if commission < 0.01 and commission_asset == "USDT":
             commission = 0.01
     except Exception as e:
-        log_msg("ERROR", f"⚠️ Futures Exchange Execution Failed for {symbol}: {sanitize_error(e)}", market_type="futures")
+        err_msg = sanitize_error(e)
+        log_msg("ERROR", f"⚠️ Futures Exchange Execution Failed for {symbol}: {err_msg}", market_type="futures")
+        if ("-1013" in err_msg or "-2019" in err_msg or "Margin is insufficient" in err_msg) and (positionSide == "LONG" and side == "SELL" or positionSide == "SHORT" and side == "BUY"):
+            log_msg("WARNING", f"🧹 Uncloseable position for {symbol}. Clearing local state to prevent infinite loop.", market_type="futures")
+            from datetime import datetime, timezone
+            state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
         return None
         
     pnl_amount = None

@@ -92,8 +92,9 @@ class WebSocketManager:
                             atr_value = df.iloc[-2]['ATR']
                         
                     rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT)
-                    if rm_signal:
+                    if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
+                        self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         def _execute_spot_rm():
                             trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
                             if trade:
@@ -101,10 +102,13 @@ class WebSocketManager:
                                 fee = gross_return * 0.001
                                 net_return = gross_return - fee
                                 self.state_manager.add_to_balance(net_return)
-                                self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
+                                self.state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc))
                                 
                                 from .webhook_notifier import update_bot_state
                                 update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='spot')
+                            else:
+                                # Execution failed (e.g. qty=0), restore strategy state to NONE if position cleared or reset to allow retry
+                                self.state_manager.update_state(symbol, active_strategy="NONE")
                         _execution_pool.submit(_execute_spot_rm)
             elif self.market_type == 'futures':
                 state = self.state_manager.get_state(symbol)
@@ -128,9 +132,9 @@ class WebSocketManager:
                             atr_value = df.iloc[-2]['ATR']
                         
                     rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT, market_type='futures')
-                    if rm_signal:
+                    if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 FUTURES {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
-                        
+                        self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         def _execute_futures_rm():
                             # Execute trade to close position
                             close_side = "BUY" if state.position_side == "SHORT" else "SELL"
@@ -148,11 +152,13 @@ class WebSocketManager:
                                 pnl_amount = trade.get('pnl_amount')
                                 if pnl_amount:
                                     self.state_manager.add_to_balance(pnl_amount)
-                                self.state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+                                self.state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
                                 
                                 # Broadcast immediately to clear it from UI
                                 from .webhook_notifier import update_bot_state
                                 update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='futures')
+                            else:
+                                self.state_manager.update_state(symbol, active_strategy="NONE")
                                 
                         _execution_pool.submit(_execute_futures_rm)
                     

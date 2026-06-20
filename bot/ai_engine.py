@@ -108,7 +108,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     }}
     """
 
-    models_to_try = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    models_to_try = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash']
     
     def _call_model(m_name, p, conf):
         global LAST_API_CALL
@@ -140,13 +140,16 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 result = json.loads(raw_text.strip())
                 
                 if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason", "bullish_analysis", "bearish_analysis")):
-                    # Reformat to match what main.py expects
-                    bull = result.pop("bullish_analysis")
-                    bear = result.pop("bearish_analysis")
+                    # Reformat to match what main.py expects and escape to prevent XSS
+                    bull = html.escape(str(result.pop("bullish_analysis")))
+                    bear = html.escape(str(result.pop("bearish_analysis")))
+                    result["reason"] = html.escape(str(result.get("reason", "")))
                     result["committee_debate"] = {
                         "bullish_analysis": bull,
                         "bearish_analysis": bear
                     }
+                    result["model_used"] = model_name
+                    result["is_error"] = False
                     return result
                 else:
                     raise ValueError(f"Malformed schema returned: {result}")
@@ -169,9 +172,11 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     return {
         "decision": "HOLD", 
         "risk_score": 100, 
-        "reason": "Circuit Breaker: Committee failed.",
+        "reason": f"API Error: {sanitize_error(Exception(last_error))}",
         "committee_debate": {
             "bullish_analysis": "Error communicating with AI.",
             "bearish_analysis": "Error communicating with AI."
-        }
+        },
+        "model_used": "NONE",
+        "is_error": True
     }

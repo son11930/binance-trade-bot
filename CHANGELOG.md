@@ -1,3 +1,14 @@
+## [4.3.5] - 2026-06-20
+### Spot Strategy Optimization (Loosened Constraints)
+**English:**
+- **Trend Strategy Updates**: Relaxed technical filters to increase Spot trading frequency during sideways markets. Expanded MACD lookback to 8 periods, added a 0.5% buffer for SMA200, lowered the volume requirement to `> 70%` of SMA, and increased the RSI cap to 80 on high volume.
+- **Sideways Strategy Updates**: Adjusted RSI hook thresholds to `<= 45`, widened the Bollinger Band touch margin to 2%, and increased dynamic volume caps to allow entries during minor sell-offs.
+
+**Thai (ภาษาไทย):**
+- **ปรับความไวบอท Spot**: คลายกฎให้บอท Spot เริ่มมีไม้เทรดในตลาดไซด์เวย์บีบแคบ
+  - **กราฟเทรนด์**: ยืดเวลารอจุดตัด MACD เป็น 8 แท่งเทียน, ยอมให้ราคาหลุดเส้น SMA 200 ได้ 0.5%, ใช้โวลุ่มแค่ 70% ของค่าเฉลี่ยก็เทรดได้, และขยับเพดาน RSI ไปที่ 80 ถ้าราคากระชากแรง
+  - **กราฟไซด์เวย์**: ปรับจุดช้อนซื้อ RSI Hook ขึ้นมาที่ระดับ 45 (จากเดิม 40), ยอมให้ซื้อได้แม้ราคายังไม่แตะขอบล่างสุดของขอบแบนด์ (เหลือ 2%), และเพิ่มเพดานวอลุ่มให้ช้อนซื้อได้แม้จะมีแรงเทขายเยอะก็ตาม
+
 ## [4.3.4] - 2026-06-20
 ### Strategy Tuning & Trade Frequency Optimization
 **English:**

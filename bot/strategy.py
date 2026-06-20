@@ -126,12 +126,12 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
     vol_sma = latest['SMA_20_Vol']
     
     vol_surge_multiplier = vol_curr / vol_sma if vol_sma > 0 else 1.0
-    rsi_limit = 75 if vol_surge_multiplier >= 3.0 else 70
+    rsi_limit = 80 if vol_surge_multiplier >= 2.0 else 75
     
-    # Check if MACD crossed above signal within last 5 periods
+    # Check if MACD crossed above signal within last 8 periods
     recent_macd_cross = False
-    if len(df) >= 5:
-        for i in range(1, 6):
+    if len(df) >= 8:
+        for i in range(1, 9):
             idx_curr = -i
             idx_prev = -i - 1
             if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
@@ -139,14 +139,14 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
                 break
 
     near_miss_reason = ""
-    if recent_macd_cross and price > sma_200:
+    if recent_macd_cross and price > sma_200 * 0.995:
         if rsi_curr >= rsi_limit:
             near_miss_reason = f"RSI too high ({rsi_curr:.1f} >= {rsi_limit})"
-        elif vol_curr <= vol_sma:
-            near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma:.1f})"
+        elif vol_curr <= vol_sma * 0.7:
+            near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma * 0.7:.1f})"
 
-    # BUY: MACD crossed ABOVE Signal Line in last 5 periods AND Price > SMA 200 AND RSI < dynamic limit AND Volume > SMA
-    if recent_macd_cross and price > sma_200 and rsi_curr < rsi_limit and vol_curr > vol_sma:
+    # BUY: MACD crossed ABOVE Signal Line in last 8 periods AND Price > SMA 200 (with 0.5% buffer) AND RSI < dynamic limit AND Volume > SMA * 0.7
+    if recent_macd_cross and price > sma_200 * 0.995 and rsi_curr < rsi_limit and vol_curr > vol_sma * 0.7:
         return SignalPlan(
             action="BUY",
             strategy_used="TREND_MACD",
@@ -188,7 +188,7 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    rsi_hook = rsi_curr > rsi_prev and rsi_prev <= 40
+    rsi_hook = rsi_curr > rsi_prev and rsi_prev <= 45
     
     # 1. Price Action Proof of Absorption
     is_green_candle = latest.get('close', 0) > latest.get('open', 0)
@@ -197,16 +197,16 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
     is_strong_rejection = (lower_wick / candle_range) > 0.4 if candle_range > 0 else False
     
     # 2. Dynamic Volume Cap
-    vol_limit_multiplier = 3.0 if (is_green_candle or is_strong_rejection) else 1.5
+    vol_limit_multiplier = 4.0 if (is_green_candle or is_strong_rejection) else 2.5
     dynamic_vol_limit = vol_sma * vol_limit_multiplier
     
     near_miss_reason = ""
-    if rsi_hook and price <= bb_lower * 1.01:
+    if rsi_hook and price <= bb_lower * 1.02:
         if vol_curr > dynamic_vol_limit:
             near_miss_reason = f"Volume too high ({vol_curr:.1f} > {dynamic_vol_limit:.1f})"
 
     # BUY: RSI Hook AND price near lower BB AND Volume <= Dynamic Limit
-    if rsi_hook and price <= bb_lower * 1.01 and vol_curr <= dynamic_vol_limit:
+    if rsi_hook and price <= bb_lower * 1.02 and vol_curr <= dynamic_vol_limit:
         return SignalPlan(
             action="BUY",
             strategy_used="SIDEWAYS_RSI_BB",

@@ -291,22 +291,22 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 2.5
     tp_multiplier = 5.0
     
-    # Momentum Filter: ADX must be > 20 and rising for a solid trend
-    strong_trend = adx_curr > 20 and adx_curr > adx_prev
+    # Momentum Filter: Relaxed ADX > 15 to allow AI to catch early trends
+    strong_trend = adx_curr > 15
     
     # Volume Filter: Relaxed to allow AI Council to decide
     strong_volume = True
     
-    # Long Entry (Requires price > EMA50 to filter out weak bounces)
-    if price > ema_50 and macd_cross_up and rsi_curr < 70 and strong_trend and strong_volume:
+    # Long Entry (Requires price >= EMA50 * 0.998 to filter out weak bounces, but allow 0.2% buffer)
+    if price >= ema_50 * 0.998 and macd_cross_up and rsi_curr < 75 and strong_trend and strong_volume:
         return SignalPlan(
             action="BUY", strategy_used="FUTURES_15M_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry (Requires price < EMA50 to filter out weak drops)
-    if price < ema_50 and macd_cross_down and rsi_curr > 30 and strong_trend and strong_volume:
+    # Short Entry (Requires price <= EMA50 * 1.002 to filter out weak drops, but allow 0.2% buffer)
+    if price <= ema_50 * 1.002 and macd_cross_down and rsi_curr > 25 and strong_trend and strong_volume:
         return SignalPlan(
             action="SELL", strategy_used="FUTURES_15M_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
@@ -329,19 +329,19 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     if macd_cross_up:
         strategy_used = "FUTURES_15M_LONG"
-        if price <= ema_50:
-            near_miss_reason = f"Price below EMA50 ({price:.2f} <= {ema_50:.2f})"
-        elif rsi_curr >= 70:
-            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
+        if price < ema_50 * 0.998:
+            near_miss_reason = f"Price below EMA50 ({price:.2f} < {ema_50 * 0.998:.2f})"
+        elif rsi_curr >= 75:
+            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 75)"
         elif not strong_trend:
             near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
             
     elif macd_cross_down:
         strategy_used = "FUTURES_15M_SHORT"
-        if price >= ema_50:
-            near_miss_reason = f"Price above EMA50 ({price:.2f} >= {ema_50:.2f})"
-        elif rsi_curr <= 30:
-            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
+        if price > ema_50 * 1.002:
+            near_miss_reason = f"Price above EMA50 ({price:.2f} > {ema_50 * 1.002:.2f})"
+        elif rsi_curr <= 25:
+            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 25)"
         elif not strong_trend:
             near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
             

@@ -27,7 +27,7 @@ load_dotenv()
 API_KEY = os.getenv("BINANCE_API_KEY")
 SECRET_KEY = os.getenv("BINANCE_API_SECRET") or os.getenv("BINANCE_SECRET_KEY")
 
-client = Client(API_KEY, SECRET_KEY)
+client = Client(API_KEY, SECRET_KEY, requests_params={'timeout': 20})
 # Do not initialize ThreadedWebsocketManager with API keys for public streams to prevent unnecessary exposure
 twm = ThreadedWebsocketManager()
 # twm.start() is now called in main.py to avoid hanging tests
@@ -187,7 +187,7 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
         symbol=symbol,
         side=binance_side,
         type=ORDER_TYPE_MARKET,
-        quantity=rounded_quantity
+        quantity=f"{rounded_quantity:.10f}".rstrip('0').rstrip('.')
     )
 
     fills = order.get('fills', [])

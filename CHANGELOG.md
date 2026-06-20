@@ -1,3 +1,19 @@
+## [4.3.4] - 2026-06-20
+### Strategy Tuning & Trade Frequency Optimization
+**English:**
+- **Futures Strategy Optimization**: Relaxed technical constraints in `bot/strategy.py` to increase signal frequency and reduce "Near Misses" on the 15m timeframe.
+  - **ADX**: Reduced trend strength requirement from `> 20 and rising` to `> 15`.
+  - **RSI Limits**: Expanded valid entry bounds from `[30, 70]` to `[25, 75]`.
+  - **EMA50 Buffer**: Added a 0.2% buffer to EMA bounds to prevent early signal rejections from minor fakeouts.
+- **Bot Timeout Fix**: Added a 20-second connection timeout to `Client` initialization in `bot/binance_client.py` to prevent infinite hanging when internet connection drops.
+
+**Thai (ภาษาไทย):**
+- **ปรับจูนความไวบอท (Futures)**: ปรับลดความตึงของกฎ Technical Analysis ลง เพื่อลดปัญหาบอทปัดตกสัญญาณ (Near Miss) และเพิ่มโอกาสการเข้าทำกำไร
+  - **ADX**: ลดเกณฑ์ความแรงเทรนด์จาก `> 20` เหลือ `> 15` เพื่อให้จับเทรนด์ช่วงต้นได้เร็วขึ้น
+  - **RSI**: ขยายกรอบ RSI จาก `[30, 70]` เป็น `[25, 75]` เพื่อรองรับจังหวะราคากระชากแรงๆ
+  - **EMA50 Buffer**: เพิ่มระยะยืดหยุ่นให้เส้น EMA50 อีก 0.2% เพื่อป้องกันราคาแกว่งสวิงหลอกแล้วบอทไม่ยอมเข้าซื้อ
+- **แก้ปัญหาบอทค้าง**: เพิ่มระบบ `timeout: 20` วินาทีให้กับการดึงข้อมูล API จาก Binance เพื่อป้องกันปัญหาบอทค้างเติ่งเวลาอินเทอร์เน็ตหลุดชั่วคราว
+
 ## [4.3.3] - 2026-06-19
 ### UI Bug Fixes, Fees, and Security Patches
 **English:**

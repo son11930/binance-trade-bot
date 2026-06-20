@@ -1,5 +1,16 @@
+## [4.3.6] - 2026-06-21
+### Groq API Integration & Advanced Model Routing
+**English:**
+- **AI Engine Upgrade**: Implemented Groq API as an ultra-fast fallback mechanism in `bot/ai_engine.py` to overcome Gemini's strict rate limits (20 RPD on Flash).
+- **Intelligent Routing**: The bot now cascades through 5 AI tiers automatically: `llama-3.3-70b` (Groq), `gemini-3.5-flash`, `qwen-32b` (Groq), `gemini-3.1-flash-lite`, and falls back to `llama-3.1-8b` (Groq) which offers an ultimate 14.4K requests/day safety net.
+- **Independent Rate Limiting**: Added `GROQ_API_LOCK` to strictly enforce Groq's 30 RPM limit (2s delay) without impacting Gemini's 15 RPM queue.
+
+**Thai (ภาษาไทย):**
+- **เพิ่มระบบสลับกะ Groq API**: อัพเกรด `bot/ai_engine.py` ให้เชื่อมต่อกับเซิร์ฟเวอร์สุดแรงของ Groq อัตโนมัติ เพื่อแก้ปัญหาโควต้า 20 ครั้ง/วันของ Gemini
+- **ระบบคิว 5 ลำดับชั้น**: บอทจะเลือกใช้ AI ที่ฉลาดที่สุดก่อนและไล่ระดับลงมาเรื่อยๆ จนถึงเบอร์ 5 (`llama-3.1-8b`) ที่มีโควต้ามหาศาลถึง 14.4K ครั้ง/วัน การันตีบอททำงานข้ามวันข้ามคืนไม่มีสะดุด
+- **ระบบคุมความเร็วอัจฉริยะ**: แยกการนับความเร็ว (Rate Limit) ของค่าย Groq ออกจาก Gemini อย่างเด็ดขาด เพื่อป้องกันการยิงเกินโควต้า 30 ครั้ง/นาที
+
 ## [4.3.5] - 2026-06-20
-### Spot Strategy Optimization (Loosened Constraints)
 **English:**
 - **Trend Strategy Updates**: Relaxed technical filters to increase Spot trading frequency during sideways markets. Expanded MACD lookback to 8 periods, added a 0.5% buffer for SMA200, lowered the volume requirement to `> 70%` of SMA, and increased the RSI cap to 80 on high volume.
 - **Sideways Strategy Updates**: Adjusted RSI hook thresholds to `<= 45`, widened the Bollinger Band touch margin to 2%, and increased dynamic volume caps to allow entries during minor sell-offs.

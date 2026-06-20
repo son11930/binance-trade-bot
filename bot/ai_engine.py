@@ -20,9 +20,13 @@ def sanitize_error(error: Exception) -> str:
 # Initialize client globally to avoid repeated initialization overhead
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Global lock to enforce 4-second delay (15 RPM limit)
+# Global lock to enforce 4-second delay (15 RPM limit) for Gemini
 GLOBAL_API_LOCK = threading.Lock()
 LAST_API_CALL = 0
+
+# Global lock to enforce 2-second delay (30 RPM limit) for Groq
+GROQ_API_LOCK = threading.Lock()
+LAST_GROQ_CALL = 0
 
 def fetch_crypto_news(limit: int = 5) -> str:
     """
@@ -108,18 +112,65 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     }}
     """
 
-    models_to_try = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash']
+    models_to_try = [
+        'groq-llama-3.3-70b-versatile',
+        'gemini-3.5-flash',
+        'groq-qwen-32b-preview',
+        'gemini-2.5-flash',
+        'gemini-3.1-flash-lite',
+        'groq-llama-3.1-8b-instant'
+    ]
     
     def _call_model(m_name, p, conf):
-        global LAST_API_CALL
-        with GLOBAL_API_LOCK:
-            now = time.time()
-            elapsed = now - LAST_API_CALL
-            if elapsed < 4.0:
-                time.sleep(4.0 - elapsed)
-            LAST_API_CALL = time.time()
+        if m_name.startswith("groq-"):
+            # Route to Groq API
+            global LAST_GROQ_CALL
+            with GROQ_API_LOCK:
+                now = time.time()
+                elapsed = now - LAST_GROQ_CALL
+                if elapsed < 2.0:
+                    time.sleep(2.0 - elapsed)
+                LAST_GROQ_CALL = time.time()
             
-        return client.models.generate_content(model=m_name, contents=p, config=conf)
+            groq_key = os.getenv("GROQ_API_KEY")
+            if not groq_key:
+                raise ValueError("GROQ_API_KEY is not set in .env")
+                
+            model_id = m_name[5:]
+            # Groq currently maps qwen-32b-preview to qwen-2.5-32b, etc. Ensure exact model ID matches Groq console
+            if model_id == "qwen-32b-preview":
+                model_id = "qwen/qwen3-32b" # As per user screenshot
+
+            headers = {
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": model_id,
+                "messages": [{"role": "user", "content": p}],
+                "response_format": {"type": "json_object"}
+            }
+            resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=15)
+            resp.raise_for_status()
+            
+            # Wrap response to match gemini SDK format so downstream code works
+            class DummyResponse:
+                pass
+            dummy = DummyResponse()
+            dummy.text = resp.json()["choices"][0]["message"]["content"]
+            return dummy
+
+        else:
+            # Route to Gemini API
+            global LAST_API_CALL
+            with GLOBAL_API_LOCK:
+                now = time.time()
+                elapsed = now - LAST_API_CALL
+                if elapsed < 4.0:
+                    time.sleep(4.0 - elapsed)
+                LAST_API_CALL = time.time()
+                
+            return client.models.generate_content(model=m_name, contents=p, config=conf)
     
     last_error = "Unknown Error"
     for model_name in models_to_try:

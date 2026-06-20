@@ -16,6 +16,7 @@ def _get_secrets_cache():
         
     secrets = [
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
+        ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("BINANCE_API_KEY", os.getenv("BINANCE_API_KEY")),
         ("BINANCE_API_SECRET", os.getenv("BINANCE_API_SECRET")),
         ("BINANCE_SECRET_KEY", os.getenv("BINANCE_SECRET_KEY")),

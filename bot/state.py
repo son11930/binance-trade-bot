@@ -243,10 +243,8 @@ class StateManager:
                 elif real_bal * current_price < 5.0 and state.position == 0:
                     new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
                 else:
-                    if state.buy_price == 0.0:
-                        new_states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
-                    else:
-                        new_states[symbol] = replace(state, position=real_bal, position_side=pos_side)
+                    # Always sync exact entry price from Binance for Futures
+                    new_states[symbol] = replace(state, position=real_bal, buy_price=entry_price, position_side=pos_side)
 
             else:
                 # Spot sync

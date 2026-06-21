@@ -79,8 +79,8 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
                 return "ATR Trailing Stop 🛡️"
             
         # Breakeven Stop
-        # If profit reaches 4%, we guarantee at least 1% profit.
-        if max_profit_percent >= 4.0:
+        # If profit reaches 3%, we guarantee at least 1% profit.
+        if max_profit_percent >= 3.0:
             if profit_percent <= 1.0:
                 return "Breakeven Stop 🛡️"
                 

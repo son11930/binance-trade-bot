@@ -164,7 +164,7 @@ class StateManager:
             if self.market_type == 'futures':
                 pos_info = all_futures_positions.get(symbol)
                 if pos_info is None:
-                    continue
+                    pos_info = {"positionAmt": "0", "entryPrice": "0", "positionSide": ""}
                     
                 amt = float(pos_info.get("positionAmt", "0"))
                 entry_price = float(pos_info.get("entryPrice", "0"))

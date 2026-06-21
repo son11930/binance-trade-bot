@@ -424,8 +424,14 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
             "parsed_commission_asset": commission_asset
         }
     except Exception as e:
-        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}", market_type="futures")
-        raise Exception(f"Binance API Execution Error: {sanitize_error(e)}")
+        err_msg = sanitize_error(e)
+        is_opening = (positionSide == "LONG" and side == "BUY") or (positionSide == "SHORT" and side == "SELL")
+        if ("-2019" in err_msg or "Margin is insufficient" in err_msg) and is_opening:
+            log_msg("WARNING", f"⏳ Margin insufficient to open {positionSide} for {symbol}. (APIError -2019)", market_type="futures")
+            raise Exception(f"MarginError: {err_msg}")
+        
+        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {err_msg}", market_type="futures")
+        raise Exception(f"Binance API Execution Error: {err_msg}")
 from dataclasses import replace
 import logging
 from bot.database import sanitize_text

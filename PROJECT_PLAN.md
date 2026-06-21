@@ -130,3 +130,23 @@ The system will be upgraded to a concurrent Dual-Engine architecture, running bo
 - **Performance**: Reduced polling latency from 60s to 5s.
 - **Accounting**: Enforced 0.01 USDT minimum fee and swapped availableBalance for marginBalance to correctly calculate capacity.
 - **Security**: Handled dictionary injection vulnerability in Webhooks and masked Binance exception payloads from the dashboard UI.
+
+## Phase 14: Enhanced Data Sources & Intelligent Prompts
+To make the AI committee smarter for both Spot and Futures trading, the bot will transition from relying solely on RSS news to analyzing quantitative market context.
+
+1. **Alternative Data Integration**:
+   - Refactor `bot/news_worker.py` into a robust `market_context_worker.py`.
+   - **Binance API**: Fetch Funding Rates, Open Interest (OI), and Long/Short Ratios to gauge leverage and smart money positioning.
+   - **Alternative APIs**: Fetch the daily Crypto Fear & Greed Index.
+2. **AI Prompt Upgrades**:
+   - Update `bot/ai_engine.py` to inject `funding_rate`, `ls_ratio`, and `fear_greed` into the XML prompt context.
+   - Instruct the AI to act as a Quantitative Analyst, actively looking for Contrarian signals (e.g., Extreme Greed + High Positive Funding Rate = High risk of a Long Squeeze / Bearish outlook).
+   - Adapt the output schema to support `LONG`, `SHORT`, or `HOLD` decisions specifically for the Futures engine.
+3. **State Management**:
+   - Expand `StateManager` to cache these metrics asynchronously, ensuring the main trading loop and AI evaluation remain unblocked.
+
+## Phase 15: Data Ingestion Pipeline & Multi-Source News Aggregation
+To prevent token limits from blowing up while scaling alternative news sources, we will implement a 3-Layer Architecture.
+1. **Layer 1 (Data Collectors)**: Run asynchronous fetchers (CryptoPanic, RSS, Twitter KOLs) that save raw data to a database.
+2. **Layer 2 (Processing & Filtering)**: Deduplicate stories, tag entities (e.g. BTC, ETH), and assign an `Impact Score` using a fast/cheap local NLP model (e.g. Groq).
+3. **Layer 3 (AI Evaluation)**: The main `ai_engine.py` will query only the top 3 highest-impact news items (in bullet points) for the relevant coin, saving tokens while improving signal-to-noise ratio.

@@ -17,53 +17,122 @@ load_dotenv()
 def sanitize_error(error: Exception) -> str:
     return sanitize_text(str(error))
 
-# Initialize client globally to avoid repeated initialization overhead
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Global lock to enforce 4-second delay (15 RPM limit) for Gemini
 GLOBAL_API_LOCK = threading.Lock()
 LAST_API_CALL = 0
 
-# Global lock to enforce 2-second delay (30 RPM limit) for Groq
 GROQ_API_LOCK = threading.Lock()
 LAST_GROQ_CALL = 0
 
+def _call_model(m_name, p, conf=None, is_json=True):
+    if m_name.startswith("groq-"):
+        global LAST_GROQ_CALL
+        with GROQ_API_LOCK:
+            now = time.time()
+            elapsed = now - LAST_GROQ_CALL
+            if elapsed < 2.0: # 30 RPM
+                time.sleep(2.0 - elapsed)
+            LAST_GROQ_CALL = time.time()
+        
+        groq_key = os.getenv("GROQ_API_KEY")
+        if not groq_key:
+            raise ValueError("GROQ_API_KEY is not set in .env")
+            
+        model_id = m_name[5:]
+        if model_id == "qwen-32b-preview" or model_id == "qwen-2.5-32b":
+            model_id = "qwen-2.5-32b" # standard groq model id
+            
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": p}]
+        }
+        if is_json:
+            payload["response_format"] = {"type": "json_object"}
+            
+        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
+        
+        class DummyResponse:
+            pass
+        dummy = DummyResponse()
+        dummy.text = resp.json()["choices"][0]["message"]["content"]
+        return dummy
+    else:
+        global LAST_API_CALL
+        with GLOBAL_API_LOCK:
+            now = time.time()
+            elapsed = now - LAST_API_CALL
+            if elapsed < 4.0:
+                time.sleep(4.0 - elapsed)
+            LAST_API_CALL = time.time()
+            
+        if not conf:
+            if is_json:
+                conf = types.GenerateContentConfig(response_mime_type="application/json")
+        return client.models.generate_content(model=m_name, contents=p, config=conf)
+
+def filter_crypto_news(news_list: list) -> str:
+    """
+    Layer 2: Assign Impact Score and pick top 3
+    """
+    if not news_list:
+        return "No recent news."
+        
+    prompt = "You are a crypto news screener. Rate each news item's impact on the market from 1-100.\n"
+    for i, n in enumerate(news_list):
+        prompt += f"Item {i}: {n}\n"
+    prompt += "\nReturn a JSON object with a list 'scored_news' containing objects with 'index' and 'score'. Example: {\"scored_news\":[{\"index\":0,\"score\":85}]}"
+    
+    models = ['groq-llama-3.1-8b-instant', 'gemini-1.5-flash', 'groq-qwen-2.5-32b']
+    for m in models:
+        try:
+            resp = _call_model(m, prompt, is_json=True)
+            data = json.loads(resp.text)
+            scores = data.get("scored_news", [])
+            # Sort by score desc
+            scores.sort(key=lambda x: x.get("score", 0), reverse=True)
+            top_indices = [x["index"] for x in scores[:3]]
+            top_news = [news_list[i] for i in top_indices if i < len(news_list)]
+            return "\n".join(top_news)
+        except Exception as e:
+            continue
+            
+    return "\n".join(news_list[:3]) # Fallback to top 3 chronological
+
 def fetch_crypto_news(limit: int = 5) -> str:
     """
-    Fetches the latest crypto news headlines from CoinTelegraph RSS.
+    Fetches the latest crypto news headlines from multiple sources and applies Layer 2 filtering.
     """
     try:
-        url = "https://cointelegraph.com/rss"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
+        news_items = []
+        # Source 1: CoinTelegraph
+        url1 = "https://cointelegraph.com/rss"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r1 = requests.get(url1, headers=headers, timeout=10)
+        if r1.status_code == 200:
+            root = ET_defused.fromstring(r1.content)
+            for item in root.findall('./channel/item')[:limit]:
+                title = item.find('title').text if item.find('title') is not None else ""
+                desc = item.find('description').text if item.find('description') is not None else ""
+                clean_desc = html.unescape(desc).replace('<p>', '').replace('</p>', '').replace('\n', ' ').strip()
+                summary = clean_desc[:250] + "..." if len(clean_desc) > 250 else clean_desc
+                news_items.append(f"CoinTelegraph: {title} - {summary}")
+                
+        # Future: Add more sources here (CryptoPanic, Twitter)
         
-        root = ET_defused.fromstring(response.content)
-            
-        headlines = []
-        for item in root.findall('./channel/item')[:limit]:
-            title_node = item.find('title')
-            title = title_node.text if title_node is not None else "No Title"
-            desc_node = item.find('description')
-            desc = desc_node.text if desc_node is not None else "No Description"
-            
-            clean_desc = html.unescape(desc).replace('<p>', '').replace('</p>', '').replace('\n', ' ').strip()
-            # Truncate aggressively to save context window tokens
-            summary = clean_desc[:250] + "..." if len(clean_desc) > 250 else clean_desc
-            headlines.append(f"{title}: {summary}")
-        return "\n".join(headlines)
+        return filter_crypto_news(news_items)
     except Exception as e:
-        logging.exception(f"Error fetching news from CoinTelegraph: {e}")
+        logging.exception(f"Error fetching news: {e}")
         return "No recent news available due to error."
 
-def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> dict:
-    """
-    Uses an AI Committee (Bullish, Bearish, Chief Strategist) to evaluate a trade.
-    """
+def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, market_type: str = 'spot') -> dict:
     if not news_text or news_text.startswith("No recent news"):
-        return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis."}
+        return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis.", "model_used": "NONE", "is_error": False, "committee_debate": {"bullish_analysis": "", "bearish_analysis": ""}}
         
     sanitized_news = html.escape(news_text)
     sanitized_symbol = html.escape(symbol)
@@ -81,12 +150,18 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     Bollinger_Band_Width: {tech_data.get('bb_width', 'N/A')}
     Distance_to_SMA_200 (%): {tech_data.get('dist_sma_200', 'N/A')}
     Volume_Surge_Multiplier: {vol_surge_fmt}
+    Funding_Rate: {tech_data.get('funding_rate', 'N/A')}
+    Long_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}
+    Fear_Greed_Index: {tech_data.get('fear_greed_index', 'N/A')}
     </technical_context>
         """
 
+    decision_options = '"BUY" or "HOLD" or "SELL"' if market_type == 'spot' else '"LONG" or "SHORT" or "HOLD"'
+
     chief_prompt = f"""
-    You are the Chief Crypto Strategist evaluating a potential trade for {sanitized_symbol}.
-    Your goal is to conduct an internal debate (Bullish vs Bearish) and then provide a final actionable decision based on Expected Value (EV).
+    You are the Chief Quantitative Strategist evaluating a potential trade for {sanitized_symbol} on {market_type.upper()}.
+    Your goal is to conduct an internal debate and then provide a final actionable decision based on Expected Value (EV).
+    Look for contrarian signals (e.g. Extreme Greed + High Positive Funding Rate = Risk of Long Squeeze).
     
     <raw_data>
     News:
@@ -95,17 +170,17 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
     {tech_context}
     </raw_data>
     
-    Step 1. Conduct a Bullish Analysis: Find momentum, volume confirmation, and reasons to BUY.
-    Step 2. Conduct a Bearish Analysis: Actively invalidate the trade. Look for fake-outs, bull traps, divergence, and regime conflicts.
-    Step 3. Weigh the Expected Value. Do the upside targets outweigh the downside risks?
+    Step 1. Conduct a Bullish Analysis: Find momentum, volume confirmation, and reasons to go LONG/BUY.
+    Step 2. Conduct a Bearish Analysis: Actively invalidate the trade. Look for fake-outs, bull traps, divergence, and reasons to go SHORT/SELL.
+    Step 3. Weigh the Expected Value.
     Step 4. Determine an actionable Risk Score. Higher risk = smaller position.
-    Step 5. If BUY, determine the allocation_percentage between 10 and 40 (e.g. highly confident/low risk = 40, moderate = 20, high risk = 10).
+    Step 5. If acting, determine the allocation_percentage between 10 and 40.
     
     Output a strictly valid JSON object with the following schema:
     {{
         "bullish_analysis": "short bullish case",
         "bearish_analysis": "short bearish case",
-        "decision": "BUY" or "HOLD",
+        "decision": {decision_options},
         "risk_score": integer between 0 and 100,
         "allocation_percentage": integer between 10 and 40,
         "reason": "short explanation for the final decision"
@@ -114,72 +189,17 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
 
     models_to_try = [
         'groq-llama-3.3-70b-versatile',
-        'gemini-3.5-flash',
-        'groq-qwen-32b-preview',
-        'gemini-2.5-flash',
-        'gemini-3.1-flash-lite',
+        'gemini-1.5-flash',
+        'groq-qwen-2.5-32b',
         'groq-llama-3.1-8b-instant'
     ]
-    
-    def _call_model(m_name, p, conf):
-        if m_name.startswith("groq-"):
-            # Route to Groq API
-            global LAST_GROQ_CALL
-            with GROQ_API_LOCK:
-                now = time.time()
-                elapsed = now - LAST_GROQ_CALL
-                if elapsed < 2.0:
-                    time.sleep(2.0 - elapsed)
-                LAST_GROQ_CALL = time.time()
-            
-            groq_key = os.getenv("GROQ_API_KEY")
-            if not groq_key:
-                raise ValueError("GROQ_API_KEY is not set in .env")
-                
-            model_id = m_name[5:]
-            # Groq currently maps qwen-32b-preview to qwen-2.5-32b, etc. Ensure exact model ID matches Groq console
-            if model_id == "qwen-32b-preview":
-                model_id = "qwen/qwen3-32b" # As per user screenshot
-
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": model_id,
-                "messages": [{"role": "user", "content": p}],
-                "response_format": {"type": "json_object"}
-            }
-            resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=15)
-            resp.raise_for_status()
-            
-            # Wrap response to match gemini SDK format so downstream code works
-            class DummyResponse:
-                pass
-            dummy = DummyResponse()
-            dummy.text = resp.json()["choices"][0]["message"]["content"]
-            return dummy
-
-        else:
-            # Route to Gemini API
-            global LAST_API_CALL
-            with GLOBAL_API_LOCK:
-                now = time.time()
-                elapsed = now - LAST_API_CALL
-                if elapsed < 4.0:
-                    time.sleep(4.0 - elapsed)
-                LAST_API_CALL = time.time()
-                
-            return client.models.generate_content(model=m_name, contents=p, config=conf)
     
     last_error = "Unknown Error"
     for model_name in models_to_try:
         for attempt in range(2):
             try:
-                config = types.GenerateContentConfig(response_mime_type="application/json")
-                response = _call_model(model_name, chief_prompt, config)
+                response = _call_model(model_name, chief_prompt, is_json=True)
                 
-                import json
                 raw_text = response.text.strip()
                 if raw_text.startswith("```json"):
                     raw_text = raw_text[7:]
@@ -191,7 +211,6 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None) -> di
                 result = json.loads(raw_text.strip())
                 
                 if all(k in result for k in ("decision", "risk_score", "allocation_percentage", "reason", "bullish_analysis", "bearish_analysis")):
-                    # Reformat to match what main.py expects and escape to prevent XSS
                     bull = html.escape(str(result.pop("bullish_analysis")))
                     bear = html.escape(str(result.pop("bearish_analysis")))
                     result["reason"] = html.escape(str(result.get("reason", "")))

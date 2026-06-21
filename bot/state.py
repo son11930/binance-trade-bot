@@ -36,6 +36,9 @@ class StateManager:
         self._live_usdt_balance = 1000.0 if PAPER_TRADING else 0.0
         self._kline_buffers = {}
         self._latest_news = "No recent news available."
+        self._funding_rates: Dict[str, float] = {}
+        self._long_short_ratios: Dict[str, float] = {}
+        self._fear_greed_index: str = "Neutral (50)"
         self._state_file = f"bot_internal_state_{market_type}.json"
         self._load_state()
 
@@ -116,6 +119,32 @@ class StateManager:
     def latest_news(self, value: str):
         with self._lock:
             self._latest_news = value
+
+    @property
+    def fear_greed_index(self) -> str:
+        with self._lock:
+            return self._fear_greed_index
+
+    @fear_greed_index.setter
+    def fear_greed_index(self, value: str):
+        with self._lock:
+            self._fear_greed_index = value
+
+    def get_funding_rate(self, symbol: str) -> float:
+        with self._lock:
+            return self._funding_rates.get(symbol, 0.0)
+
+    def set_funding_rate(self, symbol: str, rate: float):
+        with self._lock:
+            self._funding_rates[symbol] = rate
+
+    def get_long_short_ratio(self, symbol: str) -> float:
+        with self._lock:
+            return self._long_short_ratios.get(symbol, 1.0)
+
+    def set_long_short_ratio(self, symbol: str, ratio: float):
+        with self._lock:
+            self._long_short_ratios[symbol] = ratio
             
     def get_kline_buffer(self, symbol: str):
         with self._lock:

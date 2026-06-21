@@ -69,22 +69,22 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
             
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
-        # Spot Trailing Stop
-        min_profit_to_trail = atr_percent * 1.5
+        # Spot Trailing Stop (ตอบสนองไวขึ้น)
+        min_profit_to_trail = atr_percent * 1.2
         if max_profit_percent >= min_profit_to_trail:
-            trailing_drop_raw_percent = atr_percent * 1.0
+            trailing_drop_raw_percent = atr_percent * 0.8
             if hp_drop_percent >= trailing_drop_raw_percent:
                 return "ATR Trailing Stop 🛡️"
             
-        # Spot Breakeven Stop
-        # Require 3.0% asset price increase, lock 1.0% asset price increase.
-        if max_profit_percent >= 3.0:
-            if profit_percent <= 1.0:
+        # Spot Breakeven Stop (ปกป้องทุนและค่าธรรมเนียมทันทีที่เริ่มกำไรชัดเจน)
+        # หากราคาวิ่งไป 1.2% ให้ล็อคปิดที่ 0.3%
+        if max_profit_percent >= 1.2:
+            if profit_percent <= 0.3:
                 return "Breakeven Stop 🛡️"
                 
-        # Spot Fallback Stop Loss (Max 5.0%)
-        # Spot uses a wider floor to prevent whipsaws.
-        stop_loss_threshold = 5.0
+        # Spot Fallback Stop Loss
+        # ใช้ ATR คุมระยะตัดขาดทุน แต่ไม่ให้เกิน 3.0%
+        stop_loss_threshold = min(3.0, atr_percent * 2.0)
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"

@@ -182,7 +182,7 @@ def test_execute_futures_trade_long_close_pnl(mock_calculate_pnl, mock_create_tr
     execute_futures_trade(state_manager, "BTCUSDT", "SELL", "LONG", 1.0, 50000.0, is_paper=True)
     
     # Should call calculate_pnl with position_side="LONG" and market_type="futures"
-    mock_calculate_pnl.assert_called_once_with(45000.0, 50000.0, 1.0, position_side="LONG", market_type="futures")
+    mock_calculate_pnl.assert_called_once_with(45000.0, 50000.0, 1.0, position_side="LONG", market_type="futures", symbol="BTCUSDT")
     
     # Check what was saved to DB
     call_kwargs = mock_create_trade.call_args[1]
@@ -207,7 +207,7 @@ def test_execute_futures_trade_short_close_pnl(mock_calculate_pnl, mock_create_t
     execute_futures_trade(state_manager, "BTCUSDT", "BUY", "SHORT", 1.0, 40000.0, is_paper=True)
     
     # Should call calculate_pnl with position_side="SHORT" and market_type="futures"
-    mock_calculate_pnl.assert_called_once_with(45000.0, 40000.0, 1.0, position_side="SHORT", market_type="futures")
+    mock_calculate_pnl.assert_called_once_with(45000.0, 40000.0, 1.0, position_side="SHORT", market_type="futures", symbol="BTCUSDT")
     
     # Check what was saved to DB
     call_kwargs = mock_create_trade.call_args[1]

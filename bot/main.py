@@ -6,7 +6,7 @@ from .state import StateManager
 from .database import setup_logging
 from .logger import log_msg
 from .binance_client import get_historical_klines, futures_get_klines, twm, futures_set_leverage, futures_set_margin_type, futures_set_position_mode
-from .news_worker import news_updater_loop
+from .market_context_worker import market_context_updater_loop
 from .websocket_manager import WebSocketManager
 from .webhook_notifier import update_bot_state
 from .risk_manager import calculate_pnl
@@ -45,7 +45,7 @@ def main():
         state_manager_futures.set_kline_buffer(sym, f_klines)
         
     # Start background threads (Shared news)
-    threading.Thread(target=news_updater_loop, args=(state_manager_spot, state_manager_futures), daemon=True).start()
+    threading.Thread(target=market_context_updater_loop, args=(state_manager_spot, state_manager_futures), daemon=True).start()
     
     # Start auto-sync background thread
     def auto_sync_loop():

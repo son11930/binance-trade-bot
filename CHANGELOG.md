@@ -1,3 +1,15 @@
+## [4.6.0] - 2026-06-22
+### Data Ingestion Pipeline & Intelligent Prompts
+**English:**
+- **3-Layer Ingestion Pipeline**: Designed a new scalable architecture for aggregating multiple news sources (CryptoPanic, RSS, Twitter) without overwhelming AI token limits.
+- **Alternative Data Integration**: Planned the integration of Funding Rates, Open Interest, Long/Short Ratio, and Fear & Greed Index to improve Market Context evaluation.
+- **AI Prompt Upgrade**: Upgraded the `ai_engine.py` prompt schema to support Quantitative Analysis with new Data metrics and `LONG`, `SHORT`, `HOLD` output decisions.
+
+**Thai (ภาษาไทย):**
+- **สถาปัตยกรรมดึงข้อมูล 3 ชั้น**: ออกแบบระบบดึงข่าวใหม่ทั้งหมดเพื่อรองรับหลายแหล่ง (CryptoPanic, RSS, Twitter) โดยมีระบบคัดกรอง Impact Score เพื่อประหยัดค่าโควต้า Token ของ AI
+- **ข้อมูลวิเคราะห์เชิงลึก**: เพิ่มการดึงข้อมูล Funding Rate, อัตราส่วน Long/Short, และดัชนี Fear & Greed เข้ามาให้ AI ตัดสินใจได้แม่นยำขึ้น
+- **อัปเกรดความฉลาด AI**: ปรับ Prompt ให้ AI สวมบทบาทเป็นนักวิเคราะห์เชิงปริมาณ (Quant) ให้รู้จักมองหาความขัดแย้งของตลาด และตัดสินใจออกคำสั่ง `LONG`, `SHORT`, `HOLD` ให้ฝั่ง Futures ได้
+
 ## [4.5.0] - 2026-06-22
 ### Exact Binance Commission & Dynamic Fee Integration
 **English:**

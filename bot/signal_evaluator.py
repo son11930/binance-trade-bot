@@ -21,11 +21,14 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "atr": atr_val,
             "bb_width": bb_width_val,
             "dist_sma_200": dist_sma_200_val,
-            "vol_surge_multiplier": vol_surge_val
+            "vol_surge_multiplier": vol_surge_val,
+            "funding_rate": state_manager.get_funding_rate(symbol),
+            "long_short_ratio": state_manager.get_long_short_ratio(symbol),
+            "fear_greed_index": state_manager.fear_greed_index
         }
         
         latest_news = state_manager.latest_news
-        ai_result = analyze_sentiment(latest_news, symbol, tech_data)
+        ai_result = analyze_sentiment(latest_news, symbol, tech_data, market_type='futures')
         
         if not isinstance(ai_result, dict):
             log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting futures trade.")
@@ -158,11 +161,14 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "atr": atr_val,
             "bb_width": bb_width_val,
             "dist_sma_200": dist_sma_200_val,
-            "vol_surge_multiplier": vol_surge_val
+            "vol_surge_multiplier": vol_surge_val,
+            "funding_rate": state_manager.get_funding_rate(symbol),
+            "long_short_ratio": state_manager.get_long_short_ratio(symbol),
+            "fear_greed_index": state_manager.fear_greed_index
         }
         
         latest_news = state_manager.latest_news
-        ai_result = analyze_sentiment(latest_news, symbol, tech_data)
+        ai_result = analyze_sentiment(latest_news, symbol, tech_data, market_type='spot')
         
         if not isinstance(ai_result, dict):
             log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting trade.")

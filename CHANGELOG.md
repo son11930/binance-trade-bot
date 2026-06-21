@@ -1,3 +1,15 @@
+## [4.5.0] - 2026-06-22
+### Exact Binance Commission & Dynamic Fee Integration
+**English:**
+- **Dynamic Commission Fetching**: Replaced hardcoded default fees with real-time fee rate fetching from the Binance API (`get_cached_spot_fee`, `get_cached_futures_fee`).
+- **Exact Ledger Syncing**: The `futures_place_order` execution now pulls the exact executed `avgPrice` and `commission` directly from the account ledger (`futures_account_trades`), eliminating PnL tracking drift over time.
+- **Fail-Safe Caching**: Fee rates are cached locally for 1 hour to prevent API rate-limit exhaustion, automatically falling back to industry defaults (0.1% Spot / 0.05% Futures) during network failures.
+
+**Thai (ภาษาไทย):**
+- **ดึงค่าธรรมเนียมจริง (Dynamic Fees)**: ยกเลิกการล็อคค่าธรรมเนียมตายตัว และเปลี่ยนไปดึงเรทค่าธรรมเนียม (Fee Rate) จากบัญชี Binance จริงแบบเรียลไทม์
+- **บันทึกราคาและค่าธรรมเนียมเป๊ะ 100%**: ปรับให้บอทดึงประวัติสมุดบัญชี (`futures_account_trades`) ทันทีที่ออเดอร์จับคู่สำเร็จ เพื่อดึงราคาเฉลี่ย (`avgPrice`) และค่าต๋งจริงมาบันทึก แก้ปัญหาการคำนวณกำไร/ขาดทุน (PnL) คลาดเคลื่อน
+- **ระบบ Cache สำรอง**: บอทจะจำเรทค่าธรรมเนียมไว้ 1 ชั่วโมงเพื่อไม่ให้กินโควต้า API Binance และมีระบบดึงค่ามาตรฐานกลับมาใช้ชั่วคราวหากเชื่อมต่อล้มเหลว
+
 ## [4.4.0] - 2026-06-22
 ### Dual-Engine Spot & Futures Architecture Decoupling
 **English:**

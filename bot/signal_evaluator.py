@@ -379,6 +379,10 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         log_msg("DEBUG", f"⏳ {symbol} in execution cooldown. Skipping Futures {signal} signal.")
                         return
 
+                if state_manager.live_usdt_balance < 5.0:
+                    log_msg("WARNING", f"⚠️ Insufficient Futures balance ({state_manager.live_usdt_balance}) for {symbol}. Skipping AI Evaluation.", market_type='futures')
+                    return
+
                 update_bot_state(state_manager, f"{signal} {position_side} Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol, market_type='futures')
                 
                 latest_kline = df.iloc[-1]

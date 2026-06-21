@@ -120,7 +120,7 @@ def futures_get_live_balance(asset: str = "USDT") -> float | None:
         futures_account = client.futures_account()
         for a in futures_account.get('assets', []):
             if a['asset'] == asset:
-                return float(a['marginBalance'])
+                return float(a['availableBalance'])
         return 0.0
     except Exception as e:
         log_msg("ERROR", f"Error fetching futures balance for {asset}: {sanitize_error(e)}", market_type='futures')
@@ -331,6 +331,9 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     step_size = futures_get_step_size(symbol)
     rounded_quantity = round_step_size(quantity, step_size)
     
+    if rounded_quantity <= 0:
+        raise Exception("APIError(code=-4003): Quantity less than or equal to zero after rounding.")
+        
     try:
         order = client.futures_create_order(
             symbol=symbol,

@@ -2,6 +2,7 @@ import pandas as pd
 from datetime import datetime, timezone
 import json
 import traceback
+from typing import Dict
 from concurrent.futures import ThreadPoolExecutor
 
 from .state import StateManager

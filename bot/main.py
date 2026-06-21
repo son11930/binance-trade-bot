@@ -45,7 +45,7 @@ def main():
         state_manager_futures.set_kline_buffer(sym, f_klines)
         
     # Start background threads (Shared news)
-    threading.Thread(target=news_updater_loop, args=(state_manager_spot,), daemon=True).start()
+    threading.Thread(target=news_updater_loop, args=(state_manager_spot, state_manager_futures), daemon=True).start()
     
     # Start auto-sync background thread
     def auto_sync_loop():

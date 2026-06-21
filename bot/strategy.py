@@ -139,14 +139,14 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
                 break
 
     near_miss_reason = ""
-    if recent_macd_cross and price > sma_200 * 0.995:
+    if recent_macd_cross and price > sma_200 * 0.995 and price > latest['EMA_50']:
         if rsi_curr >= rsi_limit:
             near_miss_reason = f"RSI too high ({rsi_curr:.1f} >= {rsi_limit})"
         elif vol_curr <= vol_sma * 0.7:
             near_miss_reason = f"Volume too low ({vol_curr:.1f} <= {vol_sma * 0.7:.1f})"
 
-    # BUY: MACD crossed ABOVE Signal Line in last 8 periods AND Price > SMA 200 (with 0.5% buffer) AND RSI < dynamic limit AND Volume > SMA * 0.7
-    if recent_macd_cross and price > sma_200 * 0.995 and rsi_curr < rsi_limit and vol_curr > vol_sma * 0.7:
+    # BUY: MACD crossed ABOVE Signal Line in last 8 periods AND Price > SMA 200 AND Price > EMA 50 AND RSI < dynamic limit AND Volume > SMA * 0.7
+    if recent_macd_cross and price > sma_200 * 0.995 and price > latest['EMA_50'] and rsi_curr < rsi_limit and vol_curr > vol_sma * 0.7:
         return SignalPlan(
             action="BUY",
             strategy_used="TREND_MACD",
@@ -156,8 +156,9 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
             near_miss_reason=""
         )
         
-    # SELL: MACD is BELOW Signal Line
-    if macd_curr < sig_curr:
+    macd_cross_down = macd_curr < sig_curr and macd_prev >= sig_prev
+    # SELL: Exit if MACD crosses down clearly and we are overbought, OR if price breaks below EMA_50 (trend breakdown)
+    if (macd_cross_down and rsi_curr > 60) or price < latest['EMA_50']:
         return SignalPlan(
             action="SELL",
             strategy_used="TREND_MACD",

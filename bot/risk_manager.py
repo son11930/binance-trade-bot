@@ -68,19 +68,26 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
         # ATR Trailing Stop (Chandelier Exit)
-        # 1. We must be in profit by at least 1.5x ATR (scaled by leverage for PNL)
-        min_profit_to_trail = atr_percent * 1.5 * (FUTURES_LEVERAGE if market_type == 'futures' else 1.0)
+        # 1. We must be in profit to activate the trailing stop
+        # For Spot, we want to lock in at least some profit, so trailing_drop must be < min_profit
+        min_profit_to_trail = atr_percent * 2.0 * (FUTURES_LEVERAGE if market_type == 'futures' else 1.0)
         
         if max_profit_percent >= min_profit_to_trail:
-            # 2. Trail by 2.0x ATR raw price drop
-            trailing_drop_raw_percent = atr_percent * 2.0
+            # 2. Trail by 1.0x ATR raw price drop (so we lock in at least 1.0x ATR profit)
+            trailing_drop_raw_percent = atr_percent * 1.0
             if hp_drop_percent >= trailing_drop_raw_percent:
                 return "ATR Trailing Stop 🛡️"
             
-        stop_loss_threshold = min(stop_loss_percent, atr_percent * 1.5)
-        # Use FUTURES_LEVERAGE equivalent if futures so we don't hit fallback immediately?
+        # Fallback Stop Loss
         if market_type == 'futures':
-            stop_loss_threshold *= FUTURES_LEVERAGE
+            stop_loss_threshold = atr_percent * 1.5 * FUTURES_LEVERAGE
+            # Cap maximum futures stop loss
+            stop_loss_threshold = min(stop_loss_percent, stop_loss_threshold)
+        else:
+            # For Spot, volatility is high, prevent getting chopped out by tight ATR
+            # Enforce a minimum stop loss of 3.0% or 2.0x ATR, whichever is higher, but capped by the user's config
+            stop_loss_threshold = max(3.0, atr_percent * 2.0)
+            stop_loss_threshold = min(stop_loss_percent, stop_loss_threshold)
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"

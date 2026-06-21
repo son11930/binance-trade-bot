@@ -199,7 +199,10 @@ class StateManager:
                             # Aggregate all partial fills that happened after the opening trade
                             for bt in reversed(b_trades):
                                 bt_ts = datetime.fromtimestamp(bt['time'] / 1000.0, timezone.utc)
-                                if bt['side'] == close_side and bt_ts > last_trade.timestamp:
+                                last_trade_ts = last_trade.timestamp
+                                if last_trade_ts.tzinfo is None:
+                                    last_trade_ts = last_trade_ts.replace(tzinfo=timezone.utc)
+                                if bt['side'] == close_side and bt_ts > last_trade_ts:
                                     agg_qty += float(bt['qty'])
                                     agg_pnl += float(bt.get('realizedPnl', 0))
                                     agg_fee += float(bt['commission'])

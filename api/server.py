@@ -72,7 +72,8 @@ class ConnectionManager:
         for ws, is_auth in list(self.active_connections.items()):
             if is_auth:
                 try:
-                    await ws.send_json(message)
+                    import asyncio
+                    await asyncio.wait_for(ws.send_json(message), timeout=1.0)
                 except Exception:
                     self.disconnect(ws)
 

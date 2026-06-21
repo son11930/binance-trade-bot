@@ -70,7 +70,7 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
         # ATR Trailing Stop (Chandelier Exit)
         # 1. We must be in profit to activate the trailing stop
         # For Spot, we want to lock in at least some profit, so trailing_drop must be < min_profit
-        min_profit_to_trail = atr_percent * 2.0 * (FUTURES_LEVERAGE if market_type == 'futures' else 1.0)
+        min_profit_to_trail = atr_percent * 1.5 * (FUTURES_LEVERAGE if market_type == 'futures' else 1.0)
         
         if max_profit_percent >= min_profit_to_trail:
             # 2. Trail by 1.0x ATR raw price drop (so we lock in at least 1.0x ATR profit)
@@ -78,11 +78,17 @@ def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percen
             if hp_drop_percent >= trailing_drop_raw_percent:
                 return "ATR Trailing Stop 🛡️"
             
+        # Breakeven Stop
+        # If profit reaches 4%, we guarantee at least 1% profit.
+        if max_profit_percent >= 4.0:
+            if profit_percent <= 1.0:
+                return "Breakeven Stop 🛡️"
+                
         # Fallback Stop Loss
         if market_type == 'futures':
             stop_loss_threshold = atr_percent * 1.5 * FUTURES_LEVERAGE
-            # Cap maximum futures stop loss
-            stop_loss_threshold = min(stop_loss_percent, stop_loss_threshold)
+            # Cap maximum futures stop loss, scaling by leverage
+            stop_loss_threshold = min(stop_loss_percent * FUTURES_LEVERAGE, stop_loss_threshold)
         else:
             # For Spot, volatility is high, prevent getting chopped out by tight ATR
             # Enforce a minimum stop loss of 3.0% or 2.0x ATR, whichever is higher, but capped by the user's config

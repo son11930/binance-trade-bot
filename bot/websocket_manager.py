@@ -1,14 +1,15 @@
 import pandas as pd
 from datetime import datetime, timezone
-from typing import Dict
+import json
+import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from .state import StateManager
 from .config import STOP_LOSS_PERCENT, PAPER_TRADING
-from .risk_manager import check_risk_management
-from .trade_executor import execute_trade
-from .signal_evaluator import evaluate_strategy_for_symbol
+from .risk_manager import check_spot_risk_management, check_futures_risk_management
+from .trade_executor import execute_trade, execute_futures_trade
+from .signal_evaluator import evaluate_strategy_for_symbol, evaluate_futures_strategy_for_symbol
 from .logger import log_msg
-from concurrent.futures import ThreadPoolExecutor
 
 _execution_pool = ThreadPoolExecutor(max_workers=10)
 
@@ -91,7 +92,7 @@ class WebSocketManager:
                         elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
                             atr_value = df.iloc[-2]['ATR']
                         
-                    rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT)
+                    rm_signal = check_spot_risk_management(state, atr_value, STOP_LOSS_PERCENT)
                     if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")
@@ -131,7 +132,7 @@ class WebSocketManager:
                         elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
                             atr_value = df.iloc[-2]['ATR']
                         
-                    rm_signal = check_risk_management(state, atr_value, STOP_LOSS_PERCENT, market_type='futures')
+                    rm_signal = check_futures_risk_management(state, atr_value, STOP_LOSS_PERCENT)
                     if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 FUTURES {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")

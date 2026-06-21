@@ -20,7 +20,7 @@ def sanitize_dict(d, depth=0):
     return d
 
 # Use a single executor for webhooks to prevent thread explosion
-_webhook_executor = ThreadPoolExecutor(max_workers=5)
+_webhook_executor = ThreadPoolExecutor(max_workers=10)
 # Note: we will check _webhook_executor._work_queue.qsize() to prevent queue buildup
 
 def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
@@ -70,23 +70,19 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     }
     
     def _send():
-        import time
         headers = {}
         from urllib.parse import urlparse
         parsed = urlparse(WEBHOOK_URL)
         if parsed.hostname in ["localhost", "127.0.0.1", "45.136.254.62"] and parsed.path.endswith("/api/internal/broadcast"):
             headers["Authorization"] = f"Bearer {WEBHOOK_TOKEN}"
             
-        for attempt in range(3):
-            try:
-                response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=10)
-                response.raise_for_status()
-                break
-            except Exception as e:
-                if attempt == 2:
-                    log_msg("WARNING", f"Webhook delivery failed after 3 attempts: {e}")
-                else:
-                    time.sleep(2)
+        try:
+            response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=3)
+            response.raise_for_status()
+        except Exception as e:
+            # We don't retry because state broadcasts are idempotent and a new one will arrive shortly anyway.
+            # Retrying old prices blocks the queue and causes the 20-second lag symptom.
+            pass
             
     # Protect against unbounded queue growth (DoS mitigation)
     if _webhook_executor._work_queue.qsize() > 50:

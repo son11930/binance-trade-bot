@@ -1,3 +1,17 @@
+## [4.4.0] - 2026-06-22
+### Dual-Engine Spot & Futures Architecture Decoupling
+**English:**
+- **Absolute Decoupling**: Completely separated the core logic for Spot and Futures markets into independent pipelines to eliminate cross-contamination bugs.
+- **Independent State Management**: Created distinct `sync_spot_state_with_binance` and `sync_futures_state_with_binance` flows, ensuring Spot portfolios are never tangled with Futures margin balances.
+- **Independent Risk Managers**: Decoupled `calculate_pnl` and `check_risk_management` into specific Spot and Futures variants, accurately handling ROE, Leverage, Long/Short side checks, and Trailing Stops respectively.
+- **TDD Enforcement**: Added comprehensive test suites in `tests/test_risk_manager.py` and `tests/test_state.py` validating the decoupled dual-engine logic.
+
+**Thai (ภาษาไทย):**
+- **แยกระบบ 2 เครื่องยนต์**: ทำการผ่าตัดโค้ดแยกระบบคำนวณของ Spot และ Futures ออกจากกันอย่างเด็ดขาด เพื่อป้องกันบัคข้ามสาย
+- **แยกระบบเช็คยอดเงิน**: แยกฟังก์ชันอัพเดทสถานะพอร์ต Spot และ Futures เพื่อไม่ให้ยอดเงิน Margin หรือสถานะ Long/Short มาปนเปกับฝั่งถือเหรียญจริง
+- **ระบบคุมความเสี่ยงแยกส่วน**: ตัวจัดการความเสี่ยง (Risk Manager) ถูกแยกส่วนให้คำนวณ PNL, จุด Stop Loss, Break-Even, และ Trailing Stop สำหรับแต่ละฝั่งโดยเฉพาะ (ฝั่ง Futures จะรองรับระบบตัวคูณ Leverage และทิศทาง Long/Short สมบูรณ์)
+- **เพิ่มระบบสแกนโค้ด (TDD)**: เขียน Unit Test หุ้มฟังก์ชันที่แยกออกมาใหม่ทั้งหมดเพื่อให้แน่ใจว่าทำงานได้แม่นยำ 100%
+
 ## [4.3.6] - 2026-06-21
 ### Groq API Integration & Advanced Model Routing
 **English:**

@@ -363,7 +363,7 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
             "parsed_commission_asset": "USDT"
         }
     except Exception as e:
-        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}")
+        log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}", market_type="futures")
         raise Exception(f"Binance API Execution Error: {sanitize_error(e)}")
 from dataclasses import replace
 import logging

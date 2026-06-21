@@ -231,7 +231,7 @@ class StateManager:
                                   
                     if is_open:
                         log_msg("WARNING", f"Missing native close trade detected for {symbol} (Futures). Syncing state.", market_type='futures')
-                        b_trades = client.futures_account_trades(symbol=symbol, limit=20)
+                        b_trades = client.futures_account_trades(symbol=symbol, limit=100)
                         close_side = "SELL" if last_trade.position_side == "LONG" else "BUY"
                         
                         agg_qty = 0.0

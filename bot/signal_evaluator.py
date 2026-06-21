@@ -97,6 +97,17 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             
             from .config import FUTURES_LEVERAGE
             notional_value = trade_margin * FUTURES_LEVERAGE
+            
+            # Ensure notional_value is at least 21 USDT to satisfy Binance API minimums
+            if notional_value < 21.0:
+                required_margin = 21.0 / max(FUTURES_LEVERAGE, 1)
+                if total_margin >= required_margin:
+                    trade_margin = required_margin
+                    notional_value = 21.0
+                else:
+                    log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance to meet Binance min notional of 21 USDT for {symbol}. Need {required_margin:.2f} USDT, have {total_margin:.2f}. Aborting.", market_type="futures")
+                    return
+                    
             qty = notional_value / current_price
             
             from .trade_executor import execute_futures_trade

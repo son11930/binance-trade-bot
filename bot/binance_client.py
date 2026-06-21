@@ -126,6 +126,45 @@ def futures_get_live_balance(asset: str = "USDT") -> float | None:
         log_msg("ERROR", f"Error fetching futures balance for {asset}: {sanitize_error(e)}", market_type='futures')
         return None
 
+_spot_fees = {}
+_spot_fee_ts = {}
+_futures_fees = {}
+_futures_fee_ts = {}
+
+def get_cached_spot_fee(symbol: str) -> float:
+    now = time.time()
+    if symbol in _spot_fees and now - _spot_fee_ts.get(symbol, 0) < 3600:
+        return _spot_fees[symbol]
+    try:
+        if PAPER_TRADING:
+            return 0.001
+        res = client.get_trade_fee(symbol=symbol)
+        if res and len(res) > 0:
+            fee = float(res[0].get('takerCommission', 0.001))
+            _spot_fees[symbol] = fee
+            _spot_fee_ts[symbol] = now
+            return fee
+    except Exception as e:
+        log_msg("WARNING", f"Could not fetch spot fee for {symbol}, using default 0.001: {e}")
+    return 0.001
+
+def get_cached_futures_fee(symbol: str) -> float:
+    now = time.time()
+    if symbol in _futures_fees and now - _futures_fee_ts.get(symbol, 0) < 3600:
+        return _futures_fees[symbol]
+    try:
+        if PAPER_TRADING:
+            return 0.0005
+        res = client.futures_commission_rate(symbol=symbol)
+        if res:
+            fee = float(res.get('takerCommissionRate', 0.0005))
+            _futures_fees[symbol] = fee
+            _futures_fee_ts[symbol] = now
+            return fee
+    except Exception as e:
+        log_msg("WARNING", f"Could not fetch futures fee for {symbol}, using default 0.0005: {sanitize_error(e)}", market_type='futures')
+    return 0.0005
+
 STEP_SIZE_CACHE = {}
 FUTURES_STEP_SIZE_CACHE = {}
 
@@ -342,25 +381,47 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
             type=ORDER_TYPE_MARKET,
             quantity=rounded_quantity
         )
-        # Parse futures order response
         avg_price = float(order.get('avgPrice', 0.0))
+        exec_qty = float(order.get('executedQty', 0.0))
+        commission = 0.0
+        commission_asset = "USDT"
+        
+        # Market orders might not have avgPrice populated yet, or we need exact commission
+        if exec_qty > 0:
+            try:
+                # Query the exact trades for this order to get commission and exact price
+                order_id = order.get('orderId')
+                if order_id:
+                    # Small delay to ensure trades are registered
+                    import time
+                    time.sleep(0.5)
+                    trades = client.futures_account_trades(symbol=symbol, orderId=order_id)
+                    if trades:
+                        commission = sum(float(t['commission']) for t in trades)
+                        # Commission asset is usually the same for all fills in USDT-M futures
+                        commission_asset = trades[0]['commissionAsset']
+                        
+                        # Recalculate exact avg price from fills if Binance didn't provide it
+                        if avg_price == 0.0:
+                            total_cost = sum(float(t['price']) * float(t['qty']) for t in trades)
+                            avg_price = total_cost / exec_qty
+            except Exception as e:
+                log_msg("WARNING", f"Could not fetch exact commission for futures order {order.get('orderId')}: {e}", market_type="futures")
+                
         if avg_price == 0.0:
             avg_price = float(order.get('price', 0.0))
         if avg_price == 0.0:
-            # Market orders return 0 for price and avgPrice might not be populated immediately
             avg_price = futures_get_current_price(symbol)
             
-        exec_qty = float(order.get('executedQty', 0.0))
         if exec_qty == 0.0:
-            # If order just created and not fully processed, fallback to requested qty
             exec_qty = float(order.get('origQty', rounded_quantity))
         
         return {
             **order,
             "parsed_avg_price": avg_price,
             "parsed_exec_qty": exec_qty,
-            "parsed_commission": 0.0, # Commission not returned in futures order response, needs separate query usually
-            "parsed_commission_asset": "USDT"
+            "parsed_commission": commission,
+            "parsed_commission_asset": commission_asset
         }
     except Exception as e:
         log_msg("ERROR", f"Failed to execute futures trade for {symbol}: {sanitize_error(e)}", market_type="futures")

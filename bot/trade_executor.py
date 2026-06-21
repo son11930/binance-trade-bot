@@ -35,7 +35,8 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
         if is_paper or commission == 0.0:
-            commission = (exec_qty * avg_price) * 0.001
+            from .binance_client import get_cached_spot_fee
+            commission = (exec_qty * avg_price) * get_cached_spot_fee(symbol)
             commission_asset = "USDT"
         if commission < 0.01 and commission_asset == "USDT":
             commission = 0.01
@@ -53,7 +54,7 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
     state = state_manager.get_state(symbol)
     
     if side == "SELL" and state.buy_price > 0 and exec_qty > 0:
-        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty)
+        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, symbol=symbol)
             
     trade = TradeRepository.create_trade(
         symbol=symbol, side=side, price=avg_price, quantity=exec_qty, 
@@ -111,7 +112,8 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
         if is_paper or commission == 0.0:
-            commission = (exec_qty * avg_price) * 0.0005
+            from .binance_client import get_cached_futures_fee
+            commission = (exec_qty * avg_price) * get_cached_futures_fee(symbol)
             commission_asset = "USDT"
         if commission < 0.01 and commission_asset == "USDT":
             commission = 0.01
@@ -131,9 +133,9 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
     
     # Calculate PNL if closing a position
     if positionSide == "LONG" and side == "SELL" and state.buy_price > 0 and exec_qty > 0:
-        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, position_side="LONG", market_type="futures")
+        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, position_side="LONG", market_type="futures", symbol=symbol)
     elif positionSide == "SHORT" and side == "BUY" and state.buy_price > 0 and exec_qty > 0:
-        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, position_side="SHORT", market_type="futures")
+        pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, position_side="SHORT", market_type="futures", symbol=symbol)
 
     trade = TradeRepository.create_trade(
         symbol=symbol, side=side, price=avg_price, quantity=exec_qty, 

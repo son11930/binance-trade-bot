@@ -3,10 +3,14 @@ import math
 from .state import SymbolState
 from .config import FUTURES_LEVERAGE
 
-def calculate_spot_pnl(entry_price: float, current_price: float, quantity: float, fee_rate: float = 0.001) -> tuple[float, float]:
+def calculate_spot_pnl(entry_price: float, current_price: float, quantity: float, fee_rate: float | None = None, symbol: str = "") -> tuple[float, float]:
     """Returns (pnl_amount, pnl_percent) for Spot."""
     if entry_price <= 0 or quantity <= 0:
         return 0.0, 0.0
+    
+    if fee_rate is None:
+        from .binance_client import get_cached_spot_fee
+        fee_rate = get_cached_spot_fee(symbol) if symbol else 0.001
         
     fee = (entry_price + current_price) * quantity * fee_rate
     pnl_amount = ((current_price - entry_price) * quantity) - fee
@@ -15,11 +19,15 @@ def calculate_spot_pnl(entry_price: float, current_price: float, quantity: float
         
     return pnl_amount, pnl_percent
 
-def calculate_futures_pnl(entry_price: float, current_price: float, quantity: float, position_side: str = "LONG", fee_rate: float = 0.0005) -> tuple[float, float]:
+def calculate_futures_pnl(entry_price: float, current_price: float, quantity: float, position_side: str = "LONG", fee_rate: float | None = None, symbol: str = "") -> tuple[float, float]:
     """Returns (pnl_amount, pnl_percent) for Futures. pnl_percent reflects return on margin (ROE)."""
     if entry_price <= 0 or quantity <= 0:
         return 0.0, 0.0
         
+    if fee_rate is None:
+        from .binance_client import get_cached_futures_fee
+        fee_rate = get_cached_futures_fee(symbol) if symbol else 0.0005
+    
     fee = (entry_price + current_price) * quantity * fee_rate
     
     if position_side == "SHORT":
@@ -32,20 +40,20 @@ def calculate_futures_pnl(entry_price: float, current_price: float, quantity: fl
         
     return pnl_amount, pnl_percent
 
-def calculate_pnl(entry_price: float, current_price: float, quantity: float, fee_rate: float = 0.001, position_side: str = "LONG", market_type: str = "spot") -> tuple[float, float]:
+def calculate_pnl(entry_price: float, current_price: float, quantity: float, fee_rate: float | None = None, position_side: str = "LONG", market_type: str = "spot", symbol: str = "") -> tuple[float, float]:
     """Legacy wrapper for calculate_pnl to maintain compatibility if called from elsewhere."""
     if market_type == "futures":
-        return calculate_futures_pnl(entry_price, current_price, quantity, position_side, 0.0005)
+        return calculate_futures_pnl(entry_price, current_price, quantity, position_side, fee_rate, symbol=symbol)
     else:
-        return calculate_spot_pnl(entry_price, current_price, quantity, fee_rate)
+        return calculate_spot_pnl(entry_price, current_price, quantity, fee_rate, symbol=symbol)
 
 def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float) -> str | None:
     if state.position > 0 and state.buy_price > 0:
         current_price = state.last_price
         
-        _, profit_percent = calculate_spot_pnl(state.buy_price, current_price, 1.0)
+        _, profit_percent = calculate_spot_pnl(state.buy_price, current_price, 1.0, symbol=state.symbol)
         best_price = state.highest_price if state.highest_price > 0 else current_price
-        _, max_profit_percent = calculate_spot_pnl(state.buy_price, best_price, 1.0)
+        _, max_profit_percent = calculate_spot_pnl(state.buy_price, best_price, 1.0, symbol=state.symbol)
         
         hp_drop_percent = ((best_price - current_price) / best_price) * 100 if best_price > 0 else 0
         
@@ -87,14 +95,14 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
     if state.position > 0 and state.buy_price > 0:
         current_price = state.last_price
         
-        _, profit_percent = calculate_futures_pnl(state.buy_price, current_price, 1.0, position_side=state.position_side or "LONG")
+        _, profit_percent = calculate_futures_pnl(state.buy_price, current_price, 1.0, position_side=state.position_side or "LONG", symbol=state.symbol)
         
         if state.position_side == "SHORT":
             best_price = state.lowest_price if state.lowest_price > 0 else current_price
         else:
             best_price = state.highest_price if state.highest_price > 0 else current_price
 
-        _, max_profit_percent = calculate_futures_pnl(state.buy_price, best_price, 1.0, position_side=state.position_side or "LONG")
+        _, max_profit_percent = calculate_futures_pnl(state.buy_price, best_price, 1.0, position_side=state.position_side or "LONG", symbol=state.symbol)
         
         if state.position_side == "SHORT":
             hp_drop_percent = ((current_price - best_price) / best_price) * 100 if best_price > 0 else 0

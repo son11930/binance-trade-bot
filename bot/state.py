@@ -297,7 +297,14 @@ class StateManager:
                             db.commit()
                             log_msg("INFO", f"Synced missing close trade for {symbol} at avg price ~{last_price}", market_type='futures')
                         else:
-                            log_msg("ERROR", f"Could not find matching close trade on Binance for {symbol}!", market_type='futures')
+                            log_msg("ERROR", f"Could not find matching close trade on Binance for {symbol}! Inserting fallback to prevent loop.", market_type='futures')
+                            new_t = Trade(
+                                symbol=symbol, side=close_side, price=last_trade.price, quantity=last_trade.quantity, market_type='futures',
+                                position_side=last_trade.position_side, ai_reasoning="Binance Native SL/TP (Fallback - Not Found)",
+                                pnl_amount=0.0, pnl_percent=0.0, fee=0.0, fee_asset='USDT', timestamp=datetime.now(timezone.utc)
+                            )
+                            db.add(new_t)
+                            db.commit()
                 except Exception as e:
                     log_msg("ERROR", f"Error syncing missing trade for {symbol}: {e}", market_type='futures')
                 finally:

@@ -350,8 +350,8 @@
         let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
         let reconnectTimeout = 1000;
         let dataStore = {
-            spot: { trades: [], logs: [], stats: {}, status: null, globalConfig: null },
-            futures: { trades: [], logs: [], stats: {}, status: null, globalConfig: null }
+            spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
+            futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
         };
         let isSpotPaused = false;
         let isFuturesPaused = false;

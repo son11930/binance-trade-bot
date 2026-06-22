@@ -1,5 +1,5 @@
 import time
-import logging
+from .logger import log_msg
 import concurrent.futures
 from .config import SYMBOLS
 from .state import StateManager
@@ -24,7 +24,7 @@ def update_symbol_data(symbol: str, state_managers: list):
         sm.set_order_book(symbol, walls)
 
 def market_context_updater_loop(state_managers: list):
-    logging.info("Starting Market Context Worker...")
+    log_msg("INFO", "Starting Market Context Worker...")
     
     UPDATE_NEWS_INTERVAL = 12 # 12 * 300s = 3600s (1 hour)
     iteration = 0
@@ -44,5 +44,5 @@ def market_context_updater_loop(state_managers: list):
             iteration += 1
             time.sleep(300)  # Update every 5 minutes
         except Exception as e:
-            logging.error(f"Error in market_context_updater_loop: {e}")
+            log_msg("ERROR", f"Error in market_context_updater_loop: {e}")
             time.sleep(60)

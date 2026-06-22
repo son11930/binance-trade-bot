@@ -1,6 +1,6 @@
 import requests
 import time
-import logging
+from .logger import log_msg
 
 def fetch_funding_rate(symbol: str) -> float:
     try:
@@ -12,7 +12,7 @@ def fetch_funding_rate(symbol: str) -> float:
             return float(data.get("lastFundingRate", 0.0))
         return 0.0
     except Exception as e:
-        logging.error(f"Error fetching funding rate for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching funding rate for {symbol}: {e}")
         return 0.0
 
 def fetch_long_short_ratio(symbol: str) -> float:
@@ -25,7 +25,7 @@ def fetch_long_short_ratio(symbol: str) -> float:
             return float(data[-1].get("longShortRatio", 1.0))
         return 1.0
     except Exception as e:
-        logging.error(f"Error fetching long/short ratio for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching long/short ratio for {symbol}: {e}")
         return 1.0
 
 def fetch_liquidations(symbol: str) -> dict:
@@ -36,7 +36,7 @@ def fetch_liquidations(symbol: str) -> dict:
         data = response.json()
         
         if not isinstance(data, list):
-            logging.error(f"Invalid liquidations data format for {symbol}: expected list, got {type(data)}")
+            log_msg("ERROR", f"Invalid liquidations data format for {symbol}: expected list, got {type(data)}")
             return {"long_liq_usd": 0.0, "short_liq_usd": 0.0}
             
         long_liq = 0.0
@@ -57,7 +57,7 @@ def fetch_liquidations(symbol: str) -> dict:
                 short_liq += usd_value
         return {"long_liq_usd": round(long_liq, 2), "short_liq_usd": round(short_liq, 2)}
     except Exception as e:
-        logging.error(f"Error fetching liquidations for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching liquidations for {symbol}: {e}")
         return {"long_liq_usd": 0.0, "short_liq_usd": 0.0}
 
 def fetch_order_book_walls(symbol: str) -> dict:
@@ -68,7 +68,7 @@ def fetch_order_book_walls(symbol: str) -> dict:
         data = response.json()
         
         if not isinstance(data, dict):
-            logging.error(f"Invalid depth data format for {symbol}: expected dict, got {type(data)}")
+            log_msg("ERROR", f"Invalid depth data format for {symbol}: expected dict, got {type(data)}")
             return {"bid_volume": 0.0, "ask_volume": 0.0, "wall_type": "NONE"}
             
         bids = data.get("bids", [])
@@ -91,5 +91,5 @@ def fetch_order_book_walls(symbol: str) -> dict:
             
         return {"bid_volume": round(bid_vol, 2), "ask_volume": round(ask_vol, 2), "wall_type": wall_type}
     except Exception as e:
-        logging.error(f"Error fetching order book for {symbol}: {e}")
+        log_msg("ERROR", f"Error fetching order book for {symbol}: {e}")
         return {"bid_volume": 0.0, "ask_volume": 0.0, "wall_type": "NONE"}

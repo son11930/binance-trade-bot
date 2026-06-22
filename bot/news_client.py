@@ -1,6 +1,6 @@
 import requests
 import json
-import logging
+from .logger import log_msg
 import html
 import defusedxml.ElementTree as ET_defused
 from .ai_engine import _call_model
@@ -25,7 +25,7 @@ def filter_crypto_news(news_list: list) -> str:
             top_news = [news_list[i] for i in top_indices if i < len(news_list)]
             return "\n".join(top_news) if top_news else "\n".join(news_list[:3])
         except Exception as e:
-            logging.error(f"filter_crypto_news model {m} failed: {e}")
+            log_msg("ERROR", f"filter_crypto_news model {m} failed: {e}")
             continue
     return "\n".join(news_list[:3])
 
@@ -72,5 +72,5 @@ def fetch_crypto_news(limit: int = 5) -> str:
         
         return filter_crypto_news(news_items)
     except Exception as e:
-        logging.error(f"Error fetching news: {e}")
+        log_msg("ERROR", f"Error fetching news: {e}")
         return "No recent news available due to error."

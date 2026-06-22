@@ -38,6 +38,8 @@ class StateManager:
         self._latest_news = "No recent news available."
         self._funding_rates: Dict[str, float] = {}
         self._long_short_ratios: Dict[str, float] = {}
+        self._liquidations: Dict[str, dict] = {}
+        self._order_book_walls: Dict[str, dict] = {}
         self._fear_greed_index: str = "Neutral (50)"
         self._state_file = f"bot_internal_state_{market_type}.json"
         self._load_state()

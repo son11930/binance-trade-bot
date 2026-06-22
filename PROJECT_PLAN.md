@@ -150,3 +150,10 @@ To prevent token limits from blowing up while scaling alternative news sources, 
 1. **Layer 1 (Data Collectors)**: Run asynchronous fetchers (CryptoPanic, RSS, Twitter KOLs) that save raw data to a database.
 2. **Layer 2 (Processing & Filtering)**: Deduplicate stories, tag entities (e.g. BTC, ETH), and assign an `Impact Score` using a fast/cheap local NLP model (e.g. Groq).
 3. **Layer 3 (AI Evaluation)**: The main `ai_engine.py` will query only the top 3 highest-impact news items (in bullet points) for the relevant coin, saving tokens while improving signal-to-noise ratio.
+
+## Phase 17: Stability, Security, and Performance Optimization (Subagent Review)
+Based on direct audits by dedicated Code, Security, and Performance subagents, the architecture requires critical optimization:
+1. **Parallel Execution**: `market_context_worker.py` loops over 20+ symbols synchronously (4 APIs each). This will be refactored to use `concurrent.futures.ThreadPoolExecutor`. In `ai_engine.py`, the `Bull` and `Bear` agents will be executed in parallel.
+2. **Lock Starvation Prevention**: Removed `time.sleep()` from within the `GROQ_API_LOCK` block to prevent thread freezing across the entire application.
+3. **Prompt Injection Defense**: All user/external RSS news data is encapsulated in XML `<news_data>` tags with strict system instructions to ignore embedded commands.
+4. **SRP Refactor**: Decoupling `fetch_crypto_news` into `bot/news_client.py` and API fetchers into `bot/binance_client.py`.

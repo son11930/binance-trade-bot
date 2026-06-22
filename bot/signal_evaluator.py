@@ -24,7 +24,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "vol_surge_multiplier": vol_surge_val,
             "funding_rate": state_manager.get_funding_rate(symbol),
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
-            "fear_greed_index": state_manager.fear_greed_index
+            "liquidations": state_manager.get_liquidations(symbol),
+            "order_book": state_manager.get_order_book(symbol),
+            "fear_greed_index": state_manager.get_fear_greed_index()
         }
         
         latest_news = state_manager.latest_news
@@ -164,7 +166,9 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "vol_surge_multiplier": vol_surge_val,
             "funding_rate": state_manager.get_funding_rate(symbol),
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
-            "fear_greed_index": state_manager.fear_greed_index
+            "liquidations": state_manager.get_liquidations(symbol),
+            "order_book": state_manager.get_order_book(symbol),
+            "fear_greed_index": state_manager.get_fear_greed_index()
         }
         
         latest_news = state_manager.latest_news

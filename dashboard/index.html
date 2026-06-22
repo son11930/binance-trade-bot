@@ -124,6 +124,10 @@
             </div>
 
             <div class="flex items-center space-x-6">
+                <!-- Toggle Pause -->
+                <button id="toggle-pause-btn" onclick="togglePause()" class="px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors">
+                    <span id="pause-text">Loading...</span>
+                </button>
                 <div class="flex items-center space-x-2">
                     <span class="relative flex h-3 w-3">
                       <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-neonGreen opacity-75"></span>
@@ -341,23 +345,68 @@
             return false;
         };
 
-        let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
-        let ws;
-        let reconnectTimeout = 1000;
-        
-        let currentMarket = localStorage.getItem('selectedMarket') || 'spot'; // 'spot' or 'futures'
-
-        // Data Storage
+        let currentMarket = localStorage.getItem('selectedMarket') || 'spot';
+        let ws = null;
         let dataStore = {
-            spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
-            futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
+            spot: { trades: [], logs: [], stats: {}, status: null, globalConfig: null },
+            futures: { trades: [], logs: [], stats: {}, status: null, globalConfig: null }
         };
+        let isSpotPaused = false;
+        let isFuturesPaused = false;
+
+        async function fetchBotControl() {
+            try {
+                const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+                const response = await fetch('/api/bot_control', {
+                    headers: {'Authorization': token ? `Bearer ${token}` : ''}
+                });
+                const data = await response.json();
+                updatePauseUI(data);
+            } catch (e) {
+                console.error("Error fetching bot control:", e);
+            }
+        }
+
+        function updatePauseUI(data) {
+            isSpotPaused = data.spot_paused;
+            isFuturesPaused = data.futures_paused;
+            
+            const btn = document.getElementById('toggle-pause-btn');
+            const textSpan = document.getElementById('pause-text');
+            
+            const isPaused = currentMarket === 'spot' ? isSpotPaused : isFuturesPaused;
+            
+            if (isPaused) {
+                btn.className = "px-4 py-1.5 rounded-full bg-neonRed/20 text-neonRed text-sm font-bold border border-neonRed/50 uppercase tracking-widest hover:bg-neonRed/30 transition-colors animate-pulse";
+                textSpan.innerText = "RESUME " + currentMarket.toUpperCase();
+            } else {
+                btn.className = "px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors";
+                textSpan.innerText = "PAUSE " + currentMarket.toUpperCase();
+            }
+        }
+
+        async function togglePause() {
+            const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+            const targetMarket = currentMarket;
+            const newStatus = targetMarket === 'spot' ? !isSpotPaused : !isFuturesPaused;
+            try {
+                await fetch('/api/toggle_pause', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': token ? `Bearer ${token}` : ''
+                    },
+                    body: JSON.stringify({market: targetMarket, paused: newStatus})
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
 
         function setMarket(market) {
             currentMarket = market;
             localStorage.setItem('selectedMarket', market);
             
-            // UI Toggle
             const spotTab = document.getElementById('tab-spot');
             const futuresTab = document.getElementById('tab-futures');
             
@@ -373,6 +422,8 @@
             document.getElementById('trades-header').innerText = `Execution Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
             document.getElementById('logs-header').innerText = `System Debug Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
             document.getElementById('live-balance-header').innerText = `Live Balance (${market === 'spot' ? 'Spot' : 'Futures'})`;
+            
+            updatePauseUI({spot_paused: isSpotPaused, futures_paused: isFuturesPaused});
             
             if (market === 'futures') {
                 document.getElementById('futures-badge').classList.remove('hidden');
@@ -401,7 +452,6 @@
                 `;
             }
             
-            // Re-render everything
             if (dataStore[market].status) updateStatusUI(dataStore[market].status, dataStore[market].globalConfig);
             if (dataStore[market].trades) updateTradesUI(dataStore[market].trades);
             if (dataStore[market].logs) renderLogsUI(dataStore[market].logs);
@@ -411,6 +461,7 @@
         function startApp() {
             document.getElementById('login-modal').classList.add('hidden');
             document.getElementById('app-container').classList.remove('hidden');
+            fetchBotControl();
             setMarket(currentMarket);
             connectWebSocket();
         }
@@ -422,16 +473,15 @@
             ws = new WebSocket(wsUrl);
 
             ws.onopen = () => {
-                console.log("WebSocket connected.");
-                reconnectTimeout = 1000;
-                ws.send(JSON.stringify({ type: "auth", token: authToken }));
+                const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+                ws.send(JSON.stringify({ type: "auth", token: token }));
             };
 
             ws.onmessage = (event) => {
                 const message = JSON.parse(event.data);
-                const market = message.market_type || 'spot'; // Default to spot if not provided
-                
-                if (message.type === "status_update") {
+                if (message.type === 'bot_control_update') {
+                    updatePauseUI(message.data);
+                } else if (message.type === "status_update") {
                     dataStore['spot'].globalConfig = message.data;
                     dataStore['futures'].globalConfig = message.data;
                     dataStore['spot'].status = message.data.spot;

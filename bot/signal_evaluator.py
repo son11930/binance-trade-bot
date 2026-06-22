@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 from .strategy import apply_indicators, analyze_market
 from .ai_engine import analyze_sentiment
 from .database import sanitize_text
-from .logger import log_msg
+from bot.logger import log_msg
+from bot.state import StateManager, SymbolState
+from bot.control import get_bot_control
 from .config import PAPER_TRADING, COOLDOWN_MINUTES
 from .trade_executor import execute_trade
 from .webhook_notifier import update_bot_state
@@ -13,6 +15,13 @@ from .state import StateManager
 
 def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
+        control = get_bot_control()
+        if control.get("futures_paused"):
+            log_msg("WARNING", f"⏸️ Trading is Paused for Futures. Skipping AI evaluation and order for {symbol}.")
+            update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type='futures')
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            return
+
         from .database import TradeRepository
         lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type='futures')
         
@@ -151,6 +160,13 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
 
 def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
+        control = get_bot_control()
+        if control.get("spot_paused"):
+            log_msg("WARNING", f"⏸️ Trading is Paused for Spot. Skipping AI evaluation and order for {symbol}.")
+            update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type='spot')
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            return
+
         # Calculate holding value dynamically at the time of evaluation, not at queue time
         states = state_manager.get_all_states()
         current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else s.buy_price) for s in states.values() if s.position > 0)

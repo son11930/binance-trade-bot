@@ -147,6 +147,22 @@ class StateManager:
     def set_long_short_ratio(self, symbol: str, ratio: float):
         with self._lock:
             self._long_short_ratios[symbol] = ratio
+
+    def get_liquidations(self, symbol: str) -> dict:
+        with self._lock:
+            return self._liquidations.get(symbol, {})
+
+    def set_liquidations(self, symbol: str, liq: dict):
+        with self._lock:
+            self._liquidations[symbol] = liq
+
+    def get_order_book(self, symbol: str) -> dict:
+        with self._lock:
+            return self._order_book_walls.get(symbol, {})
+
+    def set_order_book(self, symbol: str, ob: dict):
+        with self._lock:
+            self._order_book_walls[symbol] = ob
             
     def get_kline_buffer(self, symbol: str):
         with self._lock:

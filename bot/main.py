@@ -32,6 +32,13 @@ def main():
     state_manager_futures = StateManager(market_type='futures')
     state_manager_futures.sync_state_with_binance(calculate_pnl)
     
+    # Clear any stuck evaluating states from previous crashes
+    for sym in SYMBOLS:
+        for sm in [state_manager_spot, state_manager_futures]:
+            st = sm.get_state(sym)
+            if st.active_strategy in ["EVALUATING", "CLOSING"]:
+                sm.update_state(sym, active_strategy="NONE")
+    
     # Fetch initial history for Spot
     log_msg("INFO", "Fetching initial Spot 15m history...")
     for sym in SYMBOLS:
@@ -45,7 +52,7 @@ def main():
         state_manager_futures.set_kline_buffer(sym, f_klines)
         
     # Start background threads (Shared news)
-    threading.Thread(target=market_context_updater_loop, args=(state_manager_spot, state_manager_futures), daemon=True).start()
+    threading.Thread(target=market_context_updater_loop, args=([state_manager_spot, state_manager_futures],), daemon=True).start()
     
     # Start auto-sync background thread
     def auto_sync_loop():

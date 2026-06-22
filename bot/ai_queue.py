@@ -30,7 +30,11 @@ class AIQueueManager:
             try:
                 task.task_func(*task.args, **task.kwargs)
             except Exception as e:
-                log_msg("ERROR", f"❌ Error in AI Queue task for {task.symbol}: {e}")
+                import traceback
+                log_msg("ERROR", f"❌ Error in AI Queue task for {task.symbol}: {e}\n{traceback.format_exc()}")
+                # Fail-safe: Reset strategy to NONE if task crashed
+                if len(task.args) > 0 and hasattr(task.args[0], 'update_state'):
+                    task.args[0].update_state(task.symbol, active_strategy="NONE")
             finally:
                 self.q.task_done()
                 

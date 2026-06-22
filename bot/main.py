@@ -101,9 +101,10 @@ def main():
 
     def shutdown_handler(signum, frame):
         log_msg("INFO", "Shutting down bot safely, saving states...")
-        twm.stop()
         state_manager_spot._save_state()
         state_manager_futures._save_state()
+        log_msg("INFO", "States saved. Stopping WebSocket...")
+        twm.stop()
         log_msg("INFO", "Bot stopped safely.")
         sys.exit(0)
 

@@ -174,5 +174,6 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
         result["is_error"] = False
         return result
     except Exception as e:
-        logging.error(f"AI Engine failed: {sanitize_error(e)}")
+        from .logger import log_msg
+        log_msg("ERROR", f"AI Engine failed: {sanitize_error(e)}")
         return {"decision": "HOLD", "risk_score": 50, "reason": f"AI Error: {sanitize_error(e)}", "model_used": "NONE", "is_error": True, "committee_debate": {}}

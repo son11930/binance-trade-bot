@@ -178,12 +178,21 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         elif max_profit_percent >= 4.0:
             if profit_percent <= 2.5:
                 return "Step Trailing Stop (Lock 2.5%) 🛡️"
+        elif max_profit_percent >= 3.5:
+            if profit_percent <= 2.5:
+                return "Step Trailing Stop (Lock 2.5%) 🛡️"
         elif max_profit_percent >= 3.0:
+            if profit_percent <= 2.0:
+                return "Step Trailing Stop (Lock 2.0%) 🛡️"
+        elif max_profit_percent >= 2.5:
             if profit_percent <= 1.5:
                 return "Step Breakeven Stop (Lock 1.5%) 🛡️"
-        elif max_profit_percent >= 2.5:
+        elif max_profit_percent >= 2.0:
             if profit_percent <= 1.0:
                 return "Step Breakeven Stop (Lock 1.0%) 🛡️"
+        elif max_profit_percent >= 1.5:
+            if profit_percent <= 0.5:
+                return "Step Breakeven Stop (Lock 0.5%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
         # Cap maximum loss at exactly 5.0% ROE (Hard cap, not multiplied by leverage again)

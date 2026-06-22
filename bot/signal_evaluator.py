@@ -298,6 +298,10 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
                     log_msg("DEBUG", f"⏳ {symbol} in cooldown. Skipping BUY signal.")
                     return
 
+            if state_manager.live_usdt_balance < 10.0:
+                log_msg("WARNING", f"⚠️ Insufficient Spot balance ({state_manager.live_usdt_balance}) to buy {symbol}. Skipping AI Evaluation.", market_type='spot')
+                return
+
             update_bot_state(state_manager, f"BUY Signal on {symbol}. AI evaluating...", thinking=True, symbol=symbol, market_type='spot')
             
             latest_kline = df.iloc[-1]

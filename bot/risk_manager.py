@@ -131,6 +131,10 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # Futures Step-based Trailing / Breakeven Stop Ladder
         # ---------------------------------------------------------
         if max_profit_percent >= 10.0:
+            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 8.0% ROE
+            trailing_drop_raw_percent = atr_percent * 1.5  # Wider trail for big trends
+            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 8.0:
+                return "ATR Trailing Stop (Moonshot) 🚀"
             if profit_percent <= 8.0:
                 return "Step Trailing Stop (Lock 8.0%) 🛡️"
         elif max_profit_percent >= 7.0:

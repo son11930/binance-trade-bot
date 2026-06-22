@@ -216,39 +216,6 @@ def get_bot_status():
         "futures": latest_bot_state_futures
     }
 
-class TogglePauseRequest(BaseModel):
-    market: str
-    paused: bool
-
-@app.get("/api/bot_control")
-async def get_bot_control_endpoint():
-    return get_bot_control()
-
-def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
-    if not auth_header:
-        raise HTTPException(status_code=401, detail="Missing Authorization Header")
-    token = auth_header.replace("Bearer ", "")
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
-        if not secrets.compare_digest(payload.get("sub", ""), USER):
-            raise HTTPException(status_code=403, detail="Invalid User")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or Expired Token")
-    return True
-
-@app.post("/api/toggle_pause")
-async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(verify_jwt)):
-    if req.market == "spot":
-        set_bot_control(spot_paused=req.paused)
-    elif req.market == "futures":
-        set_bot_control(futures_paused=req.paused)
-    else:
-        raise HTTPException(status_code=400, detail="Invalid market. Must be 'spot' or 'futures'")
-    
-    new_state = get_bot_control()
-    await manager.broadcast({"type": "bot_control_update", "data": new_state})
-    return {"status": "success", "data": new_state}
-
 db_poll_event = None
 
 async def db_polling_task():
@@ -318,6 +285,39 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["127.0.0.1", "localhost", "::1", "45.136.254.62"])
+
+class TogglePauseRequest(BaseModel):
+    market: str
+    paused: bool
+
+@app.get("/api/bot_control")
+async def get_bot_control_endpoint():
+    return get_bot_control()
+
+def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Missing Authorization Header")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        if not secrets.compare_digest(payload.get("sub", ""), USER):
+            raise HTTPException(status_code=403, detail="Invalid User")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or Expired Token")
+    return True
+
+@app.post("/api/toggle_pause")
+async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(verify_jwt)):
+    if req.market == "spot":
+        set_bot_control(spot_paused=req.paused)
+    elif req.market == "futures":
+        set_bot_control(futures_paused=req.paused)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid market. Must be 'spot' or 'futures'")
+    
+    new_state = get_bot_control()
+    await manager.broadcast({"type": "bot_control_update", "data": new_state})
+    return {"status": "success", "data": new_state}
 
 
 def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log_id: int = 0):

@@ -142,8 +142,8 @@ Rules:
 1. If Order_Book_Wall is BEARISH_WALL, reject LONG/BUY setups.
 2. If Order_Book_Wall is BULLISH_WALL, reject SHORT/SELL setups.
 3. If Funding Rate is highly negative and Short Liquidations spike, consider a LONG (Short Squeeze).
-4. If Market_Regime is SIDEWAYS, prioritize HOLD or range-bound trades. Do not chase breakouts.
-Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
+4. If Market_Regime is SIDEWAYS, apply a mean-reversion strategy. Actively look for range-bound trades by BUYING near established support and SELLING/SHORTING near resistance. Avoid trading in the middle of the range and absolutely do not chase breakouts. Output HOLD only if the price is hovering in the middle of the range with no clear setup.
+5. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']
     for m in models:

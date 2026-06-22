@@ -26,7 +26,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.get_fear_greed_index()
+            "fear_greed_index": state_manager.fear_greed_index
         }
         
         latest_news = state_manager.latest_news
@@ -168,7 +168,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.get_fear_greed_index()
+            "fear_greed_index": state_manager.fear_greed_index
         }
         
         latest_news = state_manager.latest_news

@@ -96,24 +96,33 @@ def main():
     update_bot_state(state_manager_spot, "Waiting for next candle close...", symbol="All", market_type='spot')
     update_bot_state(state_manager_futures, "Waiting for next candle close...", symbol="All", market_type='futures')
     
-    try:
-        while True:
-            time.sleep(2)
-            
-            if not twm.is_alive():
-                log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot...")
-                import sys
-                import os
-                os.execv(sys.executable, ['python'] + sys.argv)
+    import signal
+    import sys
 
-            try:
-                update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All", market_type='spot')
-                update_bot_state(state_manager_futures, "Monitoring Futures markets...", symbol="All", market_type='futures')
-            except Exception as e:
-                log_msg("ERROR", f"Error updating bot state: {e}")
-    except KeyboardInterrupt:
+    def shutdown_handler(signum, frame):
+        log_msg("INFO", "Shutting down bot safely, saving states...")
         twm.stop()
-        log_msg("INFO", "Bot stopped by user.")
+        state_manager_spot._save_state()
+        state_manager_futures._save_state()
+        log_msg("INFO", "Bot stopped safely.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    
+    while True:
+        time.sleep(2)
+        
+        if not twm.is_alive():
+            log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot...")
+            import os
+            os.execv(sys.executable, ['python'] + sys.argv)
+
+        try:
+            update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All", market_type='spot')
+            update_bot_state(state_manager_futures, "Monitoring Futures markets...", symbol="All", market_type='futures')
+        except Exception as e:
+            log_msg("ERROR", f"Error updating bot state: {e}")
 
 if __name__ == "__main__":
     main()

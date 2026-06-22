@@ -108,10 +108,15 @@ def get_engine(db_url: str):
         )
     else:
         # SQLite
+        from sqlalchemy import event
         engine = create_engine(db_url, connect_args={"check_same_thread": False, "timeout": 15})
-        # Enable WAL mode for concurrent write support
-        with engine.connect() as conn:
-            conn.execute(sqlalchemy.text("PRAGMA journal_mode=WAL;"))
+        
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.close()
+            
         return engine
 
 import sqlalchemy
@@ -133,7 +138,7 @@ class Trade(Base):
     side = Column(String)  # BUY or SELL
     price = Column(Float)
     quantity = Column(Float)
-    timestamp = Column(DateTime(timezone=True), default=func.now())
+    timestamp = Column(DateTime(timezone=True), default=func.now(), index=True)
     ai_risk_score = Column(Float, nullable=True)
     ai_reasoning = Column(String, nullable=True)
     paper_trade = Column(Boolean, default=True)
@@ -142,16 +147,20 @@ class Trade(Base):
     pnl_amount = Column(Float, nullable=True)
     pnl_percent = Column(Float, nullable=True)
     position_side = Column(String, nullable=True)
-    market_type = Column(String, default="spot")
+    market_type = Column(String, default="spot", index=True)
+
+    __table_args__ = (
+        sqlalchemy.Index('ix_trade_symbol_market_time', 'symbol', 'market_type', 'timestamp'),
+    )
 
 class SystemLog(Base):
     __tablename__ = "system_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime(timezone=True), default=func.now())
+    timestamp = Column(DateTime(timezone=True), default=func.now(), index=True)
     level = Column(String, index=True) # INFO, WARNING, ERROR
     message = Column(String)
-    market_type = Column(String, default="spot")
+    market_type = Column(String, default="spot", index=True)
 
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
@@ -228,6 +237,32 @@ class TradeRepository:
             logging.exception(f"Error creating trade for {symbol} ({market_type})")
             db.rollback()
             return None
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recent_losing_trades(symbol: str, limit: int = 5, market_type: str = 'spot'):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
+        try:
+            trades = db.query(Trade).filter(
+                Trade.symbol == symbol, 
+                Trade.market_type == market_type,
+                Trade.pnl_percent < 0
+            ).order_by(Trade.timestamp.desc()).limit(limit).all()
+            
+            result = []
+            for t in trades:
+                result.append({
+                    "timestamp": t.timestamp,
+                    "side": t.side,
+                    "position_side": t.position_side,
+                    "pnl_percent": t.pnl_percent,
+                    "ai_reasoning": t.ai_reasoning
+                })
+            return result
+        except Exception:
+            logging.exception(f"Error fetching losing trades for {symbol}")
+            return []
         finally:
             db.close()
 

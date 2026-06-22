@@ -123,12 +123,21 @@ def call_bear_agent(summary: str, symbol: str) -> str:
             continue
     return "Bearish analysis failed."
 
-def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str) -> dict:
+def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, lessons_learned: list = None) -> dict:
     decision_options = '"BUY" or "HOLD" or "SELL"' if market_type == 'spot' else '"LONG" or "SHORT" or "HOLD"'
+    
+    lessons_text = ""
+    if lessons_learned and len(lessons_learned) > 0:
+        lessons_text = "<lessons_learned>\nAvoid repeating past mistakes. Review recent losing trades for this asset:\n"
+        for t in lessons_learned:
+            lessons_text += f"- {t.get('position_side', t.get('side'))} resulted in {t.get('pnl_percent', 0):.2f}% loss. AI Reason was: {t.get('ai_reasoning', 'Unknown')}\n"
+        lessons_text += "</lessons_learned>\n"
+        
     prompt = f"""You are the Chief Hedge Fund Manager evaluating {symbol} for {market_type.upper()}.
 <summary>{summary}</summary>
 <bullish>{bull_case}</bullish>
 <bearish>{bear_case}</bearish>
+{lessons_text}
 Rules:
 1. If Order_Book_Wall is BEARISH_WALL, reject LONG/BUY setups.
 2. If Order_Book_Wall is BULLISH_WALL, reject SHORT/SELL setups.
@@ -169,7 +178,8 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
             bull_case = future_bull.result()
             bear_case = future_bear.result()
         
-        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type)
+        lessons_learned = tech_data.get('lessons_learned', []) if tech_data else []
+        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, lessons_learned)
         result["committee_debate"] = {"bullish_analysis": bull_case, "bearish_analysis": bear_case}
         result["model_used"] = "3-Agent-Committee"
         result["is_error"] = False

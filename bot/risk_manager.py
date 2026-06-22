@@ -47,7 +47,7 @@ def calculate_pnl(entry_price: float, current_price: float, quantity: float, fee
     else:
         return calculate_spot_pnl(entry_price, current_price, quantity, fee_rate, symbol=symbol)
 
-def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float) -> str | None:
+def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float, rsi_value: float = None) -> str | None:
     if state.position > 0 and state.buy_price > 0:
         current_price = state.last_price
         
@@ -69,6 +69,12 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
             
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
+        # ---------------------------------------------------------
+        # Sell into Strength (Momentum Take Profit)
+        # ---------------------------------------------------------
+        if rsi_value is not None and profit_percent >= 3.0 and rsi_value >= 80:
+            return "Momentum Take Profit (RSI Overbought) 🎯"
+            
         # ---------------------------------------------------------
         # Spot Step-based Trailing / Breakeven Stop Ladder
         # ---------------------------------------------------------
@@ -108,7 +114,7 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
             
     return None
 
-def check_futures_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float) -> str | None:
+def check_futures_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float, rsi_value: float = None) -> str | None:
     if state.position > 0 and state.buy_price > 0:
         current_price = state.last_price
         
@@ -145,6 +151,15 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
         # ---------------------------------------------------------
+        # Sell into Strength (Momentum Take Profit)
+        # ---------------------------------------------------------
+        if rsi_value is not None and profit_percent >= 3.0:
+            if state.position_side == "LONG" and rsi_value >= 80:
+                return "Momentum Take Profit (RSI Overbought) 🎯"
+            elif state.position_side == "SHORT" and rsi_value <= 20:
+                return "Momentum Take Profit (RSI Oversold) 🎯"
+        
+        # ---------------------------------------------------------
         # Futures Step-based Trailing / Breakeven Stop Ladder
         # ---------------------------------------------------------
         if max_profit_percent >= 10.0:
@@ -179,9 +194,9 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
             
     return None
 
-def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float, market_type: str = "spot") -> str | None:
+def check_risk_management(state: SymbolState, atr_value: float, stop_loss_percent: float, market_type: str = "spot", rsi_value: float = None) -> str | None:
     """Legacy dispatcher to maintain compatibility."""
     if market_type == "futures":
-        return check_futures_risk_management(state, atr_value, stop_loss_percent)
+        return check_futures_risk_management(state, atr_value, stop_loss_percent, rsi_value)
     else:
-        return check_spot_risk_management(state, atr_value, stop_loss_percent)
+        return check_spot_risk_management(state, atr_value, stop_loss_percent, rsi_value)

@@ -13,6 +13,9 @@ from .state import StateManager
 
 def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
+        from .database import TradeRepository
+        lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type='futures')
+        
         tech_data = {
             "market_regime": market_regime_val,
             "strategy_used": strategy_used,
@@ -27,7 +30,8 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.fear_greed_index
+            "fear_greed_index": state_manager.fear_greed_index,
+            "lessons_learned": lessons_learned
         }
         
         latest_news = state_manager.latest_news
@@ -74,9 +78,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         # To be safe, we just check if it's not HOLD and risk is acceptable.
         if decision != "HOLD" and risk_score <= 65:
             # Check Slippage
-            from .binance_client import futures_get_current_price
-            live_price = futures_get_current_price(symbol)
-            if live_price is not None:
+            state = state_manager.get_state(symbol)
+            live_price = state.last_price if state.last_price > 0 else current_price
+            if live_price > 0:
                 slippage = abs(live_price - current_price) / current_price
                 if slippage > 0.005:
                     log_msg("WARNING", f"⚠️ Slippage Guard: Aborting Futures {symbol} trade. Price moved >0.5% ({current_price} -> {live_price}).")
@@ -149,12 +153,15 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
     try:
         # Calculate holding value dynamically at the time of evaluation, not at queue time
         states = state_manager.get_all_states()
-        current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else get_current_price(s.symbol)) for s in states.values() if s.position > 0)
+        current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else s.buy_price) for s in states.values() if s.position > 0)
         
         if strategy_used == "SIDEWAYS_RSI_BB":
             from .binance_client import analyze_order_book_walls
             walls = analyze_order_book_walls(symbol)
             log_msg("INFO", f"Order Book Check for {symbol} - Largest Bid: {walls['largest_bid_price']}, Total Bid Vol: {walls.get('total_bid_qty', 0)}")
+
+        from .database import TradeRepository
+        lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type='spot')
 
         tech_data = {
             "market_regime": market_regime_val,
@@ -170,7 +177,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "long_short_ratio": state_manager.get_long_short_ratio(symbol),
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.fear_greed_index
+            "fear_greed_index": state_manager.fear_greed_index,
+            "lessons_learned": lessons_learned
         }
         
         latest_news = state_manager.latest_news
@@ -213,8 +221,9 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         
         if decision == "BUY" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
-            live_price = get_current_price(symbol)
-            if live_price is not None:
+            state = state_manager.get_state(symbol)
+            live_price = state.last_price if state.last_price > 0 else current_price
+            if live_price > 0:
                 slippage = (live_price - current_price) / current_price
                 if slippage > 0.005:  # Price drifted more than 0.5% while waiting for AI
                     log_msg("WARNING", f"⚠️ Slippage Guard: Aborting {symbol} trade. Price moved +{slippage*100:.2f}% ({current_price} -> {live_price}) while waiting for AI.")

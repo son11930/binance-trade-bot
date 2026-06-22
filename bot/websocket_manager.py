@@ -40,9 +40,8 @@ class WebSocketManager:
         last_timestamp = df['timestamp'].iloc[-1]
         
         if msg_timestamp == last_timestamp:
-            df.loc[df.index[-1], ['open', 'high', 'low', 'close', 'volume']] = [
-                float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['v'])
-            ]
+            cols_idx = df.columns.get_indexer(['open', 'high', 'low', 'close', 'volume'])
+            df.iloc[-1, cols_idx] = [float(k['o']), float(k['h']), float(k['l']), float(k['c']), float(k['v'])]
         elif msg_timestamp > last_timestamp:
             new_row = pd.DataFrame([{
                 'timestamp': msg_timestamp,
@@ -87,13 +86,20 @@ class WebSocketManager:
                     state = self.state_manager.get_state(symbol) # Update local ref
                     
                     atr_value = 2.5
+                    rsi_value = None
                     if not df.empty and 'ATR' in df.columns:
-                        if pd.notna(df.iloc[-1].get('ATR')):
-                            atr_value = df.iloc[-1]['ATR']
-                        elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
-                            atr_value = df.iloc[-2]['ATR']
+                        if pd.notna(df['ATR'].iat[-1]):
+                            atr_value = df['ATR'].iat[-1]
+                        elif len(df) > 1 and pd.notna(df['ATR'].iat[-2]):
+                            atr_value = df['ATR'].iat[-2]
+                            
+                    if not df.empty and 'RSI' in df.columns:
+                        if pd.notna(df['RSI'].iat[-1]):
+                            rsi_value = df['RSI'].iat[-1]
+                        elif len(df) > 1 and pd.notna(df['RSI'].iat[-2]):
+                            rsi_value = df['RSI'].iat[-2]
                         
-                    rm_signal = check_spot_risk_management(state, atr_value, STOP_LOSS_PERCENT)
+                    rm_signal = check_spot_risk_management(state, atr_value, STOP_LOSS_PERCENT, rsi_value)
                     if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")
@@ -127,13 +133,20 @@ class WebSocketManager:
                     state = self.state_manager.get_state(symbol)
                     
                     atr_value = 2.5
+                    rsi_value = None
                     if not df.empty and 'ATR' in df.columns:
-                        if pd.notna(df.iloc[-1].get('ATR')):
-                            atr_value = df.iloc[-1]['ATR']
-                        elif len(df) > 1 and pd.notna(df.iloc[-2].get('ATR')):
-                            atr_value = df.iloc[-2]['ATR']
+                        if pd.notna(df['ATR'].iat[-1]):
+                            atr_value = df['ATR'].iat[-1]
+                        elif len(df) > 1 and pd.notna(df['ATR'].iat[-2]):
+                            atr_value = df['ATR'].iat[-2]
+                    
+                    if not df.empty and 'RSI' in df.columns:
+                        if pd.notna(df['RSI'].iat[-1]):
+                            rsi_value = df['RSI'].iat[-1]
+                        elif len(df) > 1 and pd.notna(df['RSI'].iat[-2]):
+                            rsi_value = df['RSI'].iat[-2]
                         
-                    rm_signal = check_futures_risk_management(state, atr_value, STOP_LOSS_PERCENT)
+                    rm_signal = check_futures_risk_management(state, atr_value, STOP_LOSS_PERCENT, rsi_value)
                     if rm_signal and state.active_strategy != "CLOSING":
                         log_msg("WARNING", f"🚨 FUTURES {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")

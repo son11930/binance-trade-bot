@@ -148,7 +148,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                     ai_hold_cooldown_until=None
                 )
         else:
-            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.")
+            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.", market_type="futures")
             state_manager.update_state(symbol, 
                 last_trade_time=datetime.now(timezone.utc),
                 ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(hours=2),

@@ -69,21 +69,38 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
             
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
-        # Spot Trailing Stop (ตอบสนองไวขึ้น)
-        min_profit_to_trail = atr_percent * 1.2
-        if max_profit_percent >= min_profit_to_trail:
-            trailing_drop_raw_percent = atr_percent * 0.8
-            if hp_drop_percent >= trailing_drop_raw_percent:
-                return "ATR Trailing Stop 🛡️"
-            
-        # Spot Breakeven Stop (ปกป้องทุนและค่าธรรมเนียมทันทีที่เริ่มกำไรชัดเจน)
-        # หากราคาวิ่งไป 1.2% ให้ล็อคปิดที่ 0.3%
-        if max_profit_percent >= 1.2:
-            if profit_percent <= 0.3:
-                return "Breakeven Stop 🛡️"
+        # ---------------------------------------------------------
+        # Spot Step-based Trailing / Breakeven Stop Ladder
+        # ---------------------------------------------------------
+        if max_profit_percent >= 10.0:
+            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 8.0%
+            trailing_drop_raw_percent = atr_percent * 1.5
+            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 8.0:
+                return "ATR Trailing Stop (Moonshot) 🚀"
+            if profit_percent <= 8.0:
+                return "Step Trailing Stop (Lock 8.0%) 🛡️"
+        elif max_profit_percent >= 7.0:
+            if profit_percent <= 5.0:
+                return "Step Trailing Stop (Lock 5.0%) 🛡️"
+        elif max_profit_percent >= 5.0:
+            if profit_percent <= 3.5:
+                return "Step Trailing Stop (Lock 3.5%) 🛡️"
+        elif max_profit_percent >= 4.0:
+            if profit_percent <= 2.5:
+                return "Step Trailing Stop (Lock 2.5%) 🛡️"
+        elif max_profit_percent >= 3.0:
+            if profit_percent <= 1.5:
+                return "Step Breakeven Stop (Lock 1.5%) 🛡️"
+        elif max_profit_percent >= 2.0:
+            if profit_percent <= 1.0:
+                return "Step Breakeven Stop (Lock 1.0%) 🛡️"
+        elif max_profit_percent >= 1.5:
+            if profit_percent <= 0.5:
+                # 0.5% safely covers Binance 0.2% total fees and leaves 0.3% net profit
+                return "Step Breakeven Stop (Lock 0.5%) 🛡️"
                 
         # Spot Fallback Stop Loss
-        # ใช้ ATR คุมระยะตัดขาดทุน แต่ไม่ให้เกิน 3.0%
+        # Hard cap at exactly 3.0% loss. Uses ATR for tighter stops in low volatility.
         stop_loss_threshold = min(3.0, atr_percent * 2.0)
             
         if profit_percent <= -stop_loss_threshold:

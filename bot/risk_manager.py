@@ -127,21 +127,31 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
             
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
-        # Futures Trailing Stop (Based on ROE)
-        min_profit_to_trail = atr_percent * 1.5 * FUTURES_LEVERAGE
-        if max_profit_percent >= min_profit_to_trail:
-            trailing_drop_raw_percent = atr_percent * 1.0
-            if hp_drop_percent >= trailing_drop_raw_percent:
-                return "ATR Trailing Stop 🛡️"
-            
-        # Futures Breakeven Stop
-        if max_profit_percent >= 3.0:
+        # ---------------------------------------------------------
+        # Futures Step-based Trailing / Breakeven Stop Ladder
+        # ---------------------------------------------------------
+        if max_profit_percent >= 10.0:
+            if profit_percent <= 8.0:
+                return "Step Trailing Stop (Lock 8.0%) 🛡️"
+        elif max_profit_percent >= 7.0:
+            if profit_percent <= 5.0:
+                return "Step Trailing Stop (Lock 5.0%) 🛡️"
+        elif max_profit_percent >= 5.0:
+            if profit_percent <= 3.5:
+                return "Step Trailing Stop (Lock 3.5%) 🛡️"
+        elif max_profit_percent >= 4.0:
+            if profit_percent <= 2.5:
+                return "Step Trailing Stop (Lock 2.5%) 🛡️"
+        elif max_profit_percent >= 3.0:
+            if profit_percent <= 1.5:
+                return "Step Breakeven Stop (Lock 1.5%) 🛡️"
+        elif max_profit_percent >= 2.5:
             if profit_percent <= 1.0:
-                return "Breakeven Stop 🛡️"
+                return "Step Breakeven Stop (Lock 1.0%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
-        stop_loss_threshold = atr_percent * 1.5 * FUTURES_LEVERAGE
-        stop_loss_threshold = min(stop_loss_percent * FUTURES_LEVERAGE, stop_loss_threshold)
+        # Cap maximum loss at exactly 5.0% ROE (Hard cap, not multiplied by leverage again)
+        stop_loss_threshold = 5.0 
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"

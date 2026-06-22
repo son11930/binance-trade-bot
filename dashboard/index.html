@@ -207,9 +207,15 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div class="glass-card p-6 rounded-2xl">
-                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>
-                <p class="text-lg font-bold text-white mt-2 leading-tight" id="symbol-display">Loading...</p>
+            <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+                <div>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>
+                    <p class="text-lg font-bold text-white mt-1 leading-tight" id="symbol-display">Loading...</p>
+                </div>
+                <div class="mt-4 pt-3 border-t border-slate-700/50">
+                    <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Fear & Greed Index</p>
+                    <p id="fear-greed-display" class="text-xl font-extrabold text-neonCyan">--</p>
+                </div>
             </div>
             
             <div class="glass-card p-6 rounded-2xl relative overflow-hidden">
@@ -374,9 +380,9 @@
                     <tr class="bg-slate-900/40">
                         <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
                         <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size (Side)</th>
-                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Entry Price</th>
-                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Mark Price</th>
-                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin (USDT)</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Entry / Mark</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Funding / L-S</th>
+                        <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin</th>
                         <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
                         <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
                     </tr>
@@ -513,6 +519,9 @@
         function updateStatusUI(aiStatus, globalConfig) {
             if (!aiStatus || !globalConfig) return;
             document.getElementById('symbol-display').innerText = globalConfig.symbols ? globalConfig.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
+            if (globalConfig.fear_greed_index !== undefined && globalConfig.fear_greed_index !== null) {
+                document.getElementById('fear-greed-display').innerText = globalConfig.fear_greed_index;
+            }
             
             const isPaper = globalConfig.paper_trading === "True";
             const modeBadge = document.getElementById('mode-badge');
@@ -582,14 +591,22 @@
                         const sideColor = pos.position_side === 'LONG' ? 'text-neonGreen' : 'text-neonRed';
                         const sideLabel = escapeHTML(pos.position_side || 'N/A');
                         
+                        let formattedFundingRate = '--';
+                        let frColor = 'text-slate-400';
+                        if (pos.funding_rate !== undefined && pos.funding_rate !== null) {
+                            formattedFundingRate = (Number(pos.funding_rate) * 100).toFixed(4) + '%';
+                            frColor = Number(pos.funding_rate) < 0 ? 'text-neonRed' : 'text-neonGreen';
+                        }
+                        const formattedLongShortRatio = pos.long_short_ratio !== undefined && pos.long_short_ratio !== null ? Number(pos.long_short_ratio).toFixed(2) : '--';
+                        
                         tr.innerHTML = `
                             <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
-                            <td class="p-4 text-right font-mono"><span class="${sideColor} font-bold mr-2">${sideLabel}</span><span class="text-slate-300">${pos.quantity.toFixed(4)}</span></td>
-                            <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toFixed(4)}</td>
-                            <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toFixed(4)}</td>
-                            <td class="p-4 text-right text-slate-300 font-mono">${pos.margin ? pos.margin.toFixed(2) : '--'}</td>
-                            <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${pos.pnl_amount.toFixed(2)}</td>
-                            <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
+                            <td class="p-4 text-right font-mono"><span class="${sideColor} font-bold mr-2">${sideLabel}</span><span class="text-slate-300">${Number(pos.quantity).toFixed(4)}</span></td>
+                            <td class="p-4 text-right text-slate-300 font-mono text-xs"><div class="mb-1">E: ${Number(pos.buy_price).toFixed(4)}</div><div>M: ${Number(pos.current_price).toFixed(4)}</div></td>
+                            <td class="p-4 text-right text-slate-300 font-mono text-xs"><div class="mb-1">FR: <span class="${frColor}">${escapeHTML(formattedFundingRate)}</span></div><div>L/S: ${escapeHTML(formattedLongShortRatio)}</div></td>
+                            <td class="p-4 text-right text-slate-300 font-mono">${pos.margin ? Number(pos.margin).toFixed(2) : '--'}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${Number(pos.pnl_amount).toFixed(2)}</td>
+                            <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${Number(pos.pnl_percent).toFixed(2)}%</td>
                         `;
                     } else {
                         tr.innerHTML = `
@@ -605,7 +622,8 @@
                     positionsBody.appendChild(tr);
                 });
             } else {
-                positionsBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-500 italic">No active positions.</td></tr>`;
+                const cols = currentMarket === 'futures' ? 7 : 6;
+                positionsBody.innerHTML = `<tr><td colspan="${cols}" class="p-8 text-center text-slate-500 italic">No active positions.</td></tr>`;
             }
         }
 

@@ -11,9 +11,10 @@ from .webhook_notifier import update_bot_state
 from .binance_client import get_current_price
 from .state import StateManager
 
-def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
+def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
         tech_data = {
+            "market_regime": market_regime_val,
             "strategy_used": strategy_used,
             "adx": adx_val,
             "rsi": rsi_val,
@@ -144,7 +145,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_futures_trade_signal for {symbol}: {e}")
 
-def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val):
+def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
         # Calculate holding value dynamically at the time of evaluation, not at queue time
         states = state_manager.get_all_states()
@@ -156,6 +157,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             log_msg("INFO", f"Order Book Check for {symbol} - Largest Bid: {walls['largest_bid_price']}, Total Bid Vol: {walls.get('total_bid_qty', 0)}")
 
         tech_data = {
+            "market_regime": market_regime_val,
             "strategy_used": strategy_used,
             "adx": adx_val,
             "rsi": rsi_val,
@@ -316,10 +318,12 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             
             # Dispatch to Priority Queue to prevent blocking websocket and prioritize explosive breakouts
             from .ai_queue import ai_queue_manager
+            from .strategy import detect_regime
+            market_regime_val = detect_regime(df)
             ai_queue_manager.submit(
                 vol_surge_val, symbol, _evaluate_buy_signal, 
                 state_manager, symbol, current_price, strategy_used, sl_target, tp_target, time_limit, 
-                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
+                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val
             )
             
         elif signal == "SELL" and state.position > 0:
@@ -418,11 +422,13 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 dist_sma_200_val = latest_kline.get('Distance_to_SMA_200', 'N/A')
                 
                 from .ai_queue import ai_queue_manager
+                from .strategy import detect_regime
+                market_regime_val = detect_regime(df)
                 ai_queue_manager.submit(
                     vol_surge_val, symbol, _evaluate_futures_trade_signal, 
                     state_manager, symbol, current_price, signal, position_side, strategy_used, 
                     signal_plan.stop_loss, signal_plan.take_profit, signal_plan.time_in_trade, 
-                    adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val
+                    adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val
                 )
 
             # Check if exiting position

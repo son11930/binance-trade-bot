@@ -133,6 +133,7 @@ Rules:
 1. If Order_Book_Wall is BEARISH_WALL, reject LONG/BUY setups.
 2. If Order_Book_Wall is BULLISH_WALL, reject SHORT/SELL setups.
 3. If Funding Rate is highly negative and Short Liquidations spike, consider a LONG (Short Squeeze).
+4. If Market_Regime is SIDEWAYS, prioritize HOLD or range-bound trades. Do not chase breakouts.
 Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']
@@ -156,7 +157,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
         vol_surge = f"{tech_data.get('vol_surge_multiplier', 1.0):.1f}x"
         liqs = tech_data.get('liquidations', {})
         ob = tech_data.get('order_book', {})
-        tech_context = f"ADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
+        tech_context = f"Market_Regime: {tech_data.get('market_regime', 'UNKNOWN')}\nADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
 
     import concurrent.futures
     try:

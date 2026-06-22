@@ -9,7 +9,7 @@ from .state import StateManager
 from .database import sanitize_text
 
 def sanitize_dict(d, depth=0):
-    if depth > 3:
+    if depth > 5:
         return "[MAX_DEPTH_EXCEEDED]"
     if isinstance(d, dict):
         return {sanitize_text(k) if isinstance(k, str) else k: sanitize_dict(v, depth+1) for k, v in d.items()}
@@ -23,7 +23,7 @@ def sanitize_dict(d, depth=0):
 _webhook_executor = ThreadPoolExecutor(max_workers=10)
 # Note: we will check _webhook_executor._work_queue.qsize() to prevent queue buildup
 
-def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
+def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
     positions_data = []
     
     states = state_manager.get_all_states()
@@ -31,11 +31,7 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
         if state.position > 0:
             pnl_amt, pnl_pct = calculate_pnl(state.buy_price, state.last_price, state.position, market_type=market_type, position_side=state.position_side)
             
-            margin = None
-            if market_type == 'futures':
-                margin = (state.position * state.buy_price) / FUTURES_LEVERAGE
-                
-            positions_data.append({
+            position_entry = {
                 "symbol": sym,
                 "quantity": state.position,
                 "buy_price": state.buy_price,
@@ -43,8 +39,15 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
                 "pnl_amount": pnl_amt,
                 "pnl_percent": pnl_pct,
                 "position_side": state.position_side,
-                "margin": margin
-            })
+            }
+
+            if market_type == 'futures':
+                position_entry["margin"] = (state.position * state.buy_price) / FUTURES_LEVERAGE
+                position_entry["funding_rate"] = state_manager.get_funding_rate(sym)
+                position_entry["long_short_ratio"] = state_manager.get_long_short_ratio(sym)
+                position_entry["liquidations"] = state_manager.get_liquidations(sym)
+                
+            positions_data.append(position_entry)
 
     # Sanitize inputs to prevent API key leaks
     safe_status = sanitize_text(status_msg)
@@ -58,7 +61,7 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     safe_ai_debate = sanitize_dict(ai_debate) if ai_debate else None
     safe_positions = sanitize_dict(positions_data)
 
-    payload = {
+    return {
         "market_type": market_type,
         "status_message": safe_status,
         "is_thinking": thinking,
@@ -66,9 +69,11 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
         "live_usdt": state_manager.live_usdt_balance,
         "positions": safe_positions,
         "ai_debate": safe_ai_debate,
+        "fear_greed_index": sanitize_text(str(state_manager.fear_greed_index)) if state_manager.fear_greed_index is not None else None,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
-    
+
+def dispatch_webhook(payload: dict):
     def _send():
         headers = {}
         from urllib.parse import urlparse
@@ -86,7 +91,11 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
             
     # Protect against unbounded queue growth (DoS mitigation)
     if _webhook_executor._work_queue.qsize() > 50:
-        log_msg("WARNING", "⚠️ Webhook queue overloaded. Dropping update to prevent OOM.", market_type=market_type)
+        log_msg("WARNING", "⚠️ Webhook queue overloaded. Dropping update to prevent OOM.", market_type=payload.get("market_type", "spot"))
         return
         
     _webhook_executor.submit(_send)
+
+def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
+    payload = build_webhook_payload(state_manager, status_msg, thinking, symbol, ai_debate, market_type)
+    dispatch_webhook(payload)

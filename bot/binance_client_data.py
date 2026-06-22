@@ -32,6 +32,11 @@ def fetch_liquidations(symbol: str) -> dict:
     try:
         url = "https://fapi.binance.com/fapi/v1/allForceOrders"
         response = requests.get(url, params={"symbol": symbol, "limit": 100}, timeout=10)
+        
+        # Handle the out of maintenance endpoint gracefully without throwing errors
+        if response.status_code == 400:
+            return {"long_liq_usd": 0.0, "short_liq_usd": 0.0}
+            
         response.raise_for_status()
         data = response.json()
         

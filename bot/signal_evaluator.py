@@ -81,11 +81,15 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             
         update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
         
-        # In futures, the AI decision can be BUY, SELL, or HOLD. 
-        # But our signal already dictated BUY (for Long) or SELL (for Short).
-        # We will only proceed if the AI agrees with entering the market (either it says BUY or SELL, but basically not HOLD/abort if the risk is acceptable).
-        # To be safe, we just check if it's not HOLD and risk is acceptable.
-        if decision != "HOLD" and risk_score <= 65:
+        # We will only proceed if the AI explicitly agrees with the technical signal's direction.
+        # AI might output "BUY" or "LONG" for a Long position, and "SELL" or "SHORT" for a Short position.
+        is_ai_agreed = False
+        if position_side == "LONG" and decision in ["BUY", "LONG"]:
+            is_ai_agreed = True
+        elif position_side == "SHORT" and decision in ["SELL", "SHORT"]:
+            is_ai_agreed = True
+
+        if is_ai_agreed and risk_score <= 65:
             # Check Slippage
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price

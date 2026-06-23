@@ -82,8 +82,8 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
         
         # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
-        # We proceed as long as AI doesn't explicitly flag the trade as too risky (>65) or explicitly demands a HOLD.
-        if decision != "HOLD" and risk_score <= 65:
+        # We proceed as long as AI doesn't explicitly flag the trade as too risky (>70) or explicitly demands a HOLD.
+        if decision != "HOLD" and risk_score <= 70:
             # Check Slippage
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price
@@ -147,14 +147,14 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 )
         else:
             if decision == "HOLD":
-                log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 2-Hour cooldown.", market_type="futures")
-            elif risk_score > 65:
-                log_msg("INFO", f"⚠️ AI flagged high risk ({risk_score} > 65) for {symbol}. Aborting Futures {signal} and applying 2-Hour cooldown.", market_type="futures")
+                log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
+            elif risk_score > 70:
+                log_msg("INFO", f"⚠️ AI flagged high risk ({risk_score} > 70) for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
             else:
                 log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Decision: {decision}, Risk: {risk_score}).", market_type="futures")
             state_manager.update_state(symbol, 
                 last_trade_time=datetime.now(timezone.utc),
-                ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(hours=2),
+                ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(minutes=45),
                 cooldown_start_price=current_price
             )
             

@@ -1,3 +1,11 @@
+## [4.6.1] - 2026-06-23
+### Explicit Direction Mismatch Logging
+**English:**
+- **Enhanced Logging**: Added explicit "Direction Mismatch" logs for both Spot and Futures when the AI's decision conflicts with the technical indicators' signal direction. This makes it instantly recognizable on the dashboard when a trade is aborted due to a directional disagreement.
+
+**Thai (ภาษาไทย):**
+- **ปรับปรุงข้อความ Log ให้ชัดเจนขึ้น**: เพิ่ม Log แจ้งเตือนข้อความ "Direction Mismatch" (ทิศทางไม่ตรงกัน) ทั้งในระบบ Spot และ Futures เมื่อการตัดสินใจของ AI ขัดแย้งกับสัญญาณเทคนิคอล เพื่อให้สังเกตเห็นได้ง่ายขึ้นบน Dashboard เมื่อบอทยกเลิกการเปิดสถานะ
+
 ## [4.6.0] - 2026-06-22
 ### Data Ingestion Pipeline & Intelligent Prompts
 **English:**

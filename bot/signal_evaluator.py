@@ -152,7 +152,12 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                     ai_hold_cooldown_until=None
                 )
         else:
-            log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.", market_type="futures")
+            if not is_ai_agreed and decision not in ["HOLD", "UNKNOWN", "WAIT"]:
+                log_msg("INFO", f"⚠️ Direction Mismatch: Technical wants {position_side} ({signal}) but AI decided {decision} for {symbol}. Aborting trade and applying 2-Hour cooldown.", market_type="futures")
+            elif is_ai_agreed and risk_score > 65:
+                log_msg("INFO", f"⚠️ AI agreed with {position_side} for {symbol} but aborted due to high risk score ({risk_score} > 65). Applying 2-Hour HOLD cooldown.", market_type="futures")
+            else:
+                log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.", market_type="futures")
             state_manager.update_state(symbol, 
                 last_trade_time=datetime.now(timezone.utc),
                 ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(hours=2),
@@ -295,7 +300,12 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                     max_time_in_trade=time_limit
                 )
         else:
-            log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.")
+            if decision in ["SELL", "SHORT"]:
+                log_msg("INFO", f"⚠️ Direction Mismatch: Technical wants BUY but AI decided {decision} for {symbol}. Aborting trade and applying Cooldown.", market_type="spot")
+            elif decision == "BUY" and risk_score > 60:
+                log_msg("INFO", f"⚠️ AI agreed with BUY for {symbol} but aborted due to high risk score ({risk_score} > 60). Applying Cooldown.", market_type="spot")
+            else:
+                log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.", market_type="spot")
             state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_buy_signal for {symbol}: {e}")

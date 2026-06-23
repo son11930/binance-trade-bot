@@ -1,10 +1,12 @@
 ## [4.6.1] - 2026-06-23
-### Explicit Direction Mismatch Logging
+### Explicit Direction Mismatch Logging & Spot Fix
 **English:**
 - **Enhanced Logging**: Added explicit "Direction Mismatch" logs for both Spot and Futures when the AI's decision conflicts with the technical indicators' signal direction. This makes it instantly recognizable on the dashboard when a trade is aborted due to a directional disagreement.
+- **Spot Bug Fix**: Fixed a bug where Spot `_evaluate_buy_signal` rejected the AI's `LONG` decision. Spot trades will now correctly interpret both `BUY` and `LONG` as a valid agreement with the technical signal.
 
 **Thai (ภาษาไทย):**
 - **ปรับปรุงข้อความ Log ให้ชัดเจนขึ้น**: เพิ่ม Log แจ้งเตือนข้อความ "Direction Mismatch" (ทิศทางไม่ตรงกัน) ทั้งในระบบ Spot และ Futures เมื่อการตัดสินใจของ AI ขัดแย้งกับสัญญาณเทคนิคอล เพื่อให้สังเกตเห็นได้ง่ายขึ้นบน Dashboard เมื่อบอทยกเลิกการเปิดสถานะ
+- **แก้ไขบัคของ Spot**: แก้ไขบัคในระบบ Spot ที่ก่อนหน้านี้จะปฏิเสธคำสั่งเทรดหาก AI ตอบกลับมาว่า `LONG` (เดิมรองรับแค่ `BUY`) ตอนนี้ระบบเข้าใจแล้วว่า `LONG` มีความหมายเดียวกันกับ `BUY` สำหรับการซื้อ Spot
 
 ## [4.6.0] - 2026-06-22
 ### Data Ingestion Pipeline & Intelligent Prompts

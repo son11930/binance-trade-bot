@@ -244,7 +244,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
-        if decision == "BUY" and risk_score <= 60:
+        if decision in ["BUY", "LONG"] and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price
@@ -302,7 +302,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         else:
             if decision in ["SELL", "SHORT"]:
                 log_msg("INFO", f"⚠️ Direction Mismatch: Technical wants BUY but AI decided {decision} for {symbol}. Aborting trade and applying Cooldown.", market_type="spot")
-            elif decision == "BUY" and risk_score > 60:
+            elif decision in ["BUY", "LONG"] and risk_score > 60:
                 log_msg("INFO", f"⚠️ AI agreed with BUY for {symbol} but aborted due to high risk score ({risk_score} > 60). Applying Cooldown.", market_type="spot")
             else:
                 log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.", market_type="spot")

@@ -60,7 +60,23 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
             if minutes_elapsed >= state.max_time_in_trade * 15:
-                return f"Time-in-Trade Stop ({state.max_time_in_trade} periods) ⏰"
+                # Time-Expired Tight Stop Logic
+                if profit_percent < 0.5:
+                    return f"Time Limit Exceeded (Stalled/Loss at {profit_percent:.2f}%) ⏰"
+                if profit_percent >= 10.0:
+                    return "Time Limit Exceeded (Max Profit Hit) ⏰🎯"
+                
+                # Tight Ladder for Time-Expired Trades
+                if max_profit_percent >= 7.0 and profit_percent <= 5.0:
+                    return "Time Limit Tight Stop (Locked 5.0%) ⏰🛡️"
+                elif max_profit_percent >= 5.0 and profit_percent <= 3.5:
+                    return "Time Limit Tight Stop (Locked 3.5%) ⏰🛡️"
+                elif max_profit_percent >= 3.0 and profit_percent <= 2.0:
+                    return "Time Limit Tight Stop (Locked 2.0%) ⏰🛡️"
+                elif max_profit_percent >= 1.5 and profit_percent <= 1.0:
+                    return "Time Limit Tight Stop (Locked 1.0%) ⏰🛡️"
+                elif max_profit_percent >= 0.5 and profit_percent <= 0.5:
+                    return "Time Limit Tight Stop (Breakeven 0.5%) ⏰🛡️"
 
         if state.dynamic_tp > 0 and current_price >= state.dynamic_tp:
             return f"Dynamic Take Profit ({state.dynamic_tp}) 🎯"
@@ -135,7 +151,23 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
             if minutes_elapsed >= state.max_time_in_trade * 15:
-                return f"Time-in-Trade Stop ({state.max_time_in_trade} periods) ⏰"
+                # Time-Expired Tight Stop Logic
+                if profit_percent < 0.5:
+                    return f"Time Limit Exceeded (Stalled/Loss at {profit_percent:.2f}%) ⏰"
+                if profit_percent >= 10.0:
+                    return "Time Limit Exceeded (Max Profit Hit) ⏰🎯"
+                
+                # Tight Ladder for Time-Expired Trades
+                if max_profit_percent >= 7.0 and profit_percent <= 5.0:
+                    return "Time Limit Tight Stop (Locked 5.0%) ⏰🛡️"
+                elif max_profit_percent >= 5.0 and profit_percent <= 3.5:
+                    return "Time Limit Tight Stop (Locked 3.5%) ⏰🛡️"
+                elif max_profit_percent >= 3.0 and profit_percent <= 2.0:
+                    return "Time Limit Tight Stop (Locked 2.0%) ⏰🛡️"
+                elif max_profit_percent >= 1.5 and profit_percent <= 1.0:
+                    return "Time Limit Tight Stop (Locked 1.0%) ⏰🛡️"
+                elif max_profit_percent >= 0.5 and profit_percent <= 0.5:
+                    return "Time Limit Tight Stop (Breakeven 0.5%) ⏰🛡️"
 
         if state.position_side == "SHORT":
             if state.dynamic_tp > 0 and current_price <= state.dynamic_tp:

@@ -81,15 +81,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             
         update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
         
-        # We will only proceed if the AI explicitly agrees with the technical signal's direction.
-        # AI might output "BUY" or "LONG" for a Long position, and "SELL" or "SHORT" for a Short position.
-        is_ai_agreed = False
-        if position_side == "LONG" and decision in ["BUY", "LONG"]:
-            is_ai_agreed = True
-        elif position_side == "SHORT" and decision in ["SELL", "SHORT"]:
-            is_ai_agreed = True
-
-        if is_ai_agreed and risk_score <= 65:
+        # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
+        # We proceed as long as AI doesn't explicitly flag the trade as too risky (>65) or explicitly demands a HOLD.
+        if decision != "HOLD" and risk_score <= 65:
             # Check Slippage
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price
@@ -152,12 +146,12 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                     ai_hold_cooldown_until=None
                 )
         else:
-            if not is_ai_agreed and decision not in ["HOLD", "UNKNOWN", "WAIT"]:
-                log_msg("INFO", f"⚠️ Direction Mismatch: Technical wants {position_side} ({signal}) but AI decided {decision} for {symbol}. Aborting trade and applying 2-Hour cooldown.", market_type="futures")
-            elif is_ai_agreed and risk_score > 65:
-                log_msg("INFO", f"⚠️ AI agreed with {position_side} for {symbol} but aborted due to high risk score ({risk_score} > 65). Applying 2-Hour HOLD cooldown.", market_type="futures")
+            if decision == "HOLD":
+                log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 2-Hour cooldown.", market_type="futures")
+            elif risk_score > 65:
+                log_msg("INFO", f"⚠️ AI flagged high risk ({risk_score} > 65) for {symbol}. Aborting Futures {signal} and applying 2-Hour cooldown.", market_type="futures")
             else:
-                log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Risk {risk_score}, Decision: {decision}). Applying 2-Hour HOLD cooldown.", market_type="futures")
+                log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Decision: {decision}, Risk: {risk_score}).", market_type="futures")
             state_manager.update_state(symbol, 
                 last_trade_time=datetime.now(timezone.utc),
                 ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(hours=2),
@@ -244,7 +238,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
-        if decision in ["BUY", "LONG"] and risk_score <= 60:
+        # Option A: Technical Indicator leads.
+        if decision != "HOLD" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price
@@ -300,10 +295,10 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                     max_time_in_trade=time_limit
                 )
         else:
-            if decision in ["SELL", "SHORT"]:
-                log_msg("INFO", f"⚠️ Direction Mismatch: Technical wants BUY but AI decided {decision} for {symbol}. Aborting trade and applying Cooldown.", market_type="spot")
-            elif decision in ["BUY", "LONG"] and risk_score > 60:
-                log_msg("INFO", f"⚠️ AI agreed with BUY for {symbol} but aborted due to high risk score ({risk_score} > 60). Applying Cooldown.", market_type="spot")
+            if decision == "HOLD":
+                log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Spot BUY and applying Cooldown.", market_type="spot")
+            elif risk_score > 60:
+                log_msg("INFO", f"⚠️ AI flagged high risk ({risk_score} > 60) for {symbol}. Aborting Spot BUY and applying Cooldown.", market_type="spot")
             else:
                 log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.", market_type="spot")
             state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
@@ -416,6 +411,9 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                             futures_cancel_all_orders(symbol)
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
+                        else:
+                            log_msg("ERROR", f"Reversal exit failed for {symbol}. Aborting new position.")
+                            return
                             
                         # Now that the old position is closed, we MUST drop into the AI Council evaluation to open the new position.
                         # Do not return here. Allow it to fall through to the AI queue submission below.

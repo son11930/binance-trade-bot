@@ -185,10 +185,10 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # ---------------------------------------------------------
         # Sell into Strength (Momentum Take Profit)
         # ---------------------------------------------------------
-        if rsi_value is not None and profit_percent >= 3.0:
-            if state.position_side == "LONG" and rsi_value >= 80:
+        if rsi_value is not None and profit_percent >= 2.0:
+            if state.position_side == "LONG" and rsi_value >= 75:
                 return "Momentum Take Profit (RSI Overbought) 🎯"
-            elif state.position_side == "SHORT" and rsi_value <= 20:
+            elif state.position_side == "SHORT" and rsi_value <= 25:
                 return "Momentum Take Profit (RSI Oversold) 🎯"
         
         # ---------------------------------------------------------
@@ -218,8 +218,8 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
                 return "Step Breakeven Stop (Lock 1.0%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
-        # Cap maximum loss at exactly 5.0% ROE (Hard cap, not multiplied by leverage again)
-        stop_loss_threshold = 5.0 
+        # Cap maximum loss at exactly 3.0% ROE (Hard cap, not multiplied by leverage again)
+        stop_loss_threshold = 3.0 
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"

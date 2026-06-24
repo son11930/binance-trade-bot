@@ -288,8 +288,8 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     macd_cross_up = recent_macd_cross_up
     macd_cross_down = recent_macd_cross_down
     
-    # 15M needs more room to breathe, wide stop loss (2.5x ATR) and high take profit (5.0x ATR)
-    sl_multiplier = 2.5
+    # 15M needs more room to breathe, adjusted stop loss (2.0x ATR) and high take profit (5.0x ATR)
+    sl_multiplier = 2.0
     tp_multiplier = 5.0
     
     # Momentum Filter: Relaxed ADX > 15 to allow AI to catch early trends

@@ -1,3 +1,15 @@
+## [4.6.2] - 2026-06-24
+### Risk/Reward Ratio Fixes & Momentum Take Profit
+**English:**
+- **Momentum Take Profit**: Refined the aggressive scalping TP logic for Futures to trigger at 2.0% profit (down from 3.0%) when RSI hits extreme bounds (75 for LONG, 25 for SHORT) to lock in gains before sudden Whipsaw reversals.
+- **Risk Capping**: Tightened the global Futures Hard Stop Loss to exactly 3.0% ROE. Lowered the ATR stop-loss multiplier from 2.5 to 2.0 in `analyze_futures_market` to properly align with this new risk threshold.
+- **Reverted Breakeven Ladder**: The Step Breakeven Trailing ladder has been reverted to its original tight configuration to maintain a functional safety net that scales up early.
+
+**Thai (ภาษาไทย):**
+- **ชิงขายทำกำไรไวขึ้น (Momentum TP)**: ปรับจูนให้บอทชิงขายทำกำไรเร็วขึ้นที่ 2.0% (จากเดิม 3.0%) หากกราฟมีสัญญาณหมดแรง (RSI ชน 75 หรือต่ำกว่า 25) เพื่อเก็บกำไรเข้ากระเป๋าก่อนโดนทุบกลับ
+- **คุมความเสี่ยงเข้มงวด (Risk Capping)**: ล็อคเพดานขาดทุนสูงสุดของ Futures ไว้ที่ 3.0% ROE ทันที พร้อมทั้งปรับตัวคูณ ATR Stop Loss ใน Strategy ลดลงจาก 2.5 เท่าเหลือ 2.0 เท่า ให้สอดคล้องกัน
+- **คงระบบแผนสำรอง (Breakeven)**: นำระบบขยับ Stop Loss บังหน้าทุน (Step Breakeven) แบบดั้งเดิมกลับมาใช้ เพื่อให้เป็นเซฟตี้เน็ตกันเหนียว คอยล็อคกำไรขั้นต่ำไว้เผื่อเวลาที่กราฟไปไม่ถึงเป้า RSI
+
 ## [4.6.1] - 2026-06-23
 ### Explicit Direction Mismatch Logging & Spot Fix
 **English:**

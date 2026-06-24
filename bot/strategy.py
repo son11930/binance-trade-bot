@@ -292,22 +292,22 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 2.0
     tp_multiplier = 5.0
     
-    # Momentum Filter: Relaxed ADX > 15 to allow AI to catch early trends
-    strong_trend = adx_curr > 15
+    # Momentum Filter: Moderate ADX > 20 to filter out flat ranging markets
+    strong_trend = adx_curr > 20
     
-    # Volume Filter: Relaxed to allow AI Council to decide
-    strong_volume = True
+    # Volume Filter: Require volume surge to confirm momentum breakouts
+    strong_volume = vol_curr > (vol_sma * 1.2)
     
-    # Long Entry (Requires price >= EMA50 * 0.998 to filter out weak bounces, but allow 0.2% buffer)
-    if price >= ema_50 * 0.998 and macd_cross_up and rsi_curr < 75 and strong_trend and strong_volume:
+    # Long Entry (Requires price >= EMA50 * 0.998 and price >= SMA200 to filter out weak bounces)
+    if price >= ema_50 * 0.998 and price >= sma_200 and macd_cross_up and rsi_curr < 75 and strong_trend and strong_volume:
         return SignalPlan(
             action="BUY", strategy_used="FUTURES_15M_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry (Requires price <= EMA50 * 1.002 to filter out weak drops, but allow 0.2% buffer)
-    if price <= ema_50 * 1.002 and macd_cross_down and rsi_curr > 25 and strong_trend and strong_volume:
+    # Short Entry (Requires price <= EMA50 * 1.002 and price <= SMA200 to filter out weak drops)
+    if price <= ema_50 * 1.002 and price <= sma_200 and macd_cross_down and rsi_curr > 25 and strong_trend and strong_volume:
         return SignalPlan(
             action="SELL", strategy_used="FUTURES_15M_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),

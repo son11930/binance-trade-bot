@@ -101,7 +101,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             # Allocation based on Risk
             allocation_percentage = ai_result.get('allocation_percentage', 20)
             if not isinstance(allocation_percentage, (int, float)): allocation_percentage = 20
-            if allocation_percentage < 10: allocation_percentage = 10
+            if allocation_percentage < 20: allocation_percentage = 20
             if allocation_percentage > 40: allocation_percentage = 40
             
             total_margin = state_manager.live_usdt_balance
@@ -260,8 +260,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             if not isinstance(allocation_percentage, (int, float)):
                 allocation_percentage = 20
             
-            if allocation_percentage < 10:
-                allocation_percentage = 10
+            if allocation_percentage < 20:
+                allocation_percentage = 20
             elif allocation_percentage > 40:
                 allocation_percentage = 40
                 

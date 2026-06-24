@@ -1,3 +1,15 @@
+## [4.6.3] - 2026-06-24
+### Profit Maximization & Signal Filtering
+**English:**
+- **Smart Filtering**: Increased Futures `ADX` threshold from 15 to 20 to avoid flat markets, and enforced `strong_volume` (Volume > 1.2x SMA) to confirm real breakouts.
+- **Trend Alignment**: Added `SMA_200` trend alignment filter for `FUTURES_15M_LONG` and `FUTURES_15M_SHORT` to prevent counter-trend fakeout entries.
+- **Dynamic Allocation Sizing**: Shifted the AI allocation boundaries from `10-40%` to `20-40%` to maximize profit captures on high-probability setups.
+
+**Thai (ภาษาไทย):**
+- **ตัวกรองสัญญาณอัจฉริยะ (Smart Filtering)**: ปรับความเข้มงวดของ `ADX` สำหรับ Futures จาก 15 เป็น 20 เพื่อหลีกเลี่ยงตลาดแกว่งตัว และบังคับให้มีวอลุ่มมากกว่าค่าเฉลี่ย 1.2 เท่า เพื่อยืนยันว่าเบรคจริง
+- **อิงเทรนด์ภาพใหญ่ (Trend Alignment)**: เพิ่มเงื่อนไข `SMA_200` เข้ามาช่วยยืนยันเทรนด์ ห้ามสวนเทรนด์หลักเด็ดขาดเพื่อลดจุดเข้าหลอก (Fakeouts)
+- **อัดไม้ทำกำไร (Dynamic Allocation)**: ปรับกรอบให้ AI วางเงินไม้ขั้นต่ำหนักขึ้นจาก `10-40%` เป็น `20-40%` เพื่อรีดกำไรสูงสุดในจังหวะที่กราฟสวยและชัวร์
+
 ## [4.6.2] - 2026-06-24
 ### Risk/Reward Ratio Fixes & Momentum Take Profit
 **English:**

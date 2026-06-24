@@ -89,10 +89,12 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
         # Sell into Strength (Momentum Take Profit)
         # ---------------------------------------------------------
         if rsi_value is not None:
-            if profit_percent >= 4.0 and rsi_value >= 75:
-                return "Momentum Take Profit (Fast Surge) 🎯"
-            if profit_percent >= 3.0 and rsi_value >= 80:
-                return "Momentum Take Profit (RSI Overbought) 🎯"
+            if profit_percent >= 4.0:
+                if rsi_value >= 75 and hp_drop_percent >= 0.3:
+                    return "Momentum Take Profit (Fast Surge Waning) 🎯"
+            if profit_percent >= 3.0:
+                if rsi_value >= 80 and hp_drop_percent >= 0.2:
+                    return "Momentum Take Profit (RSI Overbought Waning) 🎯"
             
         # ---------------------------------------------------------
         # Spot Step-based Trailing / Breakeven Stop Ladder
@@ -190,16 +192,16 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # ---------------------------------------------------------
         if rsi_value is not None:
             if profit_percent >= 3.0:
-                if state.position_side == "LONG" and rsi_value >= 70:
-                    return "Momentum Take Profit (Fast Surge) 🎯"
-                elif state.position_side == "SHORT" and rsi_value <= 30:
-                    return "Momentum Take Profit (Fast Surge) 🎯"
+                if state.position_side == "LONG" and rsi_value >= 70 and hp_drop_percent >= 0.3:
+                    return "Momentum Take Profit (Fast Surge Waning) 🎯"
+                elif state.position_side == "SHORT" and rsi_value <= 30 and hp_drop_percent >= 0.3:
+                    return "Momentum Take Profit (Fast Surge Waning) 🎯"
                     
             if profit_percent >= 2.0:
-                if state.position_side == "LONG" and rsi_value >= 75:
-                    return "Momentum Take Profit (RSI Overbought) 🎯"
-                elif state.position_side == "SHORT" and rsi_value <= 25:
-                    return "Momentum Take Profit (RSI Oversold) 🎯"
+                if state.position_side == "LONG" and rsi_value >= 75 and hp_drop_percent >= 0.2:
+                    return "Momentum Take Profit (RSI Overbought Waning) 🎯"
+                elif state.position_side == "SHORT" and rsi_value <= 25 and hp_drop_percent >= 0.2:
+                    return "Momentum Take Profit (RSI Oversold Waning) 🎯"
         
         # ---------------------------------------------------------
         # Futures Step-based Trailing / Breakeven Stop Ladder

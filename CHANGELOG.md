@@ -1,3 +1,11 @@
+## [4.6.7] - 2026-06-25
+### Waning Momentum Hotfix (Moonshot Preservation)
+**English:**
+- **Momentum Take Profit Hotfix**: Fixed a critical logical flaw where the new Fast Surge logic would completely block the bot from capturing massive "Moonshot" trends by prematurely exiting at exactly 3.0%. Added a waning momentum check (`hp_drop_percent >= 0.3`) so the bot only triggers the Fast Surge exit if the RSI is high *and* the price has started to retrace slightly from its peak, allowing strong pumps to run freely to 10%+.
+
+**Thai (ภาษาไทย):**
+- **แก้บัคตัดจบออเดอร์ไวไป (Waning Momentum)**: แก้บัคตรรกะที่ระบบ Fast Surge ไปแย่งปิดออเดอร์ที่ 3.0% หมดจนบอทไม่ยอมรันเทรนด์กินคำโต โดยเพิ่มเงื่อนไขว่า "RSI ต้องเดือด และราคากราฟต้องเริ่มแผ่วตกลงมาจากจุดสูงสุด 0.3%" ถึงจะยอมปิดออเดอร์ ทำให้ถ้ากราฟยังพุ่งขึ้นปรี๊ดๆ อย่างต่อเนื่อง บอทจะปล่อยให้กำไรไหลไปเรื่อยๆ จนสุดเทรนด์ (Moonshot 10%+) ได้เหมือนเดิมครับ
+
 ## [4.6.6] - 2026-06-25
 ### Aggressive Trailing Locks & Momentum Take Profit
 **English:**

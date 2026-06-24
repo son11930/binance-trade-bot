@@ -292,11 +292,11 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 2.0
     tp_multiplier = 5.0
     
-    # Momentum Filter: Moderate ADX > 20 to filter out flat ranging markets
-    strong_trend = adx_curr > 20
+    # Momentum Filter: Moderate ADX > 18 to filter out completely flat ranging markets
+    strong_trend = adx_curr > 18
     
-    # Volume Filter: Require volume surge to confirm momentum breakouts
-    strong_volume = vol_curr > (vol_sma * 1.2)
+    # Volume Filter: Ensure volume isn't dead
+    strong_volume = vol_curr > (vol_sma * 0.8)
     
     # Long Entry (Requires price >= EMA50 * 0.998 and price >= SMA200 to filter out weak bounces)
     if price >= ema_50 * 0.998 and price >= sma_200 and macd_cross_up and rsi_curr < 75 and strong_trend and strong_volume:

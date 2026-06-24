@@ -84,12 +84,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
         # We proceed as long as AI doesn't explicitly flag the trade as too risky (>70) or explicitly demands a HOLD.
         
-        # Ensure AI direction matches technical direction
+        # Log if there is a direction mismatch, but we will trust the Technical Indicator for the entry direction.
         if decision != "HOLD" and decision != position_side:
-            log_msg("WARNING", f"⚠️ Direction Mismatch: AI suggests {decision}, but technical signal is {position_side}. Aborting trade for {symbol}.", market_type='futures')
-            update_bot_state(state_manager, f"Aborted: Mismatch ({decision} vs {position_side})", symbol=symbol, market_type='futures')
-            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
-            return
+            log_msg("INFO", f"🧠 AI Opinion Mismatch: AI suggests {decision}, but technical signal is {position_side}. Proceeding with technical signal as AI risk is acceptable.", market_type='futures')
 
         if decision != "HOLD" and risk_score <= 70:
             # Check Slippage
@@ -246,14 +243,11 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
-        # Option A: Technical Indicator leads.
+        # Option A: Technical Indicator leads. AI manages risk and position sizing.
         
-        # Ensure AI direction matches technical direction for Spot (AI must say BUY or LONG)
+        # Log if there is a direction mismatch, but we will trust the Technical Indicator for the entry direction.
         if decision != "HOLD" and decision not in ["BUY", "LONG"]:
-            log_msg("WARNING", f"⚠️ Direction Mismatch: AI suggests {decision}, but technical signal is BUY. Aborting trade for {symbol}.", market_type='spot')
-            update_bot_state(state_manager, f"Aborted: Mismatch ({decision} vs BUY)", symbol=symbol, market_type='spot')
-            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
-            return
+            log_msg("INFO", f"🧠 AI Opinion Mismatch: AI suggests {decision}, but technical signal is BUY. Proceeding with technical signal as AI risk is acceptable.", market_type='spot')
 
         if decision != "HOLD" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
@@ -370,6 +364,10 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             from .ai_queue import ai_queue_manager
             from .strategy import detect_regime
             market_regime_val = detect_regime(df)
+            
+            # Prevent Pyramiding: Lock the symbol by updating last_trade_time before async AI evaluation
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            
             ai_queue_manager.submit(
                 vol_surge_val, symbol, _evaluate_buy_signal, 
                 state_manager, symbol, current_price, strategy_used, sl_target, tp_target, time_limit, 
@@ -414,6 +412,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         # Futures logic now uses AI Council to prevent whipsaws
         if signal in ["BUY", "SELL"] and position_side:
             # Check if opening new position
+            is_reversal = False
             if "LONG" in strategy_used or "SHORT" in strategy_used:
                 if state.position > 0:
                     # Fix: Handle reversals - if we get an opposite signal, close the current position.
@@ -427,6 +426,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                             futures_cancel_all_orders(symbol)
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
+                            is_reversal = True
                         else:
                             log_msg("ERROR", f"Reversal exit failed for {symbol}. Aborting new position.")
                             return
@@ -459,7 +459,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         log_msg("DEBUG", f"⏳ {symbol} in AI HOLD cooldown. Skipping Futures {signal} signal.", market_type='futures')
                         return
                         
-                if state.last_trade_time and state.position == 0:
+                if state.last_trade_time and state.position == 0 and not is_reversal:
                     time_since_trade = (datetime.now(timezone.utc) - state.last_trade_time).total_seconds() / 60
                     if time_since_trade < COOLDOWN_MINUTES:
                         log_msg("DEBUG", f"⏳ {symbol} in execution cooldown. Skipping Futures {signal} signal.")
@@ -481,6 +481,10 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                 from .ai_queue import ai_queue_manager
                 from .strategy import detect_regime
                 market_regime_val = detect_regime(df)
+                
+                # Prevent Pyramiding: Lock the symbol by updating last_trade_time before async AI evaluation
+                state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+                
                 ai_queue_manager.submit(
                     vol_surge_val, symbol, _evaluate_futures_trade_signal, 
                     state_manager, symbol, current_price, signal, position_side, strategy_used, 

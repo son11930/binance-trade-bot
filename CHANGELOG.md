@@ -1,3 +1,17 @@
+## [4.6.4] - 2026-06-25
+### AI Strategy Overhaul & Async Queue Fixes
+**English:**
+- **AI as Risk Manager Only**: Removed the strict direction matching between the AI and technical indicators. The AI now acts strictly as a Risk & Sizing Manager. The bot will execute the technical indicator's direction as long as the AI determines the risk is acceptable (Risk Score <= 70) and doesn't explicitly vote to `HOLD`. Mismatched opinions are now logged for info rather than aborting trades, significantly increasing trade frequency.
+- **Async Pyramiding Lock Fix**: Fixed the root cause of the pyramiding bug where multiple signals in the same second could bypass the `last_trade_time` check while waiting in the async AI queue. Added a synchronous lock right before submitting to the AI queue to instantly engage the cooldown block.
+- **Reversal Execution Optimization**: Fixed a bug where a reversal signal would close the existing position but fail to open the new one due to triggering the cooldown block. Added an `is_reversal` flag to safely bypass the cooldown when pivoting direction.
+- **Adjusted Entry Filters**: Relaxed the ADX filter to `> 18` and the volume surge filter to `> 0.8x SMA` to ensure the bot trades frequently enough on the 15-minute timeframe without entering dead markets.
+
+**Thai (ภาษาไทย):**
+- **ปรับบทบาท AI (Risk Manager)**: ยกเลิกการบังคับให้ AI ต้องคิดทิศทางตรงกับ Indicator เนื่องจากทำให้บอทไม่ได้เทรดเลย ตอนนี้ AI จะทำหน้าที่คุมความเสี่ยงและขนาดไม้เท่านั้น ตราบใดที่คะแนนความเสี่ยงผ่านเกณฑ์ (<= 70) บอทจะเปิดออเดอร์ตาม Indicator เสมอ (แม้ AI จะมองสวนทางก็ตาม)
+- **ล็อคคิวกันถัวไม้ซ้ำ (Async Lock)**: แก้ปัญหาบัคเบิ้ลไม้ระดับโครงสร้าง โดยเพิ่มการล็อคเวลาแบบ Synchronous ทันทีก่อนส่งสัญญาณเข้าคิว AI ป้องกันไม่ให้มีสัญญาณซ้ำหลุดเข้าไปรันพร้อมกัน
+- **แก้บัคการกลับตัว (Reversal Fix)**: แก้ปัญหาที่เวลาบอทปิดไม้ออเดอร์เดิมเพื่อกลับตัว แล้วมันติด Cooldown ตัวเองจนเปิดไม้ใหม่ไม่ได้ ตอนนี้เพิ่มข้อยกเว้นให้ระบบ Reversal ไม่ติด Cooldown แล้ว
+- **คลายฟิลเตอร์ 15 นาที**: ปรับ ADX ลงมาที่ 18 และ Volume เฉลี่ยลดลงมาที่ 0.8 เท่า เพื่อให้บอทมีความถี่ในการเทรดที่เหมาะสมมากขึ้น ไม่ตึงจนเกินไป
+
 ## [4.6.3] - 2026-06-24
 ### Profit Maximization & Signal Filtering
 **English:**

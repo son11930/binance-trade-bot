@@ -88,8 +88,11 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
         # ---------------------------------------------------------
         # Sell into Strength (Momentum Take Profit)
         # ---------------------------------------------------------
-        if rsi_value is not None and profit_percent >= 3.0 and rsi_value >= 80:
-            return "Momentum Take Profit (RSI Overbought) 🎯"
+        if rsi_value is not None:
+            if profit_percent >= 4.0 and rsi_value >= 75:
+                return "Momentum Take Profit (Fast Surge) 🎯"
+            if profit_percent >= 3.0 and rsi_value >= 80:
+                return "Momentum Take Profit (RSI Overbought) 🎯"
             
         # ---------------------------------------------------------
         # Spot Step-based Trailing / Breakeven Stop Ladder
@@ -102,17 +105,17 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
             if profit_percent <= 8.0:
                 return "Step Trailing Stop (Lock 8.0%) 🛡️"
         elif max_profit_percent >= 7.0:
-            if profit_percent <= 5.0:
-                return "Step Trailing Stop (Lock 5.0%) 🛡️"
+            if profit_percent <= 5.5:
+                return "Step Trailing Stop (Lock 5.5%) 🛡️"
         elif max_profit_percent >= 5.0:
-            if profit_percent <= 3.5:
-                return "Step Trailing Stop (Lock 3.5%) 🛡️"
+            if profit_percent <= 4.0:
+                return "Step Trailing Stop (Lock 4.0%) 🛡️"
         elif max_profit_percent >= 4.0:
-            if profit_percent <= 2.5:
-                return "Step Trailing Stop (Lock 2.5%) 🛡️"
+            if profit_percent <= 3.0:
+                return "Step Trailing Stop (Lock 3.0%) 🛡️"
         elif max_profit_percent >= 3.0:
-            if profit_percent <= 1.5:
-                return "Step Breakeven Stop (Lock 1.5%) 🛡️"
+            if profit_percent <= 2.0:
+                return "Step Breakeven Stop (Lock 2.0%) 🛡️"
         elif max_profit_percent >= 2.0:
             if profit_percent <= 1.0:
                 return "Step Breakeven Stop (Lock 1.0%) 🛡️"
@@ -185,37 +188,47 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # ---------------------------------------------------------
         # Sell into Strength (Momentum Take Profit)
         # ---------------------------------------------------------
-        if rsi_value is not None and profit_percent >= 2.0:
-            if state.position_side == "LONG" and rsi_value >= 75:
-                return "Momentum Take Profit (RSI Overbought) 🎯"
-            elif state.position_side == "SHORT" and rsi_value <= 25:
-                return "Momentum Take Profit (RSI Oversold) 🎯"
+        if rsi_value is not None:
+            if profit_percent >= 3.0:
+                if state.position_side == "LONG" and rsi_value >= 70:
+                    return "Momentum Take Profit (Fast Surge) 🎯"
+                elif state.position_side == "SHORT" and rsi_value <= 30:
+                    return "Momentum Take Profit (Fast Surge) 🎯"
+                    
+            if profit_percent >= 2.0:
+                if state.position_side == "LONG" and rsi_value >= 75:
+                    return "Momentum Take Profit (RSI Overbought) 🎯"
+                elif state.position_side == "SHORT" and rsi_value <= 25:
+                    return "Momentum Take Profit (RSI Oversold) 🎯"
         
         # ---------------------------------------------------------
         # Futures Step-based Trailing / Breakeven Stop Ladder
         # ---------------------------------------------------------
         if max_profit_percent >= 10.0:
-            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 8.0% ROE
+            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 8.5% ROE
             trailing_drop_raw_percent = atr_percent * 1.5  # Wider trail for big trends
-            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 8.0:
+            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 8.5:
                 return "ATR Trailing Stop (Moonshot) 🚀"
-            if profit_percent <= 8.0:
-                return "Step Trailing Stop (Lock 8.0%) 🛡️"
+            if profit_percent <= 8.5:
+                return "Step Trailing Stop (Lock 8.5%) 🛡️"
         elif max_profit_percent >= 7.0:
-            if profit_percent <= 5.0:
-                return "Step Trailing Stop (Lock 5.0%) 🛡️"
+            if profit_percent <= 5.5:
+                return "Step Trailing Stop (Lock 5.5%) 🛡️"
         elif max_profit_percent >= 5.0:
-            if profit_percent <= 3.5:
-                return "Step Trailing Stop (Lock 3.5%) 🛡️"
+            if profit_percent <= 4.0:
+                return "Step Trailing Stop (Lock 4.0%) 🛡️"
         elif max_profit_percent >= 4.0:
-            if profit_percent <= 2.5:
-                return "Step Trailing Stop (Lock 2.5%) 🛡️"
+            if profit_percent <= 3.0:
+                return "Step Trailing Stop (Lock 3.0%) 🛡️"
         elif max_profit_percent >= 3.0:
-            if profit_percent <= 1.5:
-                return "Step Breakeven Stop (Lock 1.5%) 🛡️"
-        elif max_profit_percent >= 2.5:
+            if profit_percent <= 2.0:
+                return "Step Breakeven Stop (Lock 2.0%) 🛡️"
+        elif max_profit_percent >= 2.0:
             if profit_percent <= 1.0:
                 return "Step Breakeven Stop (Lock 1.0%) 🛡️"
+        elif max_profit_percent >= 1.5:
+            if profit_percent <= 0.5:
+                return "Step Breakeven Stop (Lock 0.5%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
         # Cap maximum loss at exactly 3.0% ROE (Hard cap, not multiplied by leverage again)

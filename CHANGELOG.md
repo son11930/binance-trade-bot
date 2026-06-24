@@ -1,3 +1,13 @@
+## [4.6.6] - 2026-06-25
+### Aggressive Trailing Locks & Momentum Take Profit
+**English:**
+- **Tightened Trailing Stop Ladder**: Increased the locked profit percentages across both Spot and Futures step ladders. For example, a 3.0% max profit now locks in 2.0% (previously 1.5%), ensuring more profit is secured without getting chopped out by minor fluctuations.
+- **Fast Surge Momentum Take Profit**: Added a new exit mechanism that instantly closes trades if profit is >= 3.0% and RSI enters the surge zone (>= 70 for Long, <= 30 for Short). This prevents 50% retracements by "taking the money and running" during violent price spikes.
+
+**Thai (ภาษาไทย):**
+- **ปรับล็อกกำไร (Trailing) ให้แน่นขึ้น**: ยกจุดตัดล็อกกำไรให้สูงขึ้นทั้ง Spot และ Futures เช่น ถ้าราคาวิ่งไปถึง 3.0% ระบบจะล็อกตายให้ที่ 2.0% (เดิม 1.5%) เพื่อรักษากำไรไว้ไม่ให้ไหลคืนตลาดมากเกินไป
+- **เพิ่มระบบปิดทำกำไรตอนกราฟกระชาก (Fast Surge)**: ถ้ากำไรเกิน 3.0% แล้วกราฟพุ่งแรงจน RSI เดือด ระบบจะชิง "หนีบกำไรกลับบ้าน" ตัดจบออเดอร์ทันทีโดยไม่รอให้ตบกลับลงมาชน Trailing ครับ เน้นกินคำเล็กแต่ได้ชัวร์ๆ ตามคอนเซปต์ Scalping
+
 ## [4.6.5] - 2026-06-25
 ### AI Risk Context & Pyramiding Queue Hotfixes
 **English:**

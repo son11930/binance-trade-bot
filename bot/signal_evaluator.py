@@ -40,7 +40,8 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
             "fear_greed_index": state_manager.fear_greed_index,
-            "lessons_learned": lessons_learned
+            "lessons_learned": lessons_learned,
+            "proposed_direction": position_side
         }
         
         latest_news = state_manager.latest_news
@@ -65,6 +66,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='futures')
             log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='futures')
             update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='futures')
+            state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
             return
             
         log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='futures')
@@ -82,13 +84,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
         
         # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
-        # We proceed as long as AI doesn't explicitly flag the trade as too risky (>70) or explicitly demands a HOLD.
+        # We proceed as long as AI approves the risk (decision == "PROCEED") and risk <= 70.
         
-        # Log if there is a direction mismatch, but we will trust the Technical Indicator for the entry direction.
-        if decision != "HOLD" and decision != position_side:
-            log_msg("INFO", f"🧠 AI Opinion Mismatch: AI suggests {decision}, but technical signal is {position_side}. Proceeding with technical signal as AI risk is acceptable.", market_type='futures')
-
-        if decision != "HOLD" and risk_score <= 70:
+        if decision == "PROCEED" and risk_score <= 70:
             # Check Slippage
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price
@@ -202,7 +200,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "liquidations": state_manager.get_liquidations(symbol),
             "order_book": state_manager.get_order_book(symbol),
             "fear_greed_index": state_manager.fear_greed_index,
-            "lessons_learned": lessons_learned
+            "lessons_learned": lessons_learned,
+            "proposed_direction": "BUY"
         }
         
         latest_news = state_manager.latest_news
@@ -227,6 +226,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='spot')
             log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='spot')
             update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='spot')
+            state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
             return
             
         log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='spot')
@@ -244,12 +244,9 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
         # Option A: Technical Indicator leads. AI manages risk and position sizing.
+        # We proceed as long as AI approves the risk (decision == "PROCEED") and risk <= 60.
         
-        # Log if there is a direction mismatch, but we will trust the Technical Indicator for the entry direction.
-        if decision != "HOLD" and decision not in ["BUY", "LONG"]:
-            log_msg("INFO", f"🧠 AI Opinion Mismatch: AI suggests {decision}, but technical signal is BUY. Proceeding with technical signal as AI risk is acceptable.", market_type='spot')
-
-        if decision != "HOLD" and risk_score <= 60:
+        if decision == "PROCEED" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
             state = state_manager.get_state(symbol)
             live_price = state.last_price if state.last_price > 0 else current_price

@@ -1,3 +1,13 @@
+## [4.6.5] - 2026-06-25
+### AI Risk Context & Pyramiding Queue Hotfixes
+**English:**
+- **AI Risk Context Validator**: Changed the AI's core behavior from being an independent decision-maker to a strict validator. The AI is now explicitly provided the Technical Indicator's proposed direction and asked to evaluate the risk of *that specific direction*, outputting `PROCEED` or `HOLD`. This prevents the fatal logical flaw of using an AI's bullish risk score to approve a bearish technical entry.
+- **Async Queue API Error Lock Release**: Fixed a critical edge case where an AI API failure would correctly attempt to skip the execution cooldown, but fail to release the async pyramiding lock. Added `last_trade_time=None` on error catch blocks to ensure the symbol is immediately unlocked for the next tick.
+
+**Thai (ภาษาไทย):**
+- **แก้ตรรกะประเมินความเสี่ยง AI (Risk Context)**: เปลี่ยนคำสั่งให้ AI เลิกคิดทิศทางเอง แต่ส่งทิศทางของ Indicator ไปให้ AI เป็นคนตรวจข้อสอบแทน แล้วให้ AI ตอบแค่ `PROCEED` (ลุย) หรือ `HOLD` (พัก) วิธีนี้จะแก้บัคที่บอทเอาคะแนนความปลอดภัยฝั่ง LONG ไปใช้เปิดออเดอร์ SHORT ครับ
+- **แก้บัค API ล่มแล้วเหรียญค้าง**: แก้ปัญหาบัคที่เวลา API ของ AI ฝั่งเซิร์ฟเวอร์มีปัญหา แล้วมันไม่ยอมปลดล็อค Pyramiding Lock ให้ ทำให้เหรียญนั้นติด Cooldown ไปฟรีๆ 45 นาที ตอนนี้สั่งปลดล็อคให้ทันทีถ้า API มีปัญหาครับ
+
 ## [4.6.4] - 2026-06-25
 ### AI Strategy Overhaul & Async Queue Fixes
 **English:**

@@ -123,8 +123,8 @@ def call_bear_agent(summary: str, symbol: str) -> str:
             continue
     return "Bearish analysis failed."
 
-def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, lessons_learned: list = None) -> dict:
-    decision_options = '"BUY" or "HOLD" or "SELL"' if market_type == 'spot' else '"LONG" or "SHORT" or "HOLD"'
+def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, proposed_direction: str, lessons_learned: list = None) -> dict:
+    decision_options = '"PROCEED" or "HOLD"'
     
     lessons_text = ""
     if lessons_learned and len(lessons_learned) > 0:
@@ -138,12 +138,13 @@ def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, 
 <bullish>{bull_case}</bullish>
 <bearish>{bear_case}</bearish>
 {lessons_text}
+The technical indicator has fired a signal to execute a {proposed_direction} trade.
+Your job is ONLY to evaluate the risk of executing this specific {proposed_direction} trade. Do not propose a different direction.
 Rules:
-1. If Order_Book_Wall is BEARISH_WALL, reject LONG/BUY setups.
-2. If Order_Book_Wall is BULLISH_WALL, reject SHORT/SELL setups.
-3. If Funding Rate is highly negative and Short Liquidations spike, consider a LONG (Short Squeeze).
-4. If Market_Regime is SIDEWAYS, apply a mean-reversion strategy. Actively look for range-bound trades by BUYING near established support and SELLING/SHORTING near resistance. Avoid trading in the middle of the range and absolutely do not chase breakouts. Output HOLD only if the price is hovering in the middle of the range with no clear setup.
-5. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
+1. If Order_Book_Wall opposes the {proposed_direction} setup, output HOLD.
+2. If Funding Rate and Liquidations oppose the {proposed_direction} setup, increase risk_score.
+3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting, output HOLD.
+4. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']
     for m in models:
@@ -179,7 +180,8 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
             bear_case = future_bear.result()
         
         lessons_learned = tech_data.get('lessons_learned', []) if tech_data else []
-        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, lessons_learned)
+        proposed_dir = tech_data.get('proposed_direction', 'UNKNOWN') if tech_data else 'UNKNOWN'
+        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, proposed_dir, lessons_learned)
         result["committee_debate"] = {"bullish_analysis": bull_case, "bearish_analysis": bear_case}
         result["model_used"] = "3-Agent-Committee"
         result["is_error"] = False

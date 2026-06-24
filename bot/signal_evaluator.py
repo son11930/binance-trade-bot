@@ -417,6 +417,10 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                             
                         # Now that the old position is closed, we MUST drop into the AI Council evaluation to open the new position.
                         # Do not return here. Allow it to fall through to the AI queue submission below.
+                    else:
+                        # We are already in a position in the SAME direction. Skip the new signal to prevent pyramiding.
+                        log_msg("DEBUG", f"⏳ {symbol} already in {state.position_side} position. Skipping {signal} signal.", market_type='futures')
+                        return
                         
                 # OPENING a NEW position - Evaluate with AI Council
                 # (Reversals also reach here after closing the old position above)

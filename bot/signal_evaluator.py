@@ -83,6 +83,14 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         
         # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
         # We proceed as long as AI doesn't explicitly flag the trade as too risky (>70) or explicitly demands a HOLD.
+        
+        # Ensure AI direction matches technical direction
+        if decision != "HOLD" and decision != position_side:
+            log_msg("WARNING", f"⚠️ Direction Mismatch: AI suggests {decision}, but technical signal is {position_side}. Aborting trade for {symbol}.", market_type='futures')
+            update_bot_state(state_manager, f"Aborted: Mismatch ({decision} vs {position_side})", symbol=symbol, market_type='futures')
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            return
+
         if decision != "HOLD" and risk_score <= 70:
             # Check Slippage
             state = state_manager.get_state(symbol)
@@ -239,6 +247,14 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
         
         # Option A: Technical Indicator leads.
+        
+        # Ensure AI direction matches technical direction for Spot (AI must say BUY or LONG)
+        if decision != "HOLD" and decision not in ["BUY", "LONG"]:
+            log_msg("WARNING", f"⚠️ Direction Mismatch: AI suggests {decision}, but technical signal is BUY. Aborting trade for {symbol}.", market_type='spot')
+            update_bot_state(state_manager, f"Aborted: Mismatch ({decision} vs BUY)", symbol=symbol, market_type='spot')
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            return
+
         if decision != "HOLD" and risk_score <= 60:
             # --- Slippage Guard (Mitigation 4) ---
             state = state_manager.get_state(symbol)

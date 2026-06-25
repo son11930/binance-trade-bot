@@ -253,7 +253,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    required_cols = ['SMA_200', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol']
+    required_cols = ['SMA_200', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper']
     if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']) or pd.isna(latest['ADX']):
         return default_signal
         
@@ -340,23 +340,19 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     near_miss_reason = ""
     strategy_used = "NONE"
     
-    if macd_cross_up:
-        strategy_used = "FUTURES_15M_LONG"
+    if fast_momentum_up:
+        strategy_used = "FUTURES_15M_TREND_FAST"
         if price < ema_50 * 0.998:
             near_miss_reason = f"Price below EMA50 ({price:.2f} < {ema_50 * 0.998:.2f})"
-        elif rsi_curr >= 75:
-            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 75)"
-        elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
+        elif rsi_curr >= 70:
+            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
             
-    elif macd_cross_down:
-        strategy_used = "FUTURES_15M_SHORT"
+    elif fast_momentum_down:
+        strategy_used = "FUTURES_15M_TREND_FAST_SHORT"
         if price > ema_50 * 1.002:
             near_miss_reason = f"Price above EMA50 ({price:.2f} > {ema_50 * 1.002:.2f})"
-        elif rsi_curr <= 25:
-            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 25)"
-        elif not strong_trend:
-            near_miss_reason = f"Weak Trend (ADX {adx_curr:.1f})"
+        elif rsi_curr <= 30:
+            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
             
     if near_miss_reason:
         return SignalPlan(

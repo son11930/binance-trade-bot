@@ -340,14 +340,28 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     near_miss_reason = ""
     strategy_used = "NONE"
     
-    if fast_momentum_up:
+    if rsi_hook_up:
+        strategy_used = "FUTURES_15M_DIP_BUY"
+        if price >= ema_50:
+            near_miss_reason = f"Price not below EMA50 ({price:.2f} >= {ema_50:.2f})"
+        elif price <= bb_lower:
+            near_miss_reason = f"Price not inside BB_Lower ({price:.2f} <= {bb_lower:.2f})"
+            
+    elif rsi_hook_down:
+        strategy_used = "FUTURES_15M_PEAK_SHORT"
+        if price <= ema_50:
+            near_miss_reason = f"Price not above EMA50 ({price:.2f} <= {ema_50:.2f})"
+        elif price >= bb_upper:
+            near_miss_reason = f"Price not inside BB_Upper ({price:.2f} >= {bb_upper:.2f})"
+            
+    elif macd_cross_up:
         strategy_used = "FUTURES_15M_TREND_FAST"
         if price < ema_50 * 0.998:
             near_miss_reason = f"Price below EMA50 ({price:.2f} < {ema_50 * 0.998:.2f})"
         elif rsi_curr >= 70:
             near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
             
-    elif fast_momentum_down:
+    elif macd_cross_down:
         strategy_used = "FUTURES_15M_TREND_FAST_SHORT"
         if price > ema_50 * 1.002:
             near_miss_reason = f"Price above EMA50 ({price:.2f} > {ema_50 * 1.002:.2f})"

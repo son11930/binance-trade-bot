@@ -123,7 +123,7 @@ def call_bear_agent(summary: str, symbol: str) -> str:
             continue
     return "Bearish analysis failed."
 
-def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, proposed_direction: str, lessons_learned: list = None) -> dict:
+def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, proposed_direction: str, strategy_used: str, lessons_learned: list = None) -> dict:
     decision_options = '"PROCEED" or "HOLD"'
     
     lessons_text = ""
@@ -138,12 +138,12 @@ def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, 
 <bullish>{bull_case}</bullish>
 <bearish>{bear_case}</bearish>
 {lessons_text}
-The technical indicator has fired a signal to execute a {proposed_direction} trade.
+The technical indicator has fired a signal to execute a {proposed_direction} trade using the [{strategy_used}] strategy.
 Your job is ONLY to evaluate the risk of executing this specific {proposed_direction} trade. Do not propose a different direction.
 Rules:
 1. If Order_Book_Wall opposes the {proposed_direction} setup, output HOLD.
 2. If Funding Rate and Liquidations oppose the {proposed_direction} setup, increase risk_score.
-3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting, output HOLD.
+3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting (like DIP_BUY or PEAK_SHORT), output HOLD.
 4. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']
@@ -167,7 +167,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
         vol_surge = f"{tech_data.get('vol_surge_multiplier', 1.0):.1f}x"
         liqs = tech_data.get('liquidations', {})
         ob = tech_data.get('order_book', {})
-        tech_context = f"Market_Regime: {tech_data.get('market_regime', 'UNKNOWN')}\nADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
+        tech_context = f"Strategy_Used: {tech_data.get('strategy_used', 'UNKNOWN')}\nMarket_Regime: {tech_data.get('market_regime', 'UNKNOWN')}\nADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
 
     import concurrent.futures
     try:
@@ -181,7 +181,8 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
         
         lessons_learned = tech_data.get('lessons_learned', []) if tech_data else []
         proposed_dir = tech_data.get('proposed_direction', 'UNKNOWN') if tech_data else 'UNKNOWN'
-        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, proposed_dir, lessons_learned)
+        strategy_used = tech_data.get('strategy_used', 'UNKNOWN') if tech_data else 'UNKNOWN'
+        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, proposed_dir, strategy_used, lessons_learned)
         result["committee_debate"] = {"bullish_analysis": bull_case, "bearish_analysis": bear_case}
         result["model_used"] = "3-Agent-Committee"
         result["is_error"] = False

@@ -233,8 +233,8 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
                 return "Step Breakeven Stop (Lock 0.5%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
-        # Cap maximum loss at exactly 3.0% ROE (Hard cap, not multiplied by leverage again)
-        stop_loss_threshold = 3.0 
+        # Cap maximum loss at exactly 1.5% ROE (Hard cap, not multiplied by leverage again)
+        stop_loss_threshold = 1.5 
             
         if profit_percent <= -stop_loss_threshold:
             return "Fallback Stop Loss 🚨"

@@ -288,36 +288,48 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     macd_cross_up = recent_macd_cross_up
     macd_cross_down = recent_macd_cross_down
     
-    # 15M needs more room to breathe, adjusted stop loss (2.0x ATR) and high take profit (5.0x ATR)
-    sl_multiplier = 2.0
-    tp_multiplier = 5.0
-    
-    # Momentum Filter: Moderate ADX > 18 to filter out completely flat ranging markets
-    strong_trend = adx_curr > 18
+    # 15M V-Shape Sniper: Ultra-tight stop loss for 1% risk
+    sl_multiplier = 0.8
+    tp_multiplier = 4.0
     
     # Volume Filter: Ensure volume isn't dead
     strong_volume = vol_curr > (vol_sma * 0.8)
     
-    # Long Entry (Requires price >= EMA50 * 0.998 and price >= SMA200 to filter out weak bounces)
-    if price >= ema_50 * 0.998 and price >= sma_200 and macd_cross_up and rsi_curr < 75 and strong_trend and strong_volume:
+    # Fast Momentum (Histogram Reversal)
+    macd_hist_curr = macd_curr - sig_curr
+    macd_hist_prev = macd_prev - sig_prev
+    fast_momentum_up = macd_hist_curr > macd_hist_prev and macd_hist_curr > 0
+    fast_momentum_down = macd_hist_curr < macd_hist_prev and macd_hist_curr < 0
+    
+    # Mean Reversion (V-Shape Sniping)
+    rsi_hook_up = rsi_curr > prev['RSI'] and prev['RSI'] < 30
+    rsi_hook_down = rsi_curr < prev['RSI'] and prev['RSI'] > 70
+    bb_lower = latest['BB_Lower']
+    bb_upper = latest['BB_Upper']
+    
+    # Long Entry conditions
+    dip_buy_signal = rsi_hook_up and price < ema_50 and price > bb_lower
+    trend_buy_signal = price >= ema_50 * 0.998 and fast_momentum_up and rsi_curr < 70
+    
+    if (dip_buy_signal or trend_buy_signal) and strong_volume:
+        strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
         return SignalPlan(
-            action="BUY", strategy_used="FUTURES_15M_LONG",
+            action="BUY", strategy_used=strategy_name,
             stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry (Requires price <= EMA50 * 1.002 and price <= SMA200 to filter out weak drops)
-    if price <= ema_50 * 1.002 and price <= sma_200 and macd_cross_down and rsi_curr > 25 and strong_trend and strong_volume:
+    # Short Entry conditions
+    peak_short_signal = rsi_hook_down and price > ema_50 and price < bb_upper
+    trend_short_signal = price <= ema_50 * 1.002 and fast_momentum_down and rsi_curr > 30
+    
+    if (peak_short_signal or trend_short_signal) and strong_volume:
+        strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST"
         return SignalPlan(
-            action="SELL", strategy_used="FUTURES_15M_SHORT",
+            action="SELL", strategy_used=strategy_name,
             stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
             time_in_trade=24, near_miss_reason="", position_side="SHORT"
         )
-        
-    # Exits: Reversals (Wait for definitive cross, or rely on SL/TP)
-    # Since we are on 15M, a simple MACD reverse cross is less frequent, but still happens. 
-    # Let's add an RSI condition to prevent exiting purely on minor pullbacks.
-    # We exit LONG if MACD crosses down AND RSI was overbought recently (> 65)
     if macd_cross_down and rsi_curr > 65:
         return SignalPlan("SELL", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
         

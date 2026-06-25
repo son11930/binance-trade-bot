@@ -1,3 +1,15 @@
+## [4.6.8] - 2026-06-25
+### V-Shape Sniper Overhaul & Paper Trading
+**English:**
+- **V-Shape Sniper Entries**: Overhauled `bot/strategy.py` entry logic. Removed lagging indicators (SMA200, ADX) and replaced them with Mean-Reversion dip-buying logic (RSI Hook + Bollinger Band breach) and fast MACD Histogram momentum reversals.
+- **Ultra-Tight Stop Loss**: Reduced `sl_multiplier` from 2.0 to 0.8, drastically improving Risk/Reward ratio for scalping. Fallback hard stop reduced to 1.5% ROE.
+- **Paper Trading Mode**: Enabled Paper Trading by default in `.env` for safe testing.
+
+**Thai (ภาษาไทย):**
+- **รื้อจุดเข้าใหม่ (V-Shape Sniper)**: ยกเลิกระบบ Trend Follower ที่เข้าซื้อช้า (ดอย) เปลี่ยนมาใช้ท่าช้อนซื้อจุดกลับตัวก้นเหว (RSI หักหัวขึ้น + หลุดขอบล่าง Bollinger Band) และใช้เส้น MACD แท่งเพื่อความไว
+- **หั่นจุดยอมแพ้ให้แคบสุด (Tight SL)**: ลด Stop loss จากเดิมที่ลากยาว 3-4% บีบให้เหลือยอมขาดทุนแค่ 1.0-1.5% เพื่อแก้ไขปัญหาได้กำไรน้อยแต่ขาดทุนเยอะ
+- **สวิตช์ Paper Trade**: เปิดระบบเทรดเงินปลอมเพื่อทดสอบความแม่นยำของระบบใหม่
+
 ## [4.6.7] - 2026-06-25
 ### Waning Momentum Hotfix (Moonshot Preservation)
 **English:**

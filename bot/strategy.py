@@ -290,7 +290,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     # 15M V-Shape Sniper: Ultra-tight stop loss for 1% risk
     sl_multiplier = 0.8
-    tp_multiplier = 4.0
+    tp_multiplier = 3.5
     
     # Volume Filter: Ensure volume isn't dead
     strong_volume = vol_curr > (vol_sma * 0.8)

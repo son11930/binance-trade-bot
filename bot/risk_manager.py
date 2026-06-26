@@ -207,30 +207,30 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # Futures Step-based Trailing / Breakeven Stop Ladder
         # ---------------------------------------------------------
         if max_profit_percent >= 10.0:
-            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 8.5% ROE
+            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 7.0% ROE
             trailing_drop_raw_percent = atr_percent * 1.5  # Wider trail for big trends
-            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 8.5:
+            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 7.0:
                 return "ATR Trailing Stop (Moonshot) 🚀"
-            if profit_percent <= 8.5:
-                return "Step Trailing Stop (Lock 8.5%) 🛡️"
-        elif max_profit_percent >= 7.0:
-            if profit_percent <= 5.5:
-                return "Step Trailing Stop (Lock 5.5%) 🛡️"
-        elif max_profit_percent >= 5.0:
-            if profit_percent <= 4.0:
-                return "Step Trailing Stop (Lock 4.0%) 🛡️"
-        elif max_profit_percent >= 4.0:
+            if profit_percent <= 7.0:
+                return "Step Trailing Stop (Lock 7.0%) 🛡️"
+        elif max_profit_percent >= 7.5:
+            if profit_percent <= 4.5:
+                return "Step Trailing Stop (Lock 4.5%) 🛡️"
+        elif max_profit_percent >= 5.5:
             if profit_percent <= 3.0:
                 return "Step Trailing Stop (Lock 3.0%) 🛡️"
-        elif max_profit_percent >= 3.0:
+        elif max_profit_percent >= 4.0:
             if profit_percent <= 2.0:
-                return "Step Breakeven Stop (Lock 2.0%) 🛡️"
-        elif max_profit_percent >= 2.0:
+                return "Step Trailing Stop (Lock 2.0%) 🛡️"
+        elif max_profit_percent >= 3.0:
             if profit_percent <= 1.0:
                 return "Step Breakeven Stop (Lock 1.0%) 🛡️"
-        elif max_profit_percent >= 1.5:
+        elif max_profit_percent >= 2.0:
             if profit_percent <= 0.5:
                 return "Step Breakeven Stop (Lock 0.5%) 🛡️"
+        elif max_profit_percent >= 1.5:
+            if profit_percent <= 0.25:
+                return "Step Breakeven Stop (Lock 0.25%) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
         # Use the configured stop_loss_percent (which is price-based), scale it to ROE using leverage.

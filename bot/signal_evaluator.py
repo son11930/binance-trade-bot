@@ -150,6 +150,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 )
             else:
                 log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="futures")
+                state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
@@ -305,6 +306,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 )
             else:
                 log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="spot")
+                state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Spot BUY and applying Cooldown.", market_type="spot")

@@ -369,13 +369,9 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     binance_side = SIDE_BUY if side.upper() == 'BUY' else SIDE_SELL
     step_size = futures_get_step_size(symbol)
     rounded_quantity = round_step_size(quantity, step_size)
-    
-    # If the calculated quantity is smaller than the step size, bump it up to the minimum allowed step size
-    if rounded_quantity <= 0 and quantity > 0:
-        rounded_quantity = step_size
         
     if rounded_quantity <= 0:
-        raise Exception("APIError(code=-4003): Quantity less than or equal to zero after rounding.")
+        raise Exception(f"APIError: Calculated quantity ({quantity}) is smaller than Binance minimum step size ({step_size}). Trade aborted to protect margin limit.")
         
     try:
         order = client.futures_create_order(

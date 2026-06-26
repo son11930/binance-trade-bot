@@ -1,3 +1,15 @@
+## [4.6.9] - 2026-06-26
+### Stop Loss Ladder Optimization & Smart Filters
+**English:**
+- **Breakeven Ladder Expansion**: Widened the step-based trailing stop ladder to provide trades more breathing room (allowing 2-3% ROE pullbacks) before triggering stops, solving the issue of premature exits during minor retracements.
+- **Smart Entry Filters (ADX & SMA)**: Added ADX trend strength and SMA200 macro trend filters to 15M futures strategies. The bot now demands extreme RSI readings when fighting strong trends and ensures trend-following entries align with the macro direction.
+- **Fixed Long Entry Bug**: Removed a flawed condition (`price > bb_lower`) that was blocking the bot from catching absolute bottoms on DIP BUY setups.
+
+**Thai (ภาษาไทย):**
+- **ขยายระยะหายใจ (Trailing Stop Ladder)**: ปรับขั้นบันไดล็อคกำไรให้กว้างขึ้น ยอมให้กราฟย่อตัวได้ 2-3% ROE เพื่อแก้ปัญหาบอททนรวยไม่ได้และโดนสะบัดกิน Stop loss จากความผันผวนปกติ
+- **ฟิลเตอร์ต้านเทรน (ADX & SMA)**: เพิ่มตัวกรองความแรงเทรน (ADX) ถ้ารถไฟกำลังพุ่งแรง บอทจะเรียกร้องค่า RSI ที่สุดโต่งมากๆ ถึงจะยอมสวนเทรน และเช็คภาพใหญ่ (SMA200) เพื่อไม่ให้ดักช็อตในเทรนขาขึ้น
+- **แก้บัคห้ามซื้อก้นเหว (Long Entry Bug)**: แก้ไขตรรกะผิดพลาดที่สั่งห้ามซื้อถ้าราคาแตะขอบล่าง Bollinger Band ทำให้ตอนนี้บอทสามารถเปิดไม้ Long ตอนกราฟร่วงหนักๆ ได้แล้ว
+
 ## [4.6.8] - 2026-06-25
 ### V-Shape Sniper Overhaul & Paper Trading
 **English:**

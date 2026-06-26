@@ -302,10 +302,6 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     fast_momentum_down = macd_hist_curr < macd_hist_prev and macd_hist_curr < 0
     
     # Mean Reversion (V-Shape Sniping)
-    rsi_hook_up = rsi_curr > prev['RSI'] and prev['RSI'] < 30
-    rsi_hook_down = rsi_curr < prev['RSI'] and prev['RSI'] > 70
-    bb_lower = latest['BB_Lower']
-    bb_upper = latest['BB_Upper']
     
     # Trend Strength & Macro Filters
     is_strong_trend = adx_curr >= 25

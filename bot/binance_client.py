@@ -370,6 +370,10 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     step_size = futures_get_step_size(symbol)
     rounded_quantity = round_step_size(quantity, step_size)
     
+    # If the calculated quantity is smaller than the step size, bump it up to the minimum allowed step size
+    if rounded_quantity <= 0 and quantity > 0:
+        rounded_quantity = step_size
+        
     if rounded_quantity <= 0:
         raise Exception("APIError(code=-4003): Quantity less than or equal to zero after rounding.")
         

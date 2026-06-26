@@ -69,7 +69,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
             return
             
-        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='futures')
+        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} (Risk: {risk_score}) | Reason: {reason}", market_type='futures')
             
         ai_debate_payload = {
             "symbol": symbol,
@@ -148,6 +148,8 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                     position_side=position_side,
                     ai_hold_cooldown_until=None
                 )
+            else:
+                log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="futures")
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
@@ -229,7 +231,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
             return
             
-        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} | Reason: {reason}", market_type='spot')
+        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} (Risk: {risk_score}) | Reason: {reason}", market_type='spot')
             
         ai_debate_payload = {
             "symbol": symbol,
@@ -301,6 +303,8 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                     dynamic_tp=tp_target,
                     max_time_in_trade=time_limit
                 )
+            else:
+                log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="spot")
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Spot BUY and applying Cooldown.", market_type="spot")

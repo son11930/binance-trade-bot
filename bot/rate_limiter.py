@@ -1,8 +1,8 @@
 import time
 import threading
 import requests
-import logging
 import os
+from bot.logger import log_msg
 
 class RateLimitException(Exception):
     """Custom exception raised when the bot is globally paused to avoid Binance bans."""
@@ -42,16 +42,16 @@ class GlobalRateLimitManager:
                     saved_time = float(f.read().strip())
                     if time.time() < saved_time:
                         self.pause_until = saved_time
-                        logging.warning(f"Loaded persistent API ban. Resuming in {saved_time - time.time():.1f}s")
+                        log_msg("WARNING", f"🚨 Loaded persistent API ban. Resuming in {saved_time - time.time():.1f}s")
             except Exception as e:
-                logging.error(f"Failed to read {self.ban_file}: {e}")
+                log_msg("ERROR", f"Failed to read {self.ban_file}: {e}")
 
     def _save_ban_state(self):
         try:
             with open(self.ban_file, "w") as f:
                 f.write(str(self.pause_until))
         except Exception as e:
-            logging.error(f"Failed to write {self.ban_file}: {e}")
+            log_msg("ERROR", f"Failed to write {self.ban_file}: {e}")
 
     def check_pause(self):
         """Called before every HTTP request. Raises RateLimitException if paused."""
@@ -85,7 +85,7 @@ class GlobalRateLimitManager:
             if new_pause_time > self.pause_until:
                 self.pause_until = new_pause_time
                 self._save_ban_state()
-                logging.warning(f"🚨 GLOBAL API BAN APPLIED! Pausing all requests for {retry_after_seconds} seconds.")
+                log_msg("WARNING", f"🚨 GLOBAL API BAN APPLIED! Pausing all requests for {retry_after_seconds} seconds.")
 
 # Expose a singleton instance
 rate_limit_manager = GlobalRateLimitManager()

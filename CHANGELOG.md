@@ -436,3 +436,7 @@
 - รองรับการเทรดแบบเหรียญเดียว (BTC)
 - ใช้ระบบจำลองเงินกระเป๋าจำลอง (Paper Trading) เก็บข้อมูลไว้ในหน่วยความจำชั่วคราว
 - แสดงผลการทำงานผ่าน Terminal เบื้องต้น
+
+## [2026-06-27]
+### Fixed
+- Fixed 'Wrong Direction' entry logic in ot/strategy.py. Replaced breakout chasing logic with pullback entries within 1.5% of EMA50, and implemented dynamic RSI boundaries based on macro market regimes to drastically improve R:R and prevent whipsaw losses.

@@ -309,18 +309,18 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     is_macro_downtrend = price < sma_200
     
     # Smart RSI Hooks (Demand extreme RSI if fighting a strong trend)
-    valid_dip_rsi = (prev['RSI'] < 20) if (is_strong_trend and is_macro_downtrend) else (prev['RSI'] < 30)
+    valid_dip_rsi = (prev['RSI'] < 25) if (is_strong_trend and is_macro_downtrend) else (prev['RSI'] < 45 if is_macro_uptrend else prev['RSI'] < 35)
     rsi_hook_up_smart = rsi_curr > prev['RSI'] and valid_dip_rsi
     
-    valid_peak_rsi = (prev['RSI'] > 80) if (is_strong_trend and is_macro_uptrend) else (prev['RSI'] > 70)
+    valid_peak_rsi = (prev['RSI'] > 75) if (is_strong_trend and is_macro_uptrend) else (prev['RSI'] > 55 if is_macro_downtrend else prev['RSI'] > 65)
     rsi_hook_down_smart = rsi_curr < prev['RSI'] and valid_peak_rsi
     
     # Long Entry conditions
-    # Removed the restrictive `price > bb_lower` to allow buying the absolute dip
+    # Buy the Dip (Pullback in Bull Market or Extreme Crash in Bear Market)
     dip_buy_signal = rsi_hook_up_smart and price < ema_50
     
-    # Trend Buy must align with macro trend
-    trend_buy_signal = price >= ema_50 * 0.998 and fast_momentum_up and rsi_curr < 70 and is_macro_uptrend
+    # Trend Buy must align with macro trend AND enter near the dynamic support (EMA 50)
+    trend_buy_signal = (price <= ema_50 * 1.015) and (price >= ema_50 * 0.985) and fast_momentum_up and rsi_curr < 65 and is_macro_uptrend
     
     if (dip_buy_signal or trend_buy_signal) and strong_volume:
         strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
@@ -331,11 +331,11 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         )
         
     # Short Entry conditions
-    # Removed the restrictive `price < bb_upper` to allow shorting the absolute peak
+    # Short the Peak (Bounce in Bear Market or Extreme Pump in Bull Market)
     peak_short_signal = rsi_hook_down_smart and price > ema_50
     
-    # Trend Short must align with macro trend
-    trend_short_signal = price <= ema_50 * 1.002 and fast_momentum_down and rsi_curr > 30 and is_macro_downtrend
+    # Trend Short must align with macro trend AND enter near dynamic resistance (EMA 50)
+    trend_short_signal = (price >= ema_50 * 0.985) and (price <= ema_50 * 1.015) and fast_momentum_down and rsi_curr > 35 and is_macro_downtrend
     
     if (peak_short_signal or trend_short_signal) and strong_volume:
         strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST_SHORT"
@@ -366,17 +366,17 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
             
     elif fast_momentum_up and macd_cross_up:
         strategy_used = "FUTURES_15M_TREND_FAST"
-        if price < ema_50 * 0.998:
-            near_miss_reason = f"Price below EMA50 ({price:.2f} < {ema_50 * 0.998:.2f})"
-        elif rsi_curr >= 70:
-            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
+        if price > ema_50 * 1.015 or price < ema_50 * 0.985:
+            near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
+        elif rsi_curr >= 65:
+            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 65)"
             
     elif fast_momentum_down and macd_cross_down:
         strategy_used = "FUTURES_15M_TREND_FAST_SHORT"
-        if price > ema_50 * 1.002:
-            near_miss_reason = f"Price above EMA50 ({price:.2f} > {ema_50 * 1.002:.2f})"
-        elif rsi_curr <= 30:
-            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
+        if price > ema_50 * 1.015 or price < ema_50 * 0.985:
+            near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
+        elif rsi_curr <= 35:
+            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 35)"
             
     if near_miss_reason:
         return SignalPlan(

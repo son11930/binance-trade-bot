@@ -157,3 +157,8 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
 2. **Lock Starvation Prevention**: Removed `time.sleep()` from within the `GROQ_API_LOCK` block to prevent thread freezing across the entire application.
 3. **Prompt Injection Defense**: All user/external RSS news data is encapsulated in XML `<news_data>` tags with strict system instructions to ignore embedded commands.
 4. **SRP Refactor**: Decoupling `fetch_crypto_news` into `bot/news_client.py` and API fetchers into `bot/binance_client.py`.
+
+## Phase 18: Fixing Trade Direction & Entry Logic
+- **Goal**: Prevent the bot from chasing trends and entering trades at structural extremes.
+- **Action**: Modified ot/strategy.py to enforce Pullback entries (price within 1.5% of EMA50) and dynamic RSI regime bounds for Bear/Bull markets.
+- **Status**: Completed.

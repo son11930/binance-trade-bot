@@ -330,30 +330,36 @@ def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log
         if since_log_id > 0:
             logs = logs_query.filter(SystemLog.id > since_log_id).order_by(SystemLog.id.desc()).limit(100).all()
         else:
-            twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).replace(tzinfo=None)
             one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(tzinfo=None)
             
-            important_logs = db.query(SystemLog).filter(
-                SystemLog.market_type == market_type,
-                SystemLog.timestamp >= twenty_four_hours_ago,
-                ~SystemLog.message.like('%Result: HOLD%'),
-                ~SystemLog.message.like('%Order Book Check%'),
-                ~SystemLog.message.like('%Load shedding%'),
-                ~SystemLog.message.like('%in cooldown%')
-            ).all()
+            # Fetch last 2000 logs quickly without heavy LIKE filters
+            raw_logs = logs_query.order_by(SystemLog.id.desc()).limit(2000).all()
             
-            recent_noisy_logs = db.query(SystemLog).filter(
-                SystemLog.market_type == market_type,
-                SystemLog.timestamp >= one_hour_ago,
-                (SystemLog.message.like('%Result: HOLD%')) | 
-                (SystemLog.message.like('%Order Book Check%')) | 
-                (SystemLog.message.like('%Load shedding%')) |
-                (SystemLog.message.like('%in cooldown%'))
-            ).all()
+            important_logs = []
+            noisy_logs = []
+            for l in raw_logs:
+                msg = l.message
+                is_noisy = "Result: HOLD" in msg or "Order Book Check" in msg or "Load shedding" in msg or "in cooldown" in msg
+                if is_noisy:
+                    if isinstance(l.timestamp, datetime):
+                        ts = l.timestamp
+                    else:
+                        try:
+                            ts = datetime.fromisoformat(l.timestamp)
+                        except:
+                            ts = datetime.now()
+                            
+                    if ts.tzinfo:
+                        ts = ts.replace(tzinfo=None)
+                        
+                    if ts >= one_hour_ago:
+                        noisy_logs.append(l)
+                else:
+                    important_logs.append(l)
             
-            combined_logs = important_logs + recent_noisy_logs
+            combined_logs = important_logs + noisy_logs
             combined_logs.sort(key=lambda x: x.id, reverse=True)
-            logs = combined_logs[:1000]
+            logs = combined_logs[:500]
         
         trades_data = [format_trade(t) for t in trades]
         logs_data = format_logs(logs)

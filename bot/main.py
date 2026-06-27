@@ -85,14 +85,20 @@ def main():
         futures_streams.append(f"{sym_lower}@kline_15m")
     
     # Start Spot Multiplex Streams
-    twm.start_multiplex_socket(callback=ws_manager_spot.process_ticker_message, streams=[s for s in spot_streams if 'ticker' in s])
-    twm.start_multiplex_socket(callback=ws_manager_spot.process_kline_message, streams=[s for s in spot_streams if 'kline' in s])
+    def route_spot_message(msg):
+        ws_manager_spot.process_ticker_message(msg)
+        ws_manager_spot.process_kline_message(msg)
+        
+    twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
     
     # Start Futures Multiplex Streams
+    def route_futures_message(msg):
+        ws_manager_futures.process_ticker_message(msg)
+        ws_manager_futures.process_kline_message(msg)
+        
     try:
         if hasattr(twm, 'start_futures_multiplex_socket'):
-            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_ticker_message, streams=[s for s in futures_streams if 'ticker' in s])
-            twm.start_futures_multiplex_socket(callback=ws_manager_futures.process_kline_message, streams=[s for s in futures_streams if 'kline' in s.lower()])
+            twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
         else:
             log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_futures_multiplex_socket", market_type='futures')
     except Exception as e:
@@ -122,8 +128,9 @@ def main():
         time.sleep(2)
         
         if not twm.is_alive():
-            log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot...")
+            log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot in 15 seconds...")
             import os
+            time.sleep(15)
             os.execv(sys.executable, ['python'] + sys.argv)
 
         try:

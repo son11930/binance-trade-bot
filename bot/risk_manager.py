@@ -188,49 +188,39 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         atr_percent = (atr_value / current_price) * 100 if current_price > 0 and atr_value and not math.isnan(atr_value) else 2.5
         
         # ---------------------------------------------------------
-        # Sell into Strength (Momentum Take Profit)
-        # ---------------------------------------------------------
-        if rsi_value is not None:
-            if profit_percent >= 3.0:
-                if state.position_side == "LONG" and rsi_value >= 70 and hp_drop_percent >= 0.3:
-                    return "Momentum Take Profit (Fast Surge Waning) 🎯"
-                elif state.position_side == "SHORT" and rsi_value <= 30 and hp_drop_percent >= 0.3:
-                    return "Momentum Take Profit (Fast Surge Waning) 🎯"
-                    
-            if profit_percent >= 2.0:
-                if state.position_side == "LONG" and rsi_value >= 75 and hp_drop_percent >= 0.2:
-                    return "Momentum Take Profit (RSI Overbought Waning) 🎯"
-                elif state.position_side == "SHORT" and rsi_value <= 25 and hp_drop_percent >= 0.2:
-                    return "Momentum Take Profit (RSI Oversold Waning) 🎯"
-        
-        # ---------------------------------------------------------
-        # Futures Step-based Trailing / Breakeven Stop Ladder
+        # 4-GEAR DYNAMIC HYBRID TRAILING STOP SYSTEM
         # ---------------------------------------------------------
         if max_profit_percent >= 10.0:
-            # Hybrid Moonshot: Let profit run using ATR, but hard floor at 7.0% ROE
-            trailing_drop_raw_percent = atr_percent * 1.5  # Wider trail for big trends
-            if hp_drop_percent >= trailing_drop_raw_percent and profit_percent > 7.0:
-                return "ATR Trailing Stop (Moonshot) 🚀"
-            if profit_percent <= 7.0:
-                return "Step Trailing Stop (Lock 7.0%) 🛡️"
-        elif max_profit_percent >= 7.5:
-            if profit_percent <= 4.5:
-                return "Step Trailing Stop (Lock 4.5%) 🛡️"
-        elif max_profit_percent >= 5.5:
-            if profit_percent <= 3.0:
-                return "Step Trailing Stop (Lock 3.0%) 🛡️"
-        elif max_profit_percent >= 4.0:
-            if profit_percent <= 2.0:
-                return "Step Trailing Stop (Lock 2.0%) 🛡️"
-        elif max_profit_percent >= 3.0:
-            if profit_percent <= 1.0:
-                return "Step Breakeven Stop (Lock 1.0%) 🛡️"
+            # GEAR 2: Moonshot (High Trend)
+            # Disable Sniper, rely entirely on a deep trailing stop (3.0% gap)
+            # Fix: Ensure trailing stop floor never drops below Gear 3 peak (8.5%)
+            locked_roe = max(8.5, max_profit_percent - 3.0)
+            if profit_percent <= locked_roe:
+                return "Moonshot Trailing Stop (Gear 2) 🚀"
+                
         elif max_profit_percent >= 2.0:
-            if profit_percent <= 0.5:
-                return "Step Breakeven Stop (Lock 0.5%) 🛡️"
-        elif max_profit_percent >= 1.5:
-            if profit_percent <= 0.25:
-                return "Step Breakeven Stop (Lock 0.25%) 🛡️"
+            # GEAR 1: Dynamic Sniper & GEAR 3: Standard Trailing
+            
+            # Gear 1: Dynamic RSI Sniper
+            if rsi_value is not None:
+                # RSI threshold scales with profit: Starts at 75, caps at 85
+                dynamic_rsi_overbought = min(85.0, 75.0 + ((profit_percent - 2.0) * 1.5))
+                dynamic_rsi_oversold = max(15.0, 25.0 - ((profit_percent - 2.0) * 1.5))
+                
+                if state.position_side == "LONG" and rsi_value >= dynamic_rsi_overbought and hp_drop_percent >= 0.2:
+                    return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
+                elif state.position_side == "SHORT" and rsi_value <= dynamic_rsi_oversold and hp_drop_percent >= 0.2:
+                    return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
+            
+            # Gear 3: Standard Trailing (1.5% gap)
+            locked_roe = max_profit_percent - 1.5
+            if profit_percent <= locked_roe:
+                return "Standard Trailing Stop (Gear 3) 🛡️"
+                
+        elif max_profit_percent >= 1.0:
+            # GEAR 4: Early Breakeven
+            if profit_percent <= 0.2:
+                return "Early Breakeven (Gear 4) 🛡️"
                 
         # Futures Fallback Stop Loss (ROE based)
         # Use the configured stop_loss_percent (which is price-based), scale it to ROE using leverage.

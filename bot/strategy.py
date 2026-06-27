@@ -326,7 +326,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
         return SignalPlan(
             action="BUY", strategy_used=strategy_name,
-            stop_loss=price - (atr * sl_multiplier), take_profit=price + (atr * tp_multiplier),
+            stop_loss=price - (atr * sl_multiplier), take_profit=0.0,
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
@@ -341,7 +341,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST_SHORT"
         return SignalPlan(
             action="SELL", strategy_used=strategy_name,
-            stop_loss=price + (atr * sl_multiplier), take_profit=price - (atr * tp_multiplier),
+            stop_loss=price + (atr * sl_multiplier), take_profit=0.0,
             time_in_trade=24, near_miss_reason="", position_side="SHORT"
         )
     if macd_cross_down and rsi_curr > 65:

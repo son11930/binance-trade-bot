@@ -27,7 +27,13 @@ load_dotenv()
 API_KEY = os.getenv("BINANCE_API_KEY")
 SECRET_KEY = os.getenv("BINANCE_API_SECRET") or os.getenv("BINANCE_SECRET_KEY")
 
+from .rate_limiter import BinanceSession
+
 client = Client(API_KEY, SECRET_KEY, requests_params={'timeout': 20})
+# Inject custom session to intercept all Spot and Futures requests
+custom_session = BinanceSession()
+custom_session.headers.update(client.session.headers)
+client.session = custom_session
 # Do not initialize ThreadedWebsocketManager with API keys for public streams to prevent unnecessary exposure
 twm = ThreadedWebsocketManager()
 # twm.start() is now called in main.py to avoid hanging tests

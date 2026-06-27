@@ -317,10 +317,11 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     # Long Entry conditions
     # Buy the Dip (Pullback in Bull Market or Extreme Crash in Bear Market)
-    dip_buy_signal = rsi_hook_up_smart and price < ema_50
+    dip_buy_signal = rsi_hook_up_smart and price <= ema_50 * 1.005 # Relaxed to allow 0.5% above EMA50
     
     # Trend Buy must align with macro trend AND enter near the dynamic support (EMA 50)
-    trend_buy_signal = (price <= ema_50 * 1.015) and (price >= ema_50 * 0.985) and fast_momentum_up and rsi_curr < 65 and is_macro_uptrend
+    # Relaxed the 1.5% ceiling to allow buying when price is pumping, but not absurdly high
+    trend_buy_signal = (price >= ema_50 * 0.985) and fast_momentum_up and rsi_curr < 70 and is_macro_uptrend
     
     if (dip_buy_signal or trend_buy_signal) and strong_volume:
         strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
@@ -335,7 +336,8 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     peak_short_signal = rsi_hook_down_smart and price > ema_50
     
     # Trend Short must align with macro trend AND enter near dynamic resistance (EMA 50)
-    trend_short_signal = (price >= ema_50 * 0.985) and (price <= ema_50 * 1.015) and fast_momentum_down and rsi_curr > 35 and is_macro_downtrend
+    # Relaxed the 1.5% floor to allow shorting breakdowns
+    trend_short_signal = (price <= ema_50 * 1.015) and fast_momentum_down and rsi_curr > 30 and is_macro_downtrend
     
     if (peak_short_signal or trend_short_signal) and strong_volume:
         strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST_SHORT"
@@ -366,17 +368,17 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
             
     elif fast_momentum_up and macd_cross_up:
         strategy_used = "FUTURES_15M_TREND_FAST"
-        if price > ema_50 * 1.015 or price < ema_50 * 0.985:
+        if price < ema_50 * 0.985:
             near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
-        elif rsi_curr >= 65:
-            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 65)"
+        elif rsi_curr >= 70:
+            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
             
     elif fast_momentum_down and macd_cross_down:
         strategy_used = "FUTURES_15M_TREND_FAST_SHORT"
-        if price > ema_50 * 1.015 or price < ema_50 * 0.985:
+        if price > ema_50 * 1.015:
             near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
-        elif rsi_curr <= 35:
-            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 35)"
+        elif rsi_curr <= 30:
+            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
             
     if near_miss_reason:
         return SignalPlan(

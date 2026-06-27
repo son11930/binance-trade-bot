@@ -61,7 +61,7 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
     safe_ai_debate = sanitize_dict(ai_debate) if ai_debate else None
     safe_positions = sanitize_dict(positions_data)
 
-    return {
+    res = {
         "market_type": market_type,
         "status_message": safe_status,
         "is_thinking": thinking,
@@ -72,6 +72,12 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
         "fear_greed_index": sanitize_text(str(state_manager.fear_greed_index)) if state_manager.fear_greed_index is not None else None,
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
+    try:
+        import json
+        with open(f"/tmp/webhook_payload_{market_type}.json", "w") as f:
+            json.dump(res, f)
+    except: pass
+    return res
 
 def dispatch_webhook(payload: dict):
     def _send():

@@ -289,7 +289,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     macd_cross_down = recent_macd_cross_down
     
     # 15M V-Shape Sniper: Ultra-tight stop loss for 1% risk
-    sl_multiplier = 0.8
+    sl_multiplier = 1.0
     tp_multiplier = 3.5
     
     # Volume Filter: Ensure volume isn't dead

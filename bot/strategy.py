@@ -321,7 +321,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     # Trend Buy must align with macro trend AND enter near the dynamic support (EMA 50)
     # 2.5% ceiling to prevent buying the absolute top of a pump, while still allowing breakouts
-    trend_buy_signal = (price <= ema_50 * 1.025) and (price >= ema_50 * 0.985) and fast_momentum_up and rsi_curr < 70 and is_macro_uptrend
+    trend_buy_signal = (price <= ema_50 * 1.025) and (price >= ema_50 * 0.985) and fast_momentum_up and macd_cross_up and rsi_curr < 70 and is_macro_uptrend
     
     if (dip_buy_signal or trend_buy_signal) and strong_volume:
         strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
@@ -337,7 +337,7 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     
     # Trend Short must align with macro trend AND enter near dynamic resistance (EMA 50)
     # 2.5% floor to prevent shorting the absolute bottom of a dump, while still allowing breakdowns
-    trend_short_signal = (price >= ema_50 * 0.975) and (price <= ema_50 * 1.015) and fast_momentum_down and rsi_curr > 30 and is_macro_downtrend
+    trend_short_signal = (price >= ema_50 * 0.975) and (price <= ema_50 * 1.015) and fast_momentum_down and macd_cross_down and rsi_curr > 30 and is_macro_downtrend
     
     if (peak_short_signal or trend_short_signal) and strong_volume:
         strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST_SHORT"

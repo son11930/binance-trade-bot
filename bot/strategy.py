@@ -253,132 +253,100 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    required_cols = ['SMA_200', 'EMA_50', 'RSI', 'MACD', 'MACD_Signal', 'ATR', 'ADX', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper']
-    if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']) or pd.isna(latest['ADX']):
+    required_cols = ['SMA_200', 'RSI', 'ATR', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper']
+    if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']):
         return default_signal
         
     price = latest['close']
     atr = latest['ATR']
     sma_200 = latest['SMA_200']
-    ema_50 = latest['EMA_50']
-    macd_curr = latest['MACD']
-    sig_curr = latest['MACD_Signal']
-    macd_prev = prev['MACD']
-    sig_prev = prev['MACD_Signal']
     rsi_curr = latest['RSI']
-    adx_curr = latest['ADX']
-    adx_prev = prev['ADX']
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
     
-    # Check if MACD crossed within last 5 periods. Only take the MOST RECENT cross.
-    recent_macd_cross_up = False
-    recent_macd_cross_down = False
-    if len(df) >= 5:
-        for i in range(1, 6):
-            idx_curr = -i
-            idx_prev = -i - 1
-            if df.iloc[idx_curr]['MACD'] > df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] <= df.iloc[idx_prev]['MACD_Signal']:
-                recent_macd_cross_up = True
-                break
-            if df.iloc[idx_curr]['MACD'] < df.iloc[idx_curr]['MACD_Signal'] and df.iloc[idx_prev]['MACD'] >= df.iloc[idx_prev]['MACD_Signal']:
-                recent_macd_cross_down = True
-                break
-    
-    macd_cross_up = recent_macd_cross_up
-    macd_cross_down = recent_macd_cross_down
+    # --- OHLC & BB Variables ---
+    open_p = latest['open']
+    high_p = latest['high']
+    low_p = latest['low']
+    close_p = latest['close']
+    bb_lower = latest['BB_Lower']
+    bb_upper = latest['BB_Upper']
     
     # 15M V-Shape Sniper: Ultra-tight stop loss for 1% risk
     sl_multiplier = 1.0
-    tp_multiplier = 3.5
-    
-    # Volume Filter: Ensure volume isn't dead
-    strong_volume = vol_curr > (vol_sma * 0.8)
-    
-    # Fast Momentum (Histogram Reversal)
-    macd_hist_curr = macd_curr - sig_curr
-    macd_hist_prev = macd_prev - sig_prev
-    fast_momentum_up = macd_hist_curr > macd_hist_prev and macd_hist_curr > 0
-    fast_momentum_down = macd_hist_curr < macd_hist_prev and macd_hist_curr < 0
-    
-    # Mean Reversion (V-Shape Sniping)
     
     # Trend Strength & Macro Filters
-    is_strong_trend = adx_curr >= 25
     is_macro_uptrend = price > sma_200
     is_macro_downtrend = price < sma_200
     
-    # Smart RSI Hooks (Demand extreme RSI if fighting a strong trend)
-    valid_dip_rsi = (prev['RSI'] < 25) if (is_strong_trend and is_macro_downtrend) else (prev['RSI'] < 45 if is_macro_uptrend else prev['RSI'] < 35)
-    rsi_hook_up_smart = rsi_curr > prev['RSI'] and valid_dip_rsi
+    # Volume Filter: Must be above average
+    strong_volume = vol_curr > vol_sma
     
-    valid_peak_rsi = (prev['RSI'] > 75) if (is_strong_trend and is_macro_uptrend) else (prev['RSI'] > 55 if is_macro_downtrend else prev['RSI'] > 65)
-    rsi_hook_down_smart = rsi_curr < prev['RSI'] and valid_peak_rsi
+    # 1. Liquidity Sweeps (Pin Bar Traps)
+    body = abs(close_p - open_p)
+    lower_wick = min(open_p, close_p) - low_p
+    upper_wick = high_p - max(open_p, close_p)
     
-    # Long Entry conditions
-    # Buy the Dip (Pullback in Bull Market or Extreme Crash in Bear Market)
-    dip_buy_signal = rsi_hook_up_smart and price <= ema_50 * 1.005 # Relaxed to allow 0.5% above EMA50
+    bullish_sweep = (lower_wick > 2 * body) and (low_p <= bb_lower) and (close_p > bb_lower)
+    bearish_sweep = (upper_wick > 2 * body) and (high_p >= bb_upper) and (close_p < bb_upper)
     
-    # Trend Buy must align with macro trend AND enter near the dynamic support (EMA 50)
-    # 2.5% ceiling to prevent buying the absolute top of a pump, while still allowing breakouts
-    trend_buy_signal = (price <= ema_50 * 1.025) and (price >= ema_50 * 0.985) and fast_momentum_up and macd_cross_up and rsi_curr < 70 and is_macro_uptrend
+    # 2. RSI Divergence (15 period lookback)
+    bullish_div = False
+    bearish_div = False
+    if len(df) >= 16:
+        window = df.iloc[-16:-1]
+        prev_min_idx = window['close'].idxmin()
+        prev_max_idx = window['close'].idxmax()
+        
+        bullish_div = (close_p <= df.loc[prev_min_idx, 'close']) and (rsi_curr > df.loc[prev_min_idx, 'RSI'] + 2.0) and (close_p > open_p)
+        bearish_div = (close_p >= df.loc[prev_max_idx, 'close']) and (rsi_curr < df.loc[prev_max_idx, 'RSI'] - 2.0) and (close_p < open_p)
+        
+    # 3. Exact S/R Touches (SMA 200 Rejections)
+    sma200_bounce = (low_p <= sma_200) and (close_p > sma_200) and (close_p > open_p)
+    sma200_reject = (high_p >= sma_200) and (close_p < sma_200) and (close_p < open_p)
     
-    if (dip_buy_signal or trend_buy_signal) and strong_volume:
-        strategy_name = "FUTURES_15M_DIP_BUY" if dip_buy_signal else "FUTURES_15M_TREND_FAST"
+    # Final Aggregation
+    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend
+    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend
+    
+    if sniper_long:
         return SignalPlan(
-            action="BUY", strategy_used=strategy_name,
+            action="BUY", strategy_used="FUTURES_15M_SNIPER_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=0.0,
             time_in_trade=24, near_miss_reason="", position_side="LONG"
         )
         
-    # Short Entry conditions
-    # Short the Peak (Bounce in Bear Market or Extreme Pump in Bull Market)
-    peak_short_signal = rsi_hook_down_smart and price > ema_50
-    
-    # Trend Short must align with macro trend AND enter near dynamic resistance (EMA 50)
-    # 2.5% floor to prevent shorting the absolute bottom of a dump, while still allowing breakdowns
-    trend_short_signal = (price >= ema_50 * 0.975) and (price <= ema_50 * 1.015) and fast_momentum_down and macd_cross_down and rsi_curr > 30 and is_macro_downtrend
-    
-    if (peak_short_signal or trend_short_signal) and strong_volume:
-        strategy_name = "FUTURES_15M_PEAK_SHORT" if peak_short_signal else "FUTURES_15M_TREND_FAST_SHORT"
+    if sniper_short:
         return SignalPlan(
-            action="SELL", strategy_used=strategy_name,
+            action="SELL", strategy_used="FUTURES_15M_SNIPER_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=0.0,
             time_in_trade=24, near_miss_reason="", position_side="SHORT"
         )
-    if macd_cross_down and rsi_curr > 65:
+        
+    # We exit SHORT if RSI was oversold recently (< 30) and hooks up
+    if rsi_curr > prev['RSI'] and prev['RSI'] < 30:
+        return SignalPlan("BUY", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
+    # We exit LONG if RSI was overbought recently (> 70) and hooks down
+    if rsi_curr < prev['RSI'] and prev['RSI'] > 70:
         return SignalPlan("SELL", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
         
-    # We exit SHORT if MACD crosses up AND RSI was oversold recently (< 35)
-    if macd_cross_up and rsi_curr < 35:
-        return SignalPlan("BUY", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
-        
+    # Provide a near miss reason if structural conditions met but no volume or macro alignment
     near_miss_reason = ""
     strategy_used = "NONE"
     
-    if rsi_hook_up_smart:
-        strategy_used = "FUTURES_15M_DIP_BUY"
-        if price > ema_50 * 1.005:
-            near_miss_reason = f"Price not below EMA50 ({price:.2f} > {ema_50 * 1.005:.2f})"
+    if bullish_sweep or bullish_div or sma200_bounce:
+        strategy_used = "FUTURES_15M_SNIPER_LONG"
+        if not strong_volume:
+            near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
+        elif not is_macro_uptrend:
+            near_miss_reason = "Against Macro Uptrend"
             
-    elif rsi_hook_down_smart:
-        strategy_used = "FUTURES_15M_PEAK_SHORT"
-        if price <= ema_50:
-            near_miss_reason = f"Price not above EMA50 ({price:.2f} <= {ema_50:.2f})"
-            
-    elif fast_momentum_up and macd_cross_up:
-        strategy_used = "FUTURES_15M_TREND_FAST"
-        if price > ema_50 * 1.025 or price < ema_50 * 0.985:
-            near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
-        elif rsi_curr >= 70:
-            near_miss_reason = f"RSI Overbought ({rsi_curr:.1f} >= 70)"
-            
-    elif fast_momentum_down and macd_cross_down:
-        strategy_used = "FUTURES_15M_TREND_FAST_SHORT"
-        if price > ema_50 * 1.015 or price < ema_50 * 0.975:
-            near_miss_reason = f"Price not in Pullback Zone ({price:.2f} vs EMA50 {ema_50:.2f})"
-        elif rsi_curr <= 30:
-            near_miss_reason = f"RSI Oversold ({rsi_curr:.1f} <= 30)"
+    elif bearish_sweep or bearish_div or sma200_reject:
+        strategy_used = "FUTURES_15M_SNIPER_SHORT"
+        if not strong_volume:
+            near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
+        elif not is_macro_downtrend:
+            near_miss_reason = "Against Macro Downtrend"
             
     if near_miss_reason:
         return SignalPlan(

@@ -143,7 +143,7 @@ Your job is ONLY to evaluate the risk of executing this specific {proposed_direc
 Rules:
 1. If Order_Book_Wall opposes the {proposed_direction} setup, output HOLD.
 2. If Funding Rate and Liquidations oppose the {proposed_direction} setup, increase risk_score.
-3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting (like DIP_BUY or PEAK_SHORT), output HOLD.
+3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting (like SNIPER_LONG or SNIPER_SHORT), output HOLD.
 4. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']

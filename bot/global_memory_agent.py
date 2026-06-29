@@ -92,15 +92,23 @@ Recent Missed Opportunities:
 
 Generate a 3-bullet-point 'Global Market Context' summarizing what strategies are working, what traps to avoid, and if the AI is being too cautious. Keep it extremely concise and actionable.
 """
+        success = False
+        models = ['groq-llama-3.1-8b-instant', 'gemini-1.5-flash', 'groq-qwen-2.5-32b', 'groq-mixtral-8x7b-32768']
         
-        try:
-            res = _call_model('groq-llama-3.1-8b-instant', prompt, is_json=False)
-            filename = f"global_memory_{market_type}.txt"
-            with open(os.path.join(os.path.dirname(__file__), "..", filename), "w", encoding="utf-8") as f:
-                f.write(res.text)
-            logging.info(f"Successfully updated {filename}")
-        except Exception as e:
-            logging.error(f"Failed to generate global memory for {market_type}: {sanitize_text(str(e))}")
+        for m in models:
+            try:
+                res = _call_model(m, prompt, is_json=False)
+                filename = f"global_memory_{market_type}.txt"
+                with open(os.path.join(os.path.dirname(__file__), "..", filename), "w", encoding="utf-8") as f:
+                    f.write(res.text)
+                logging.info(f"Successfully updated {filename} using {m}")
+                success = True
+                break
+            except Exception as e:
+                logging.warning(f"Failed to generate global memory with {m} for {market_type}: {sanitize_text(str(e))}")
+                
+        if not success:
+            logging.error(f"All models failed to generate global memory for {market_type}.")
 
 if __name__ == "__main__":
     generate_global_memory()

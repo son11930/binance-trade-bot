@@ -1,3 +1,33 @@
+## [4.7.0] - 2026-06-29
+### Advanced AI Learning System & Opportunity Cost Tracker
+**English:**
+- **AI Decision Tracking**: Implemented the `AIDecision` database table to track all AI evaluations, including trades that were rejected (HOLD).
+- **Opportunity Tracker**: Created `opportunity_tracker.py` to retrospectively grade past rejected trades (after 4 hours) against actual market price action to determine if the AI missed a profitable setup or correctly avoided a loss.
+- **Discord Webhooks**: Integrated Discord notifications to immediately alert when a "Missed Opportunity" is detected.
+- **Global Memory Agent**: Built `global_memory_agent.py` to scan the last 24 hours of wins, losses, and missed opportunities to generate a daily macro context report (`global_memory.txt`).
+- **AI Context Injection**: The Chief Agent now receives past winning trades and the daily Global Memory context in its prompt to learn from successes and adapt to the current market regime.
+
+**Thai (ภาษาไทย):**
+- **บันทึกการตัดสินใจ AI**: เพิ่มตาราง `AIDecision` เพื่อบันทึกทุกความคิดของ AI รวมถึงออเดอร์ที่สั่งระงับ (HOLD) เพื่อนำมาเรียนรู้ย้อนหลัง
+- **ระบบติดตามไม้ตกรถ (Opportunity Tracker)**: สร้างสคริปต์ตรวจเช็คออเดอร์ที่ถูกปัดทิ้งเมื่อ 4 ชั่วโมงที่แล้ว โดยดึงกราฟจริงมาเทียบว่า AI พลาดโอกาสทำกำไร หรือตัดสินใจถูกแล้วที่ห้ามเทรด
+- **แจ้งเตือนไม้ตกรถ**: ส่งแจ้งเตือนผ่าน Discord ทันทีเมื่อระบบคำนวณพบว่า AI สั่งปัดตกไม้ที่ควรจะได้กำไร
+- **ระบบความจำส่วนกลาง (Global Memory)**: สร้าง Agent ให้สรุปผลงานตลอด 24 ชั่วโมงที่ผ่านมา (ไม้ชนะ, ไม้แพ้, ไม้ตกรถ) ออกมาเป็น `global_memory.txt`
+- **ป้อนความทรงจำให้ AI**: ตอนนี้ Chief Agent จะได้รับข้อมูลไม้ที่เพิ่งชนะมาหมาดๆ และสรุปสภาวะตลาดประจำวัน เพื่อให้ AI เก่งขึ้น และไม่ลืมว่าช่วงนี้กลยุทธ์ไหนกำลังทำเงิน
+
+## [4.6.10] - 2026-06-29
+### High-Precision Sniper Entries (V-Shape & Rejection)
+**English:**
+- **Sniper Entry Overhaul**: Scrapped the old MACD/RSI logic for Futures entries. Replaced it with extreme high-precision conditions that focus on immediate profit, allowing the tight 1.0 ATR stop loss to survive.
+- **Liquidity Sweeps & Divergences**: The bot now hunts for Pin Bar traps (Bollinger Band rejections with 2x wick size), 15-period RSI Divergences (momentum shifts against price), and exact SMA 200 rejections.
+- **Volume Filter Adjustment**: Enforced `volume > SMA_20` across all Sniper conditions to guarantee trades only occur when there is active market participation, securing an average of 1-10 high-probability trades daily.
+- **AI Prompt Update**: Updated `ai_engine.py` to correctly interpret the new `SNIPER_LONG` and `SNIPER_SHORT` signals as breakout/reversal plays rather than mean-reverting, preventing the AI from inappropriately vetoing the trades.
+
+**Thai (ภาษาไทย):**
+- **รื้อจุดเข้าใหม่หมด (Sniper Entry)**: โละระบบตัดกันของ MACD/RSI ทิ้งทั้งหมด และเปลี่ยนมาใช้เงื่อนไขแบบ Sniper ขั้นสุดยอด ที่เน้นว่า "เข้าปุ๊บต้องกำไรปั๊บ" เพื่อรักษา Stop Loss 1.0 ATR ที่แคบมากๆ เอาไว้
+- **ล่าแม่มด & ขัดแย้งโมเมนตัม**: บอทจะดักกินไส้เทียน (Pin Bar Trap) ที่สะบัดหลอกนอกกรอบ Bollinger, ดักหาจุดกลับตัวที่กราฟขัดแย้งกับ RSI ย้อนหลัง 15 แท่ง, และดักจังหวะชนเส้นต้านทานหลัก (SMA 200) แบบพอดีเป๊ะ
+- **กรองความถี่ให้พอดี**: ปรับเงื่อนไข Volume ให้แค่สูงกว่าค่าเฉลี่ยปกติก็พอ เพื่อรับประกันทางคณิตศาสตร์ว่าบอทจะยังสแกนเจอและได้เทรดวันละ 1-10 ไม้เป็นอย่างน้อย
+- **อัพเดทสมอง AI**: แก้ไข Prompt ให้ AI เข้าใจชื่อท่า `SNIPER_LONG` และ `SNIPER_SHORT` เพื่อไม่ให้ AI งงและปัดตกสัญญาณทิ้ง
+
 ## [4.6.9] - 2026-06-26
 ### Stop Loss Ladder Optimization & Smart Filters
 **English:**

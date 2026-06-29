@@ -123,28 +123,47 @@ def call_bear_agent(summary: str, symbol: str) -> str:
             continue
     return "Bearish analysis failed."
 
-def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, proposed_direction: str, strategy_used: str, lessons_learned: list = None) -> dict:
+def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, market_type: str, proposed_direction: str, strategy_used: str, lessons_learned: list = None, winning_trades: list = None) -> dict:
     decision_options = '"PROCEED" or "HOLD"'
     
     lessons_text = ""
     if lessons_learned and len(lessons_learned) > 0:
-        lessons_text = "<lessons_learned>\nAvoid repeating past mistakes. Review recent losing trades for this asset:\n"
+        lessons_text += "<lessons_learned>\nAvoid repeating past mistakes. Review recent losing trades for this asset:\n"
         for t in lessons_learned:
             lessons_text += f"- {t.get('position_side', t.get('side'))} resulted in {t.get('pnl_percent', 0):.2f}% loss. AI Reason was: {t.get('ai_reasoning', 'Unknown')}\n"
         lessons_text += "</lessons_learned>\n"
         
+    if winning_trades and len(winning_trades) > 0:
+        lessons_text += "<winning_trades>\nReplicate these recent successes for this asset:\n"
+        for t in winning_trades:
+            lessons_text += f"- {t.get('position_side', t.get('side'))} resulted in {t.get('pnl_percent', 0):.2f}% WIN. AI Reason was: {t.get('ai_reasoning', 'Unknown')}\n"
+        lessons_text += "</winning_trades>\n"
+        
+    global_memory = ""
+    try:
+        import os
+        if os.path.exists("global_memory.txt"):
+            with open("global_memory.txt", "r", encoding="utf-8") as f:
+                global_memory = f"<global_market_context>\n{f.read().strip()}\n</global_market_context>\n"
+    except:
+        pass
+
     prompt = f"""You are the Chief Hedge Fund Manager evaluating {symbol} for {market_type.upper()}.
 <summary>{summary}</summary>
 <bullish>{bull_case}</bullish>
 <bearish>{bear_case}</bearish>
+{global_memory}
 {lessons_text}
 The technical indicator has fired a signal to execute a {proposed_direction} trade using the [{strategy_used}] strategy.
 Your job is ONLY to evaluate the risk of executing this specific {proposed_direction} trade. Do not propose a different direction.
 Rules:
-1. If Order_Book_Wall opposes the {proposed_direction} setup, output HOLD.
+1. If a MASSIVE Order_Book_Wall strongly opposes the {proposed_direction}, output HOLD.
 2. If Funding Rate and Liquidations oppose the {proposed_direction} setup, increase risk_score.
-3. If Market_Regime is SIDEWAYS and {proposed_direction} is chasing a breakout rather than mean-reverting (like SNIPER_LONG or SNIPER_SHORT), output HOLD.
-4. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
+3. If {strategy_used} contains 'SNIPER' and Market_Regime is SIDEWAYS, this is an IDEAL mean-reverting setup. DO NOT output HOLD simply because the market is sideways.
+4. If {strategy_used} contains 'SNIPER', you MUST check Vol_Surge. A SNIPER trade with low volume is risky. If Vol_Surge < 1.0, increase risk_score.
+5. If Market_Regime is SIDEWAYS and {strategy_used} contains 'SNIPER', check BB_Width. If the channel is extremely tight (BB_Width < 0.025 or 2.5%), output HOLD because it lacks the volatility to hit our dynamic Take Profit gears (which start at 1.0% and scale up infinitely to capture massive trends) before hitting our tight Stop Loss.
+6. If there is no news, do NOT default to HOLD. Rely 100% on the Technical Analysis and Market Data provided to make your decision.
+7. Output JSON: {{"decision": {decision_options}, "risk_score": integer (0-100), "allocation_percentage": integer (10-40), "reason": "1 sentence explanation"}}
     """
     models = ['groq-llama-3.3-70b-versatile', 'gemini-2.0-flash', 'groq-mixtral-8x7b-32768']
     for m in models:
@@ -156,8 +175,8 @@ Rules:
     raise Exception("All Chief Strategist models failed")
 
 def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, market_type: str = 'spot') -> dict:
-    if not news_text or news_text.startswith("No recent news"):
-        return {"decision": "HOLD", "risk_score": 50, "reason": "No news available for analysis.", "model_used": "NONE", "is_error": False, "committee_debate": {}}
+    if not news_text or news_text.startswith("No recent news") or len(news_text) < 10:
+        news_text = "No recent fundamental news available for this asset. Rely entirely on technical data."
         
     sanitized_news = html.escape(news_text)
     sanitized_symbol = html.escape(symbol)
@@ -167,7 +186,7 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
         vol_surge = f"{tech_data.get('vol_surge_multiplier', 1.0):.1f}x"
         liqs = tech_data.get('liquidations', {})
         ob = tech_data.get('order_book', {})
-        tech_context = f"Strategy_Used: {tech_data.get('strategy_used', 'UNKNOWN')}\nMarket_Regime: {tech_data.get('market_regime', 'UNKNOWN')}\nADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
+        tech_context = f"Strategy_Used: {tech_data.get('strategy_used', 'UNKNOWN')}\nMarket_Regime: {tech_data.get('market_regime', 'UNKNOWN')}\nADX: {tech_data.get('adx', 'N/A')}\nRSI: {tech_data.get('rsi', 'N/A')}\nMACD: {tech_data.get('macd_histogram', 'N/A')}\nATR: {tech_data.get('atr', 'N/A')}\nBB_Width: {tech_data.get('bb_width', 'N/A')}\nVol_Surge: {vol_surge}\nFunding_Rate: {tech_data.get('funding_rate', 'N/A')}\nLong_Short_Ratio: {tech_data.get('long_short_ratio', 'N/A')}\nLiquidations: Long ${liqs.get('long_liq_usd', 0.0)}, Short ${liqs.get('short_liq_usd', 0.0)}\nOrder_Book_Wall: {ob.get('wall_type', 'NONE')} (Bid: {ob.get('bid_volume', 0.0)}, Ask: {ob.get('ask_volume', 0.0)})"
 
     import concurrent.futures
     try:
@@ -180,12 +199,14 @@ def analyze_sentiment(news_text: str, symbol: str, tech_data: dict = None, marke
             bear_case = future_bear.result()
         
         lessons_learned = tech_data.get('lessons_learned', []) if tech_data else []
+        winning_trades = tech_data.get('winning_trades', []) if tech_data else []
         proposed_dir = tech_data.get('proposed_direction', 'UNKNOWN') if tech_data else 'UNKNOWN'
         strategy_used = tech_data.get('strategy_used', 'UNKNOWN') if tech_data else 'UNKNOWN'
-        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, proposed_dir, strategy_used, lessons_learned)
+        result = call_chief_agent(summary, bull_case, bear_case, sanitized_symbol, market_type, proposed_dir, strategy_used, lessons_learned, winning_trades)
         result["committee_debate"] = {"bullish_analysis": bull_case, "bearish_analysis": bear_case}
         result["model_used"] = "3-Agent-Committee"
         result["is_error"] = False
+        result["tech_context"] = tech_context
         return result
     except Exception as e:
         from .logger import log_msg

@@ -328,3 +328,13 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
 - **Goal**: Prevent the VPS IP from being banned by Binance (HTTP 418/429/403) by dynamically tracking API weights and respecting rate limits.
 - **Action**: Implement global exception handling to intercept Binance API limits. Track `X-MBX-USED-WEIGHT-1M`, respect `Retry-After` headers, and automatically pause the bot's REST API polling when nearing the 6,000 limit.
 - **Status**: Planning.
+
+## Phase 21: Advanced AI Learning System
+- **Goal**: Upgrade the AI to a Self-Improving Autonomous System by learning from missed opportunities and past wins.
+- **Action**: 
+  - Add `AIDecision` table to the database to track all HOLD decisions.
+  - Create `opportunity_tracker.py` to retroactively grade past HOLD decisions by pulling historical klines, marking them as Missed Opportunities or Good Blocks.
+  - Create `global_memory_agent.py` to summarize daily market outcomes into `global_memory.txt` (detecting Spoofing and Macro Trends).
+  - Update AI Prompts to inject recent winning trades and global memory.
+  - Implement Discord notification webhook for Missed Opportunities.
+- **Status**: Execution in progress.

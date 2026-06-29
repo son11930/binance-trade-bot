@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from .strategy import apply_indicators, analyze_market
 from .ai_engine import analyze_sentiment
-from .database import sanitize_text
+from .database import sanitize_text, TradeRepository
 from bot.logger import log_msg
 from bot.state import StateManager, SymbolState
 from bot.control import get_bot_control
@@ -41,6 +41,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             "order_book": state_manager.get_order_book(symbol),
             "fear_greed_index": state_manager.fear_greed_index,
             "lessons_learned": lessons_learned,
+            "winning_trades": TradeRepository.get_recent_winning_trades(symbol, limit=2, market_type='futures'),
             "proposed_direction": position_side
         }
         
@@ -58,6 +59,10 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
         
         if risk_score is None or not isinstance(risk_score, (int, float)):
             risk_score = 100
+            
+        # Save decision for Opportunity Cost Tracker
+        tech_context = ai_result.get('tech_context', '')
+        TradeRepository.save_ai_decision(symbol, position_side, risk_score, decision, reason, tech_context, market_type='futures')
             
         model_used = ai_result.get('model_used', 'UNKNOWN')
         is_error = ai_result.get('is_error', False)
@@ -204,6 +209,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             "order_book": state_manager.get_order_book(symbol),
             "fear_greed_index": state_manager.fear_greed_index,
             "lessons_learned": lessons_learned,
+            "winning_trades": TradeRepository.get_recent_winning_trades(symbol, limit=2, market_type='spot'),
             "proposed_direction": "BUY"
         }
         
@@ -221,6 +227,10 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
         
         if risk_score is None or not isinstance(risk_score, (int, float)):
             risk_score = 100
+            
+        # Save decision for Opportunity Cost Tracker
+        tech_context = ai_result.get('tech_context', '')
+        TradeRepository.save_ai_decision(symbol, "BUY", risk_score, decision, reason, tech_context, market_type='spot')
             
         model_used = ai_result.get('model_used', 'UNKNOWN')
         is_error = ai_result.get('is_error', False)

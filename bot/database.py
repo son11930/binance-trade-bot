@@ -162,6 +162,28 @@ class SystemLog(Base):
     message = Column(String)
     market_type = Column(String, default="spot", index=True)
 
+class AIDecision(Base):
+    __tablename__ = "ai_decisions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    timestamp = Column(DateTime(timezone=True), default=func.now(), index=True)
+    proposed_direction = Column(String) # LONG or SHORT
+    risk_score = Column(Float, nullable=True)
+    decision = Column(String) # PROCEED or HOLD
+    ai_reasoning = Column(String, nullable=True)
+    tech_context = Column(String, nullable=True)
+    market_type = Column(String, default="spot", index=True)
+    
+    # Tracking for Opportunity Cost Tracker
+    retroactive_outcome = Column(String, nullable=True) # Win, Loss, Unknown
+    max_pnl_reached = Column(Float, nullable=True)
+    max_loss_reached = Column(Float, nullable=True)
+
+    __table_args__ = (
+        sqlalchemy.Index('ix_ai_decision_symbol_market_time', 'symbol', 'market_type', 'timestamp'),
+    )
+
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
     Base.metadata.create_all(bind=engine_futures)
@@ -177,6 +199,27 @@ def get_db(market_type: str = 'spot'):
         db.close()
 
 class TradeRepository:
+    @staticmethod
+    def save_ai_decision(symbol: str, proposed_direction: str, risk_score: float, decision: str, ai_reasoning: str, tech_context: str, market_type: str = 'spot'):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
+        try:
+            ai_dec = AIDecision(
+                symbol=symbol,
+                proposed_direction=proposed_direction,
+                risk_score=risk_score,
+                decision=decision,
+                ai_reasoning=sanitize_text(ai_reasoning) if ai_reasoning else None,
+                tech_context=sanitize_text(tech_context) if tech_context else None,
+                market_type=market_type
+            )
+            db.add(ai_dec)
+            db.commit()
+        except Exception:
+            logging.exception(f"Error saving AI decision for {symbol} ({market_type})")
+            db.rollback()
+        finally:
+            db.close()
+
     @staticmethod
     def get_last_buy_price(symbol: str, market_type: str = 'spot') -> float:
         db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
@@ -248,6 +291,32 @@ class TradeRepository:
                 Trade.symbol == symbol, 
                 Trade.market_type == market_type,
                 Trade.pnl_percent < 0
+            ).order_by(Trade.timestamp.desc()).limit(limit).all()
+            
+            result = []
+            for t in trades:
+                result.append({
+                    "timestamp": t.timestamp,
+                    "side": t.side,
+                    "position_side": t.position_side,
+                    "pnl_percent": t.pnl_percent,
+                    "ai_reasoning": t.ai_reasoning
+                })
+            return result
+        except Exception:
+            logging.exception(f"Error fetching losing trades for {symbol} ({market_type})")
+            return []
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recent_winning_trades(symbol: str, limit: int = 5, market_type: str = 'spot'):
+        db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
+        try:
+            trades = db.query(Trade).filter(
+                Trade.symbol == symbol, 
+                Trade.market_type == market_type,
+                Trade.pnl_percent > 0
             ).order_by(Trade.timestamp.desc()).limit(limit).all()
             
             result = []

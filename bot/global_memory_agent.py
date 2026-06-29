@@ -93,7 +93,7 @@ Recent Missed Opportunities:
 Generate a 3-bullet-point 'Global Market Context' summarizing what strategies are working, what traps to avoid, and if the AI is being too cautious. Keep it extremely concise and actionable.
 """
         success = False
-        models = ['groq-llama-3.1-8b-instant', 'gemini-1.5-flash', 'groq-qwen-2.5-32b', 'groq-mixtral-8x7b-32768']
+        models = ['groq-llama-3.1-8b-instant', 'gemini-3.1-flash-lite', 'groq-qwen-2.5-32b', 'groq-mixtral-8x7b-32768']
         
         for m in models:
             try:

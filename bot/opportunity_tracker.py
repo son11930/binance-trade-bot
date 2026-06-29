@@ -8,17 +8,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from bot.database import SessionLocalFutures, SessionLocalSpot, AIDecision, setup_logging, sanitize_text
 from bot.binance_client import client
+from bot.webhook_notifier import send_discord_alert
 
 setup_logging()
-
-def send_discord_alert(msg: str):
-    webhook = os.getenv("DISCORD_WEBHOOK_URL")
-    if not webhook or not webhook.startswith("https://"):
-        return
-    try:
-        requests.post(webhook, json={"content": msg}, timeout=5)
-    except Exception as e:
-        logging.error(f"Discord webhook failed: {sanitize_text(str(e))}")
 
 def track_opportunities():
     now = datetime.now(timezone.utc)

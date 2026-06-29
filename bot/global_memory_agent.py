@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from bot.database import SessionLocalFutures, SessionLocalSpot, Trade, AIDecision, setup_logging, sanitize_text
 from bot.ai_engine import _call_model
+from bot.webhook_notifier import send_discord_alert
 
 setup_logging()
 
@@ -102,6 +103,10 @@ Generate a 3-bullet-point 'Global Market Context' summarizing what strategies ar
                 with open(os.path.join(os.path.dirname(__file__), "..", filename), "w", encoding="utf-8") as f:
                     f.write(res.text)
                 logging.info(f"Successfully updated {filename} using {m}")
+                
+                # Flex Mode: Send to Discord
+                send_discord_alert(f"🧠 **AI Market Briefing [{market_type.upper()}]**\n\n{res.text}")
+                
                 success = True
                 break
             except Exception as e:

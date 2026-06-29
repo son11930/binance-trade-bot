@@ -11,6 +11,7 @@ from .risk_manager import check_spot_risk_management, check_futures_risk_managem
 from .trade_executor import execute_trade, execute_futures_trade
 from .signal_evaluator import evaluate_strategy_for_symbol, evaluate_futures_strategy_for_symbol
 from .logger import log_msg
+from .webhook_notifier import send_discord_alert
 
 _execution_pool = ThreadPoolExecutor(max_workers=10)
 
@@ -106,6 +107,9 @@ class WebSocketManager:
                         def _execute_spot_rm():
                             trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
                             if trade:
+                                if "Loss" not in rm_signal:
+                                    send_discord_alert(f"🎯 **WIN! [SPOT] {symbol}**\nReason: {rm_signal}")
+                                    
                                 gross_return = state.position * current_price
                                 fee = gross_return * 0.001
                                 net_return = gross_return - fee
@@ -162,6 +166,8 @@ class WebSocketManager:
                             if trade:
                                 from .binance_client import futures_cancel_all_orders
                                 futures_cancel_all_orders(symbol)
+                                if "Loss" not in rm_signal:
+                                    send_discord_alert(f"🎯 **WIN! [{self.market_type.upper()}] {symbol}**\nReason: {rm_signal}")
                                 
                                 # Update local balance if we track it (optional for futures but let's do it)
                                 pnl_amount = trade.get('pnl_amount')

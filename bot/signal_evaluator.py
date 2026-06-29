@@ -9,7 +9,7 @@ from bot.state import StateManager, SymbolState
 from bot.control import get_bot_control
 from .config import PAPER_TRADING, COOLDOWN_MINUTES
 from .trade_executor import execute_trade
-from .webhook_notifier import update_bot_state
+from .webhook_notifier import update_bot_state, send_discord_alert
 from .binance_client import get_current_price
 from .state import StateManager
 
@@ -139,6 +139,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=PAPER_TRADING)
             
             if trade:
+                send_discord_alert(f"🤖 **[FUTURES] Sniper Entry: {signal} {symbol}**\nReason: {reason}")
                 state_manager.update_state(symbol, 
                     position=qty, 
                     buy_price=current_price, 
@@ -300,6 +301,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             
             trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING)
             if trade:
+                send_discord_alert(f"🤖 **[SPOT] Sniper Entry: BUY {symbol}**\nReason: {reason}")
                 state_manager.add_to_balance(-trade_amount)
 
                 state_manager.update_state(symbol, 

@@ -142,10 +142,12 @@ def call_chief_agent(summary: str, bull_case: str, bear_case: str, symbol: str, 
     global_memory = ""
     try:
         import os
-        if os.path.exists("global_memory.txt"):
-            with open("global_memory.txt", "r", encoding="utf-8") as f:
+        filename = f"global_memory_{market_type}.txt"
+        mem_path = os.path.join(os.path.dirname(__file__), "..", filename)
+        if os.path.exists(mem_path):
+            with open(mem_path, "r", encoding="utf-8") as f:
                 global_memory = f"<global_market_context>\n{f.read().strip()}\n</global_market_context>\n"
-    except:
+    except Exception:
         pass
 
     prompt = f"""You are the Chief Hedge Fund Manager evaluating {symbol} for {market_type.upper()}.

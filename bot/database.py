@@ -22,7 +22,8 @@ def _get_secrets_cache():
         ("BINANCE_SECRET_KEY", os.getenv("BINANCE_SECRET_KEY")),
         ("DASHBOARD_USER", os.getenv("DASHBOARD_USER")),
         ("DASHBOARD_PASS", os.getenv("DASHBOARD_PASS")),
-        ("DASHBOARD_SECRET_SALT", os.getenv("DASHBOARD_SECRET_SALT"))
+        ("DASHBOARD_SECRET_SALT", os.getenv("DASHBOARD_SECRET_SALT")),
+        ("DISCORD_WEBHOOK_URL", os.getenv("DISCORD_WEBHOOK_URL"))
     ]
     
     # Generate AUTH_TOKEN
@@ -53,7 +54,22 @@ def _get_secrets_cache():
                 except Exception:
                     pass
     
-    _SECRETS_CACHE = [(name, val) for name, val in secrets if val and len(val) > 3]
+    final_secrets = []
+    for name, val in secrets:
+        if val and len(val) > 3:
+            final_secrets.append((name, val))
+            quoted_val = urllib.parse.quote(val)
+            if quoted_val != val:
+                final_secrets.append((name, quoted_val))
+                
+    unique_secrets = []
+    seen = set()
+    for name, val in final_secrets:
+        if val not in seen:
+            seen.add(val)
+            unique_secrets.append((name, val))
+            
+    _SECRETS_CACHE = unique_secrets
     return _SECRETS_CACHE
 
 def sanitize_text(text: str) -> str:
@@ -70,7 +86,6 @@ def sanitize_text(text: str) -> str:
     
     for name, val in secrets:
         text_str = text_str.replace(val, f"***MASKED_{name}***")
-        text_str = text_str.replace(urllib.parse.quote(val), f"***MASKED_{name}***")
             
     return text_str
 
@@ -214,9 +229,9 @@ class TradeRepository:
             )
             db.add(ai_dec)
             db.commit()
-        except Exception:
-            logging.exception(f"Error saving AI decision for {symbol} ({market_type})")
+        except Exception as e:
             db.rollback()
+            logging.error(f"Error saving AI decision for {symbol} ({market_type}): {sanitize_text(str(e))}")
         finally:
             db.close()
 
@@ -228,8 +243,8 @@ class TradeRepository:
             if trade and trade.side == 'BUY':
                 return trade.price
             return 0.0
-        except Exception:
-            logging.exception(f"Error fetching last buy price for {symbol} ({market_type})")
+        except Exception as e:
+            logging.error(f"Error fetching last buy price for {symbol} ({market_type}): {sanitize_text(str(e))}")
             return 0.0
         finally:
             db.close()
@@ -276,9 +291,9 @@ class TradeRepository:
                 "timestamp": trade.timestamp
             }
             return trade_dict
-        except Exception:
-            logging.exception(f"Error creating trade for {symbol} ({market_type})")
+        except Exception as e:
             db.rollback()
+            logging.error(f"Error creating trade for {symbol} ({market_type}): {sanitize_text(str(e))}")
             return None
         finally:
             db.close()
@@ -303,8 +318,8 @@ class TradeRepository:
                     "ai_reasoning": t.ai_reasoning
                 })
             return result
-        except Exception:
-            logging.exception(f"Error fetching losing trades for {symbol} ({market_type})")
+        except Exception as e:
+            logging.error(f"Error fetching losing trades for {symbol} ({market_type}): {sanitize_text(str(e))}")
             return []
         finally:
             db.close()
@@ -329,8 +344,8 @@ class TradeRepository:
                     "ai_reasoning": t.ai_reasoning
                 })
             return result
-        except Exception:
-            logging.exception(f"Error fetching losing trades for {symbol}")
+        except Exception as e:
+            logging.error(f"Error fetching winning trades for {symbol} ({market_type}): {sanitize_text(str(e))}")
             return []
         finally:
             db.close()
@@ -346,7 +361,7 @@ class LogRepository:
             db.commit()
         except Exception as e:
             import sys
-            print(f"CRITICAL DB ERROR in LogRepository: {e}", file=sys.stderr, flush=True)
+            print(f"CRITICAL DB ERROR in LogRepository: {sanitize_text(str(e))}", file=sys.stderr, flush=True)
             db.rollback()
         finally:
             db.close()

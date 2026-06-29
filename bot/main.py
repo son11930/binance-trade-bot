@@ -10,6 +10,8 @@ from .market_context_worker import market_context_updater_loop
 from .websocket_manager import WebSocketManager
 from .webhook_notifier import update_bot_state
 from .risk_manager import calculate_pnl
+from .opportunity_tracker import track_opportunities
+from .global_memory_agent import generate_global_memory
 
 setup_logging()
 
@@ -66,6 +68,34 @@ def main():
                 log_msg("ERROR", f"Auto-sync failed: {e}")
                 
     threading.Thread(target=auto_sync_loop, daemon=True).start()
+    
+    # Start AI Learning background threads
+    def opportunity_tracker_loop():
+        import time
+        while True:
+            # Sleep 1 hour between checks
+            time.sleep(3600)
+            try:
+                log_msg("INFO", "Running AI Opportunity Tracker...")
+                track_opportunities()
+            except Exception as e:
+                log_msg("ERROR", f"Opportunity Tracker failed: {e}")
+
+    def global_memory_loop():
+        import time
+        # Initially wait 5 minutes before generating memory to allow other systems to start
+        time.sleep(300)
+        while True:
+            try:
+                log_msg("INFO", "Generating AI Global Memory...")
+                generate_global_memory()
+            except Exception as e:
+                log_msg("ERROR", f"Global Memory generation failed: {e}")
+            # Sleep 12 hours between memory generations
+            time.sleep(43200)
+
+    threading.Thread(target=opportunity_tracker_loop, daemon=True).start()
+    threading.Thread(target=global_memory_loop, daemon=True).start()
     
     # Initialize WebSocket Managers
     ws_manager_spot = WebSocketManager(state_manager_spot, market_type='spot')

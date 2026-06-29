@@ -326,7 +326,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 log_msg("INFO", f"⚠️ AI aborted Spot BUY for {symbol} (Risk {risk_score}, Decision: {decision}). Applying Cooldown.", market_type="spot")
             state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
     except Exception as e:
-        log_msg("ERROR", f"❌ Error in _evaluate_buy_signal for {symbol}: {e}")
+        log_msg("ERROR", f"❌ Error in _evaluate_buy_signal for {symbol}: {sanitize_text(str(e))}")
 
 
 def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
@@ -403,7 +403,7 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             else:
                 log_msg("INFO", f"🕯️ Evaluated {symbol} at {current_price:.4f} -> Result: HOLD")
     except Exception as e:
-        log_msg("ERROR", f"❌ Error processing {symbol}: {e}")
+        log_msg("ERROR", f"❌ Error processing {symbol}: {sanitize_text(str(e))}")
         state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES) + timedelta(minutes=5))
 
 def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
@@ -525,4 +525,4 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
             update_bot_state(state_manager, f"HOLD {symbol} (No Signal)", symbol=symbol, market_type='futures')
                 
     except Exception as e:
-        log_msg("ERROR", f"❌ Error processing futures {symbol}: {e}", market_type="futures")
+        log_msg("ERROR", f"❌ Error processing futures {symbol}: {sanitize_text(str(e))}", market_type="futures")

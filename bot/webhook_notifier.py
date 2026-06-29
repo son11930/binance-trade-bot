@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
+import os
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 
 from .config import WEBHOOK_URL, WEBHOOK_TOKEN, FUTURES_LEVERAGE
@@ -105,3 +107,33 @@ def dispatch_webhook(payload: dict):
 def update_bot_state(state_manager: StateManager, status_msg: str, thinking=False, symbol="System", ai_debate: dict | None = None, market_type: str = 'spot'):
     payload = build_webhook_payload(state_manager, status_msg, thinking, symbol, ai_debate, market_type)
     dispatch_webhook(payload)
+
+def send_discord_alert(msg: str):
+    webhook = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook: return
+    
+    def _send():
+        try:
+            parsed = urlparse(webhook)
+            if parsed.scheme not in ["http", "https"] or parsed.hostname not in ["discord.com", "discordapp.com"]:
+                log_msg("ERROR", f"Invalid Discord webhook URL: {sanitize_text(webhook)}")
+                return
+                
+            # Truncate to 2000 characters (Discord limit)
+            safe_msg = msg[:1997] + "..." if len(msg) > 2000 else msg
+            
+            payload = {
+                "content": safe_msg,
+                "allowed_mentions": {"parse": []} # Prevent unauthorized pings
+            }
+            response = requests.post(webhook, json=payload, timeout=5)
+            response.raise_for_status()
+        except Exception as e:
+            log_msg("ERROR", f"Discord webhook failed: {sanitize_text(str(e))}")
+            
+    # Protect against unbounded queue growth
+    if _webhook_executor._work_queue.qsize() > 50:
+        log_msg("WARNING", "⚠️ Webhook queue overloaded. Dropping Discord alert.")
+        return
+        
+    _webhook_executor.submit(_send)

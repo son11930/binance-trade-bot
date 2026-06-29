@@ -76,11 +76,11 @@
             <form id="login-form" class="space-y-6 relative z-10">
                 <div>
                     <label class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Username</label>
-                    <input type="text" id="username" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
+                    <input type="text" id="username" name="username" autocomplete="username" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
                 </div>
                 <div>
                     <label class="block text-slate-400 text-xs font-bold uppercase tracking-widest mb-2">Password</label>
-                    <input type="password" id="password" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
+                    <input type="password" id="password" name="password" autocomplete="current-password" class="w-full bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 text-white focus:outline-none focus:border-neonCyan transition-colors" required>
                 </div>
                 <div class="flex items-center space-x-3">
                     <input type="checkbox" id="remember" class="w-5 h-5 bg-slate-900 border-slate-700 rounded text-neonCyan focus:ring-neonCyan accent-neonCyan">
@@ -541,7 +541,7 @@
                 const res = await fetch('/api/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p})
+                    body: JSON.stringify({username: u, password: p, remember_me: r})
                 });
                 
                 if (res.ok) {

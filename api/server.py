@@ -436,6 +436,7 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     username: str = Field(..., max_length=50)
     password: str = Field(..., max_length=72)
+    remember_me: bool = False
 
 @app.post("/api/login")
 @limiter.limit("5/minute")
@@ -449,7 +450,10 @@ def login(req: LoginRequest, request: Request):
         password_matches = False
 
     if secrets.compare_digest(req.username, USER) and password_matches:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=60)
+        if req.remember_me:
+            expire = datetime.now(timezone.utc) + timedelta(days=30)
+        else:
+            expire = datetime.now(timezone.utc) + timedelta(minutes=60)
         token = jwt.encode({"sub": USER, "exp": expire}, JWT_SECRET, algorithm=ALGORITHM)
         return {"token": token}
     raise HTTPException(status_code=401, detail="Invalid credentials")

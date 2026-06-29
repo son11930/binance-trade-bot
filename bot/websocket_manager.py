@@ -108,7 +108,9 @@ class WebSocketManager:
                             trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
                             if trade:
                                 if "Loss" not in rm_signal:
-                                    send_discord_alert(f"🎯 **WIN! [SPOT] {symbol}**\nReason: {rm_signal}")
+                                    pnl_pct = trade.get('pnl_percent') or 0.0
+                                    pnl_amt = trade.get('pnl_amount') or 0.0
+                                    send_discord_alert(f"🎯 **WIN! [SPOT] {symbol}**\nReason: {rm_signal}\nProfit: {pnl_pct:.2f}% (${pnl_amt:.2f})")
                                     
                                 gross_return = state.position * current_price
                                 fee = gross_return * 0.001
@@ -167,7 +169,9 @@ class WebSocketManager:
                                 from .binance_client import futures_cancel_all_orders
                                 futures_cancel_all_orders(symbol)
                                 if "Loss" not in rm_signal:
-                                    send_discord_alert(f"🎯 **WIN! [{self.market_type.upper()}] {symbol}**\nReason: {rm_signal}")
+                                    pnl_pct = trade.get('pnl_percent') or 0.0
+                                    pnl_amt = trade.get('pnl_amount') or 0.0
+                                    send_discord_alert(f"🎯 **WIN! [{self.market_type.upper()}] {symbol}**\nReason: {rm_signal}\nProfit: {pnl_pct:.2f}% (${pnl_amt:.2f})")
                                 
                                 # Update local balance if we track it (optional for futures but let's do it)
                                 pnl_amount = trade.get('pnl_amount')

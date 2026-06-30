@@ -307,9 +307,12 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sma200_bounce = (low_p <= sma_200) and (close_p > sma_200) and (close_p > open_p)
     sma200_reject = (high_p >= sma_200) and (close_p < sma_200) and (close_p < open_p)
     
+    # 4. Anti-FOMO Volatility Breaker (Do not chase giant candles)
+    is_giant_candle = body > (atr * 2.0)
+    
     # Final Aggregation
-    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend
-    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend
+    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper)
+    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower)
     
     if sniper_long:
         return SignalPlan(

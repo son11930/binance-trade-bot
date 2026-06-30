@@ -22,11 +22,25 @@ def fetch_daily_stats(market_type: str):
     db = None
     try:
         db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
-        win_count = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent > 0).count()
-        loss_count = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent <= 0).count()
+        all_wins = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent > 0).all()
+        all_losses = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent <= 0).all()
         
-        recent_wins = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent > 0).order_by(Trade.timestamp.desc()).limit(5).all()
-        recent_losses = db.query(Trade).filter(Trade.timestamp >= one_day_ago, Trade.pnl_percent <= 0).order_by(Trade.timestamp.desc()).limit(5).all()
+        win_count = len(all_wins)
+        loss_count = len(all_losses)
+        
+        gross_profit = sum(t.pnl_percent for t in all_wins)
+        gross_loss = abs(sum(t.pnl_percent for t in all_losses))
+        
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (999.9 if gross_profit > 0 else 0)
+        net_profit = gross_profit - gross_loss
+        
+        stats["gross_profit"] = gross_profit
+        stats["gross_loss"] = gross_loss
+        stats["profit_factor"] = profit_factor
+        stats["net_profit"] = net_profit
+        
+        recent_wins = sorted(all_wins, key=lambda x: x.timestamp, reverse=True)[:5]
+        recent_losses = sorted(all_losses, key=lambda x: x.timestamp, reverse=True)[:5]
         
         stats["wins"] += win_count
         stats["losses"] += loss_count
@@ -78,7 +92,15 @@ def generate_global_memory():
             continue
 
         prompt = f"""Analyze the following 24-hour trading performance data for our crypto bot ({market_type.upper()}).
-Wins: {stats['wins']}, Losses: {stats['losses']}
+CRITICAL INSTRUCTION: Evaluate performance based on Profit Factor and Net Profit %, NOT Win Rate. A strategy with a low win rate but a high Profit Factor (>1.5) is excellent. A strategy with a high win rate but negative Net Profit % is terrible.
+
+Performance Metrics:
+- Net Profit %: {stats.get('net_profit', 0):.2f}%
+- Profit Factor (Gross Profit / Gross Loss): {stats.get('profit_factor', 0):.2f}
+- Win/Loss Count: {stats['wins']} Wins / {stats['losses']} Losses
+- Gross Profit: {stats.get('gross_profit', 0):.2f}%
+- Gross Loss: {stats.get('gross_loss', 0):.2f}%
+
 Missed Opportunities (false HOLDs that would have won): {stats['missed_opportunities']}
 Good Blocks (HOLDs that prevented losses): {stats['good_blocks']}
 
@@ -91,7 +113,7 @@ Recent Losses:
 Recent Missed Opportunities:
 {chr(10).join(stats['missed_details'])}
 
-Generate a 3-bullet-point 'Global Market Context' summarizing what strategies are working, what traps to avoid, and if the AI is being too cautious. Keep it extremely concise and actionable.
+Generate a 3-bullet-point 'Global Market Context' summarizing what strategies are yielding high risk/reward, what traps are causing large drawdowns, and if the AI is being too cautious. Keep it extremely concise and actionable. Focus on actual profitability, not just winning count.
 """
         success = False
         models = ['groq-llama-3.1-8b-instant', 'gemini-3.1-flash-lite', 'groq-qwen-2.5-32b', 'groq-mixtral-8x7b-32768']

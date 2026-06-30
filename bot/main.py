@@ -83,16 +83,26 @@ def main():
 
     def global_memory_loop():
         import time
-        # Initially wait 5 minutes before generating memory to allow other systems to start
-        time.sleep(300)
+        from datetime import datetime, timezone, timedelta
+        
+        log_msg("INFO", "AI Market Briefing scheduler started. Will trigger at 00:00 and 12:00 BKK time.")
         while True:
-            try:
-                log_msg("INFO", "Generating AI Global Memory...")
-                generate_global_memory()
-            except Exception as e:
-                log_msg("ERROR", f"Global Memory generation failed: {e}")
-            # Sleep 12 hours between memory generations
-            time.sleep(43200)
+            now_utc = datetime.now(timezone.utc)
+            now_local = now_utc + timedelta(hours=7)
+            
+            # Check if it is exactly 12:00 or 00:00 (allowing a 1-minute window)
+            if (now_local.hour == 0 or now_local.hour == 12) and now_local.minute == 0:
+                try:
+                    log_msg("INFO", "Triggering AI Market Briefing...")
+                    generate_global_memory()
+                except Exception as e:
+                    log_msg("ERROR", f"Global Memory generation failed: {e}")
+                
+                # Sleep for 65 seconds to ensure we don't trigger twice in the same minute
+                time.sleep(65)
+            else:
+                # Poll every 30 seconds
+                time.sleep(30)
 
     threading.Thread(target=opportunity_tracker_loop, daemon=True).start()
     threading.Thread(target=global_memory_loop, daemon=True).start()

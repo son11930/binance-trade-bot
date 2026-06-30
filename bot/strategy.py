@@ -276,13 +276,13 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     bb_upper = latest['BB_Upper']
     
     # 30M V-Shape Sniper: Tight stop loss for risk management
-    sl_multiplier = 1.2
+    sl_multiplier = 1.5
     
     # Trend Strength & Macro Filters
     ema_50 = latest.get('EMA_50', 0)
-    is_macro_uptrend = price > sma_200 and ema_50 > sma_200
-    # For SHORT: Price must not be above SMA 200 AND EMA 50 must be below SMA 200 (prevents shorting in strong uptrend)
-    is_macro_downtrend = price < sma_200 and ema_50 < sma_200
+    is_macro_uptrend = price > sma_200
+    # For SHORT: Price must not be above SMA 200
+    is_macro_downtrend = price < sma_200
     
     # MA99 Support/Resistance Filter
     above_ma99 = price >= sma_99
@@ -318,8 +318,8 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     is_giant_candle = body > (atr * 2.0)
     
     # Final Aggregation
-    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper) and above_ma99 and adx_curr > 25
-    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower) and below_ma99 and adx_curr > 25
+    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper) and above_ma99
+    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower) and below_ma99
     
     if sniper_long:
         return SignalPlan(

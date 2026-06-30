@@ -148,11 +148,6 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
 
         _, max_profit_percent = calculate_futures_pnl(state.buy_price, best_price, 1.0, position_side=state.position_side or "LONG", symbol=state.symbol)
         
-        if state.position_side == "SHORT":
-            hp_drop_percent = ((current_price - best_price) / best_price) * 100 if best_price > 0 else 0
-        else:
-            hp_drop_percent = ((best_price - current_price) / best_price) * 100 if best_price > 0 else 0
-        
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
             if minutes_elapsed >= state.max_time_in_trade * 15:
@@ -190,30 +185,34 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         # ---------------------------------------------------------
         # 4-GEAR DYNAMIC HYBRID TRAILING STOP SYSTEM
         # ---------------------------------------------------------
+        
+        # GEAR 1: Dynamic RSI Sniper (TOP PRIORITY - 100% Hard Close)
+        if max_profit_percent >= 2.0 and rsi_value is not None:
+            # RSI threshold scales with profit: Starts at 75, caps at 85
+            dynamic_rsi_overbought = min(85.0, 75.0 + ((profit_percent - 2.0) * 1.5))
+            dynamic_rsi_oversold = max(15.0, 25.0 - ((profit_percent - 2.0) * 1.5))
+            
+            if state.position_side == "LONG" and rsi_value >= dynamic_rsi_overbought:
+                return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
+            elif state.position_side == "SHORT" and rsi_value <= dynamic_rsi_oversold:
+                return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
+                
+        # Calculate ATR ROE for trailing stops
+        atr_roe = atr_percent * FUTURES_LEVERAGE
+        
         if max_profit_percent >= 10.0:
             # GEAR 2: Moonshot (High Trend)
-            # Disable Sniper, rely entirely on a deep trailing stop (3.0% gap)
-            # Fix: Ensure trailing stop floor never drops below Gear 3 peak (8.5%)
-            locked_roe = max(8.5, max_profit_percent - 3.0)
+            # Deep trailing stop based on ATR (e.g. ATR * 2.0), minimum 3.0%
+            trailing_gap = max(3.0, atr_roe * 2.0)
+            locked_roe = max(8.5, max_profit_percent - trailing_gap)
             if profit_percent <= locked_roe:
                 return "Moonshot Trailing Stop (Gear 2) 🚀"
                 
         elif max_profit_percent >= 2.0:
-            # GEAR 1: Dynamic Sniper & GEAR 3: Standard Trailing
-            
-            # Gear 1: Dynamic RSI Sniper
-            if rsi_value is not None:
-                # RSI threshold scales with profit: Starts at 75, caps at 85
-                dynamic_rsi_overbought = min(85.0, 75.0 + ((profit_percent - 2.0) * 1.5))
-                dynamic_rsi_oversold = max(15.0, 25.0 - ((profit_percent - 2.0) * 1.5))
-                
-                if state.position_side == "LONG" and rsi_value >= dynamic_rsi_overbought and hp_drop_percent >= 0.2:
-                    return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
-                elif state.position_side == "SHORT" and rsi_value <= dynamic_rsi_oversold and hp_drop_percent >= 0.2:
-                    return f"Dynamic Sniper (RSI {rsi_value:.1f}) 🎯"
-            
-            # Gear 3: Standard Trailing (1.5% gap)
-            locked_roe = max_profit_percent - 1.5
+            # GEAR 3: Standard Trailing
+            # Trailing stop based on ATR (e.g. ATR * 1.2), minimum 1.5%
+            trailing_gap = max(1.5, atr_roe * 1.2)
+            locked_roe = max_profit_percent - trailing_gap
             if profit_percent <= locked_roe:
                 return "Standard Trailing Stop (Gear 3) 🛡️"
                 

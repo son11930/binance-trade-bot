@@ -276,8 +276,10 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     sl_multiplier = 1.0
     
     # Trend Strength & Macro Filters
-    is_macro_uptrend = price > sma_200
-    is_macro_downtrend = price < sma_200
+    ema_50 = latest.get('EMA_50', 0)
+    is_macro_uptrend = price > sma_200 and price > ema_50
+    # For SHORT: Price must not be above SMA 200 AND EMA 50 must be below SMA 200 (prevents shorting in strong uptrend)
+    is_macro_downtrend = price < sma_200 and ema_50 < sma_200
     
     # Volume Filter: Must be above average
     strong_volume = vol_curr > vol_sma

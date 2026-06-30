@@ -35,12 +35,12 @@ def track_opportunities():
                 if eval_time.tzinfo is None:
                     eval_time = eval_time.replace(tzinfo=timezone.utc)
                 
-                # Fetch 15m klines for the next 4 hours after eval_time
+                # Fetch 30m klines for the next 4 hours after eval_time
                 end_time = eval_time + timedelta(hours=4)
                 
                 klines = client.get_klines(
                     symbol=symbol,
-                    interval="15m",
+                    interval="30m",
                     startTime=int(eval_time.timestamp() * 1000),
                     endTime=int(end_time.timestamp() * 1000)
                 )

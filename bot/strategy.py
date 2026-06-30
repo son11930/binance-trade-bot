@@ -21,6 +21,7 @@ def apply_indicators(df: pd.DataFrame) -> pd.DataFrame:
         
     # Moving Averages
     df['SMA_200'] = ta.trend.sma_indicator(df['close'], window=200)
+    df['SMA_99'] = ta.trend.sma_indicator(df['close'], window=99)
     df['SMA_50'] = ta.trend.sma_indicator(df['close'], window=50)
     df['EMA_50'] = ta.trend.ema_indicator(df['close'], window=50)
     
@@ -240,7 +241,7 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
 
 def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     """
-    Analyzes the latest 15m candle for Futures Long/Short trading.
+    Analyzes the latest 30m candle for Futures Long/Short trading.
     """
     default_signal = SignalPlan(
         action="HOLD", strategy_used="NONE", stop_loss=0.0, 
@@ -253,13 +254,15 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     latest = df.iloc[-1]
     prev = df.iloc[-2]
     
-    required_cols = ['SMA_200', 'RSI', 'ATR', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper']
+    required_cols = ['SMA_200', 'SMA_99', 'RSI', 'ATR', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper', 'ADX']
     if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']):
         return default_signal
         
     price = latest['close']
     atr = latest['ATR']
     sma_200 = latest['SMA_200']
+    sma_99 = latest['SMA_99']
+    adx_curr = latest.get('ADX', 0)
     rsi_curr = latest['RSI']
     vol_curr = latest['volume']
     vol_sma = latest['SMA_20_Vol']
@@ -272,14 +275,18 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     bb_lower = latest['BB_Lower']
     bb_upper = latest['BB_Upper']
     
-    # 15M V-Shape Sniper: Ultra-tight stop loss for 1% risk
-    sl_multiplier = 1.0
+    # 30M V-Shape Sniper: Tight stop loss for risk management
+    sl_multiplier = 1.2
     
     # Trend Strength & Macro Filters
     ema_50 = latest.get('EMA_50', 0)
-    is_macro_uptrend = price > sma_200 and price > ema_50
+    is_macro_uptrend = price > sma_200 and ema_50 > sma_200
     # For SHORT: Price must not be above SMA 200 AND EMA 50 must be below SMA 200 (prevents shorting in strong uptrend)
     is_macro_downtrend = price < sma_200 and ema_50 < sma_200
+    
+    # MA99 Support/Resistance Filter
+    above_ma99 = price >= sma_99
+    below_ma99 = price <= sma_99
     
     # Volume Filter: Must be above average
     strong_volume = vol_curr > vol_sma
@@ -311,43 +318,43 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     is_giant_candle = body > (atr * 2.0)
     
     # Final Aggregation
-    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper)
-    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower)
+    sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper) and above_ma99 and adx_curr > 25
+    sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower) and below_ma99 and adx_curr > 25
     
     if sniper_long:
         return SignalPlan(
-            action="BUY", strategy_used="FUTURES_15M_SNIPER_LONG",
+            action="BUY", strategy_used="FUTURES_30M_SNIPER_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=24, near_miss_reason="", position_side="LONG"
+            time_in_trade=12, near_miss_reason="", position_side="LONG"
         )
         
     if sniper_short:
         return SignalPlan(
-            action="SELL", strategy_used="FUTURES_15M_SNIPER_SHORT",
+            action="SELL", strategy_used="FUTURES_30M_SNIPER_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=24, near_miss_reason="", position_side="SHORT"
+            time_in_trade=12, near_miss_reason="", position_side="SHORT"
         )
         
     # We exit SHORT if RSI was oversold recently (< 30) and hooks up
     if rsi_curr > prev['RSI'] and prev['RSI'] < 30:
-        return SignalPlan("BUY", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
+        return SignalPlan("BUY", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
     # We exit LONG if RSI was overbought recently (> 70) and hooks down
     if rsi_curr < prev['RSI'] and prev['RSI'] > 70:
-        return SignalPlan("SELL", "FUTURES_15M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
+        return SignalPlan("SELL", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
         
     # Provide a near miss reason if structural conditions met but no volume or macro alignment
     near_miss_reason = ""
     strategy_used = "NONE"
     
     if bullish_sweep or bullish_div or sma200_bounce:
-        strategy_used = "FUTURES_15M_SNIPER_LONG"
+        strategy_used = "FUTURES_30M_SNIPER_LONG"
         if not strong_volume:
             near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
         elif not is_macro_uptrend:
             near_miss_reason = "Against Macro Uptrend"
             
     elif bearish_sweep or bearish_div or sma200_reject:
-        strategy_used = "FUTURES_15M_SNIPER_SHORT"
+        strategy_used = "FUTURES_30M_SNIPER_SHORT"
         if not strong_volume:
             near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
         elif not is_macro_downtrend:

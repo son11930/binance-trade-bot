@@ -59,7 +59,7 @@ def check_spot_risk_management(state: SymbolState, atr_value: float, stop_loss_p
         
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
-            if minutes_elapsed >= state.max_time_in_trade * 15:
+            if minutes_elapsed >= state.max_time_in_trade * 30:
                 # Time-Expired Tight Stop Logic
                 if profit_percent < 0.5:
                     return f"Time Limit Exceeded (Stalled/Loss at {profit_percent:.2f}%) ⏰"
@@ -150,7 +150,7 @@ def check_futures_risk_management(state: SymbolState, atr_value: float, stop_los
         
         if state.trade_entry_time and state.max_time_in_trade > 0:
             minutes_elapsed = (datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60
-            if minutes_elapsed >= state.max_time_in_trade * 15:
+            if minutes_elapsed >= state.max_time_in_trade * 30:
                 # Time-Expired Tight Stop Logic
                 if profit_percent < 0.5:
                     return f"Time Limit Exceeded (Stalled/Loss at {profit_percent:.2f}%) ⏰"

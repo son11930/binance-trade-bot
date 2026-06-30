@@ -1,3 +1,21 @@
+## [4.7.1] - 2026-06-30
+### 30m Timeframe Migration & High-Accuracy Sniper Fixes
+**English:**
+- **Timeframe Migration**: Upgraded the bot from a 15-minute to a 30-minute timeframe to filter out market noise and increase the reliability of technical indicators (MACD, RSI, BB).
+- **Time-Expired Trailing Stop Fix**: Adjusted the internal time limit multiplier in `bot/risk_manager.py` from `* 15` to `* 30` to correctly track elapsed minutes for 30m candles.
+- **Trend Asymmetry Bug Fix**: Fixed a critical bug in `bot/strategy.py` where Long trades were allowed if `price > EMA_50` (causing longs in downtrends). It now strictly requires `EMA_50 > SMA_200` to mirror the Short strategy.
+- **MA(99) Support/Resistance Filter**: Integrated `SMA_99` as a strict barrier. The bot will no longer Long below MA(99) or Short above it.
+- **ADX Sideways Filter**: Enforced `ADX > 25` to block the bot from trading in choppy, range-bound markets.
+- **Stop Loss Adjustment**: Increased the Sniper strategy Stop Loss from `1.0 ATR` to `1.2 ATR` to accommodate the larger wicks characteristic of 30m candles.
+
+**Thai (ภาษาไทย):**
+- **ย้ายไปกราฟ 30 นาที**: อัปเกรดบอทจากกราฟ 15m เป็น 30m เพื่อกรองสัญญาณหลอกออก ทำให้การวิเคราะห์ทางเทคนิคแม่นยำขึ้นมาก
+- **แก้บั๊กเวลานับถอยหลัง**: แก้ไขสูตรนับเวลาหมดอายุออเดอร์ใน `risk_manager.py` ให้รองรับแท่ง 30 นาที (ถือได้นานสุด 6 ชั่วโมงเท่าเดิม)
+- **แก้บั๊กเงื่อนไขขาขึ้น (Long)**: แก้ไขให้เงื่อนไข Long เข้มงวดขึ้น (`EMA_50 > SMA_200`) เพื่อป้องกันบอทเปิด Long สวนเทรนด์ตอนตลาดเป็นขาลง
+- **กำแพงแนวรับแนวต้าน MA(99)**: เพิ่มการเช็คเส้น MA(99) บังคับว่าห้าม Long ถ้าอยู่ใต้เส้น และห้าม Short ถ้าอยู่เหนือเส้น
+- **ฟิลเตอร์กรองไซด์เวย์ (ADX)**: บังคับใช้ `ADX > 25` บอทจะไม่ยอมเทรดเด็ดขาดถ้าระบบตรวจพบว่าตลาดไม่มีทิศทางที่ชัดเจน
+- **ขยับ Stop Loss**: ขยายจุดตัดขาดทุนจาก 1.0 เป็น 1.2 ATR เพื่อให้กราฟมีพื้นที่สวิงได้บ้างตามธรรมชาติของแท่ง 30m
+
 ## [4.7.0] - 2026-06-29
 ### Advanced AI Learning System & Opportunity Cost Tracker
 **English:**

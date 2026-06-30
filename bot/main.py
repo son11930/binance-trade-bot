@@ -42,15 +42,15 @@ def main():
                 sm.update_state(sym, active_strategy="NONE")
     
     # Fetch initial history for Spot
-    log_msg("INFO", "Fetching initial Spot 15m history...")
+    log_msg("INFO", "Fetching initial Spot 30m history...")
     for sym in SYMBOLS:
-        klines = get_historical_klines(sym, "15m", limit=250)
+        klines = get_historical_klines(sym, "30m", limit=250)
         state_manager_spot.set_kline_buffer(sym, klines)
         
     # Fetch initial history for Futures
-    log_msg("INFO", "Fetching initial Futures 15m history...", market_type='futures')
+    log_msg("INFO", "Fetching initial Futures 30m history...", market_type='futures')
     for sym in SYMBOLS:
-        f_klines = futures_get_klines(sym, "15m", limit=250)
+        f_klines = futures_get_klines(sym, "30m", limit=250)
         state_manager_futures.set_kline_buffer(sym, f_klines)
         
     # Start background threads (Shared news)
@@ -120,9 +120,9 @@ def main():
     for sym in SYMBOLS:
         sym_lower = sym.lower()
         spot_streams.append(f"{sym_lower}@ticker")
-        spot_streams.append(f"{sym_lower}@kline_15m")
+        spot_streams.append(f"{sym_lower}@kline_30m")
         futures_streams.append(f"{sym_lower}@ticker")
-        futures_streams.append(f"{sym_lower}@kline_15m")
+        futures_streams.append(f"{sym_lower}@kline_30m")
     
     # Start Spot Multiplex Streams
     def route_spot_message(msg):

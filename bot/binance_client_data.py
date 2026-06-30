@@ -18,7 +18,7 @@ def fetch_funding_rate(symbol: str) -> float:
 def fetch_long_short_ratio(symbol: str) -> float:
     try:
         url = "https://fapi.binance.com/futures/data/globalLongShortAccountRatio"
-        response = requests.get(url, params={"symbol": symbol, "period": "15m"}, timeout=10)
+        response = requests.get(url, params={"symbol": symbol, "period": "30m"}, timeout=10)
         response.raise_for_status()
         data = response.json()
         if isinstance(data, list) and len(data) > 0:

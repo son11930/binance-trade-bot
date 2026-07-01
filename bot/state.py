@@ -85,14 +85,17 @@ class StateManager:
 
     def get_state(self, symbol: str) -> SymbolState:
         with self._lock:
-            return self._states.get(symbol, SymbolState(symbol))
+            if symbol not in self._states:
+                self._states[symbol] = SymbolState(symbol)
+            return self._states[symbol]
 
     def update_state(self, symbol: str, **kwargs):
         with self._lock:
-            if symbol in self._states:
-                self._states[symbol] = replace(self._states[symbol], **kwargs)
-                if any(k not in ['last_price', 'highest_price', 'lowest_price'] for k in kwargs):
-                    self._save_state()
+            if symbol not in self._states:
+                self._states[symbol] = SymbolState(symbol)
+            self._states[symbol] = replace(self._states[symbol], **kwargs)
+            if any(k not in ['last_price', 'highest_price', 'lowest_price'] for k in kwargs):
+                self._save_state()
 
     def get_all_states(self) -> Dict[str, SymbolState]:
         with self._lock:
@@ -185,7 +188,7 @@ class StateManager:
         
         new_states = {}
         
-        for symbol in SYMBOLS:
+        for symbol in list(self._states.keys()):
             with self._lock:
                 state = self._states[symbol]
                 
@@ -249,7 +252,7 @@ class StateManager:
             
         new_states = {}
         
-        for symbol in SYMBOLS:
+        for symbol in list(self._states.keys()):
             with self._lock:
                 state = self._states[symbol]
                 

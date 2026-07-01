@@ -28,16 +28,17 @@ def test_fetch_daily_stats_empty(mock_spot, mock_futures):
 def test_fetch_daily_stats_with_data(mock_spot, mock_futures):
     """Test when trades and missed opportunities exist."""
     mock_db = MagicMock()
-    # Mock for Trade counts
+    win1 = MagicMock(pnl_percent=5.0, timestamp=datetime.now(timezone.utc), symbol="BTCUSDT", side="BUY", ai_reasoning="test")
+    win2 = MagicMock(pnl_percent=3.0, timestamp=datetime.now(timezone.utc), symbol="ETHUSDT", side="BUY", ai_reasoning="test")
+    loss1 = MagicMock(pnl_percent=-2.0, timestamp=datetime.now(timezone.utc), symbol="SOLUSDT", side="BUY", ai_reasoning="test")
+    
+    mock_db.query.return_value.filter.return_value.all.side_effect = [
+        [win1, win2], # all_wins
+        [loss1]       # all_losses
+    ]
     mock_db.query.return_value.filter.return_value.count.side_effect = [
-        2, # Win count (Spot)
-        1, # Loss count (Spot)
         0, # Missed count (Spot)
         0, # Good blocks count (Spot)
-        3, # Win count (Futures)
-        0, # Loss count (Futures)
-        1, # Missed count (Futures)
-        1, # Good blocks count (Futures)
     ]
     
     # We will just let .all() return empty lists for simplicity of this unit test

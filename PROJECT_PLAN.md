@@ -191,4 +191,18 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Integrate `MA(99)` as a strict support/resistance filter. Do not Long under it; do not Short over it.
   - Enforce `ADX > 25` to filter out sideways chop markets.
   - Expand Stop Loss multiplier to `1.2 ATR` to align with the larger 30m candle wicks.
-- **Status**: Planning.
+- **Status**: Completed.
+
+## Phase 23: Production-Grade Core Engine Refactoring & Simplification
+- **Goal**: Refactor and simplify the core trading engine (`bot/strategy.py`, `bot/risk_manager.py`, `bot/signal_evaluator.py`, `bot/websocket_manager.py`) to improve maintainability, eliminate dead code, and break down complex if-else blocks into clean modular helper functions (<50 lines per function, <800 lines per file), while enforcing **100% zero regression of mathematical and trading invariants** for System 3 (30m V-Shape Sniper + 4-Gear Trailing Stop + `FUTURES_30M_EXIT` + AI Council + safe PnL extraction).
+- **Critical Invariants**:
+  1. Zero deviation in trading behavior: Every entry condition, macro filter, 4-Gear trailing stop threshold, and RSI hook exit must produce identical signals and backtest metrics.
+  2. Test-Driven Development (TDD): Run automated unit tests and backtest simulation (`python test_30m_multiperiod.py`) before and after every phase.
+  3. Clean modular architecture: Every helper function must be <50 lines, and every file must remain <800 lines.
+- **Execution Phases**:
+  - **Step 1: TDD Stabilization & Baseline Verification**: Update legacy unit tests in `tests/test_risk_manager.py` to reflect current System 3 invariants (removing obsolete time limit assertions and aligning 3x leverage expectations). Verify 100% unit test pass rate and record baseline metrics from `python test_30m_multiperiod.py`.
+  - **Step 2: Strategy Modularization (`bot/strategy.py`)**: Remove unused variables (`macd_prev`, `sig_prev`). Decompose `analyze_futures_market` by extracting structural pattern recognition into focused helper functions (`_check_liquidity_sweeps`, `_check_rsi_divergence`, `_check_sma200_rejections`).
+  - **Step 3: Risk Manager Simplification (`bot/risk_manager.py`)**: Decompose `check_spot_risk_management` and `check_futures_risk_management` into modular helpers (`_check_dynamic_sl_tp`, `_check_gear1_rsi_sniper`, `_check_gears_2_3_4_trailing`, `_check_fallback_stop`).
+  - **Step 4: Signal Evaluator Decoupling (`bot/signal_evaluator.py`)**: Eliminate code duplication between Spot and Futures in `_evaluate_buy_signal` and `_evaluate_futures_trade_signal` by extracting modular domain helpers (`_check_trading_paused`, `_build_ai_tech_context`, `_process_ai_decision`, `_check_slippage_guard`, `_calculate_futures_position_size`, `_execute_reversal_exit`).
+  - **Step 5: WebSocket Manager Cleanup (`bot/websocket_manager.py`)**: Clean up nested risk monitoring blocks in `process_kline_message` by extracting indicator extraction (`_extract_kline_indicators`) and async trade closure helpers (`_execute_risk_close_async`).
+- **Status**: Completed.

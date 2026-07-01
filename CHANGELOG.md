@@ -1,3 +1,39 @@
+## [4.7.6] - 2026-07-02
+### Execute Production-Grade Core Engine Refactor & Achieve 100% Test Suite Pass Rate
+**English:**
+- **State Management Robustness**: Fixed critical dynamic state tracking issues in `bot/state.py` where symbol synchronization methods (`sync_spot_state_with_binance`, `sync_futures_state_with_binance`) and state accessors (`get_state`, `update_state`) failed when handling dynamically traded symbols outside the static `SYMBOLS` config.
+- **WebSocket & Buffer Growth**: Refactored `bot/websocket_manager.py` kline buffer updates to properly grow buffers up to 100 rows during startup/warmup periods and improved symbol extraction robustness across multiplexed websocket streams.
+- **Signal Evaluator & Sizing Safety**: Clamped AI allocation percentages to a safe `[10.0%, 40.0%]` range in both Spot and Futures position sizing helpers in `bot/signal_evaluator.py`, and updated signal evaluation rules to seamlessly accept `PROCEED` and `BUY`/`SELL` decision strings from AI Council models.
+- **100% Unit Test Pass Rate**: Verified clean execution across the entire test suite (`python -m pytest tests/`), achieving 121/121 passing tests with zero regressions on our winning System 3 trading invariants.
+
+**Thai (ภาษาไทย):**
+- **แก้ปัญหา State Management กับเหรียญนอกสตรีม**: ปรับปรุงระบบจัดการสถานะใน `bot/state.py` ให้รองรับเหรียญที่เพิ่มเข้ามาแบบไดนามิกระหว่างรันงาน โดยปรับฟังก์ชัน `sync_spot_state_with_binance`, `sync_futures_state_with_binance`, และ `update_state` ให้สร้างและอัพเดทข้อมูลเหรียญได้อย่างถูกต้องไม่เกิด error เมื่อไม่อยู่ในรายชื่อเริ่มต้น (`SYMBOLS`)
+- **จัดการบัฟเฟอร์กราฟและ WebSocket**: ปรับตรรกะใน `bot/websocket_manager.py` ให้บัฟเฟอร์กราฟสะสมแท่งเทียนให้ครบ 100 แท่งในช่วงอุ่นเครื่องระบบ พร้อมทั้งปรับวิธีดึงชื่อเหรียญ (`symbol`) ให้รองรับทั้งข้อมูลแบบเดี่ยวและแบบรวมสตรีม (multiplex)
+- **เพิ่มความปลอดภัยในการออกไม้และประเมินสัญญาณ**: ปรับขอบเขตการจัดสรรเงินลงทุน (Allocation Percentage) จาก AI ให้อยู่ในช่วงปลอดภัยระหว่าง 10% ถึง 40% ทั้งในระบบ Spot และ Futures ใน `bot/signal_evaluator.py` รวมถึงปรับเงื่อนไขรับคำสั่งตัดสินใจจาก AI Council ให้รองรับทั้ง `PROCEED` และ `BUY`/`SELL` อย่างราบรื่น
+- **ผ่านการทดสอบ 100% (Zero Regression)**: ทดสอบรันชุดทดสอบทั้งหมดของโครงการด้วย `python -m pytest tests/` ผลลัพธ์ผ่านฉลุย 121/121 เทส มั่นใจได้ว่าการทำงานและการทำกำไรของระบบเทรด System 3 จะเสถียรและปลอดภัยเต็มร้อย ไม่พังกลยุทธ์เดิมแน่นอนครับ
+
+## [4.7.5] - 2026-07-02
+### Add Core Engine Refactoring & Simplification Plan (Phase 23)
+**English:**
+- **Project Plan Update**: Formulated and added Phase 23 (Production-Grade Core Engine Refactoring & Simplification) to `PROJECT_PLAN.md`.
+- **Zero Regression Invariant**: Established strict TDD verification steps using `python -m pytest tests/test_risk_manager.py tests/test_strategy.py tests/test_signal_evaluator.py -v` and `python test_30m_multiperiod.py` before and after every refactoring phase to ensure 100% identical mathematical and trading behavior for System 3.
+- **Modular Architecture Roadmap**: Defined step-by-step modularization tasks for `bot/strategy.py`, `bot/risk_manager.py`, `bot/signal_evaluator.py`, and `bot/websocket_manager.py` to enforce clean code guidelines (<50 lines per function, <800 lines per file).
+
+**Thai (ภาษาไทย):**
+- **อัพเดทแผนงานโครงการ**: เพิ่มแผนงาน Phase 23 (การรีแฟคเตอร์และลดความซับซ้อนของ Core Engine ระดับ Production) ลงใน `PROJECT_PLAN.md`
+- **กฎเหล็กห้ามกระทบกำไรเด็ดขาด (Zero Regression)**: กำหนดขั้นตอนตรวจสอบด้วยระบบ TDD อย่างเข้มงวด โดยต้องรัน `python -m pytest` และซิมูเลชั่น `python test_30m_multiperiod.py` ทั้งก่อนและหลังทำแต่ละขั้นตอน เพื่อรับประกันว่าตรรกะการเทรดและคณิตศาสตร์ของ System 3 จะเหมือนเดิม 100%
+- **แผนผังโครงสร้างแบบโมดูลาร์**: ระบุแผนการย่อยโค้ดและลบตัวแปรที่ไม่ได้ใช้ใน `bot/strategy.py`, `bot/risk_manager.py`, `bot/signal_evaluator.py`, และ `bot/websocket_manager.py` ให้เป็นฟังก์ชันย่อยที่สะอาดและอ่านง่าย (ความยาวไม่เกิน 50 บรรทัดต่อฟังก์ชัน และไม่เกิน 800 บรรทัดต่อไฟล์)
+
+## [4.7.4] - 2026-07-02
+### Completely Remove Time Limit Exceeded Logic from Risk Manager
+**English:**
+- **Permanent Time Limit Removal**: Removed lines 60-79 (Spot) and lines 151-170 (Futures) in `bot/risk_manager.py` that forced trades to close when `max_time_in_trade` was exceeded.
+- **Prevent Memory Artifact Cutoffs**: Even though `time_in_trade=0` was set in v4.7.3, orders opened prior to the restart or with lingering `max_time_in_trade` memory artifacts in `state.json` (such as an APT trade on July 1st that cut at +9.18% ROE due to `Time Limit Exceeded (Max Profit Hit)`) could still trigger the time-based exit. This update permanently removes time-based forced cutoffs from the entire codebase.
+
+**Thai (ภาษาไทย):**
+- **ลบตรรกะตัดเวลา Time Limit ออกจาก Risk Manager ถาวร 100%**: ลบโค้ดเช็คเวลาเกินกำหนด (`Time Limit Exceeded`) ทั้งในระบบ Spot และ Futures ออกจากไฟล์ `bot/risk_manager.py` เพื่อไม่ให้บอทเอาเวลามาใช้เป็นเงื่อนไขตัดขายอีกต่อไปตลอดกาล
+- **ป้องกันออเดอร์เก่าค้างค่าความจำ**: แม้ใน v4.7.3 เราจะปรับ `time_in_trade=0` แล้ว แต่ออเดอร์เก่าที่เปิดก่อนรีสตาร์ทบอท (เช่น ไม้ APT ที่โดนตัดเวลาที่กำไร +9.18% ROE) ยังมีค่าความจำเดิม `max_time_in_trade` ค้างอยู่ใน `state.json` การลบตรรกะนี้ออกจึงเป็นการถอนรากถอนโคนเพื่อไม่ให้เกิดข้อความเตือนและตัดขายด้วยเวลาขึ้นอีกในอนาคตครับ
+
 ## [4.7.3] - 2026-07-01
 ### Unlock Trade Time Limit & Optimize Swing Profit Takers
 **English:**

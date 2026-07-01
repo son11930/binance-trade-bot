@@ -13,127 +13,160 @@ from .webhook_notifier import update_bot_state, send_discord_alert
 from .binance_client import get_current_price
 from .state import StateManager
 
+def _check_trading_paused(control: dict, market_type: str, symbol: str, state_manager: StateManager) -> bool:
+    key = "futures_paused" if market_type == "futures" else "spot_paused"
+    if control.get(key):
+        log_msg("WARNING", f"⏸️ Trading is Paused for {market_type.capitalize()}. Skipping AI evaluation and order for {symbol}.")
+        update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type=market_type)
+        state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+        return True
+    return False
+
+def _check_slippage_guard(state_manager: StateManager, symbol: str, current_price: float, market_type: str) -> float | None:
+    state = state_manager.get_state(symbol)
+    live_price = state.last_price if state.last_price > 0 else current_price
+    if live_price > 0:
+        slippage = abs(live_price - current_price) / current_price
+        if slippage > 0.005:
+            log_msg("WARNING", f"⚠️ Slippage Guard: Aborting {market_type.capitalize()} {symbol} trade. Price moved >0.5% ({current_price} -> {live_price}).")
+            update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol, market_type=market_type)
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+            return None
+        return live_price
+    return current_price
+
+def _build_ai_tech_context(state_manager: StateManager, symbol: str, strategy_used: str, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val: str, position_side: str, market_type: str) -> dict:
+    from .database import TradeRepository
+    lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type=market_type)
+    winning_trades = TradeRepository.get_recent_winning_trades(symbol, limit=2, market_type=market_type)
+    return {
+        "market_regime": market_regime_val,
+        "strategy_used": strategy_used,
+        "adx": adx_val,
+        "rsi": rsi_val,
+        "macd_histogram": macd_histogram_val,
+        "atr": atr_val,
+        "bb_width": bb_width_val,
+        "dist_sma_200": dist_sma_200_val,
+        "vol_surge_multiplier": vol_surge_val,
+        "funding_rate": state_manager.get_funding_rate(symbol),
+        "long_short_ratio": state_manager.get_long_short_ratio(symbol),
+        "liquidations": state_manager.get_liquidations(symbol),
+        "order_book": state_manager.get_order_book(symbol),
+        "fear_greed_index": state_manager.fear_greed_index,
+        "lessons_learned": lessons_learned,
+        "winning_trades": winning_trades,
+        "proposed_direction": position_side
+    }
+
+def _process_ai_evaluation(state_manager: StateManager, symbol: str, ai_result: dict, position_side: str, strategy_used: str, market_type: str) -> tuple[str, float, str, dict] | None:
+    if not isinstance(ai_result, dict):
+        log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting {market_type} trade.")
+        return None
+        
+    decision = ai_result.get('decision')
+    risk_score = ai_result.get('risk_score')
+    reason = str(ai_result.get('reason', 'No reason provided'))[:255]
+    committee_debate = ai_result.get('committee_debate', {})
+    
+    if risk_score is None or not isinstance(risk_score, (int, float)):
+        risk_score = 100
+        
+    tech_context = ai_result.get('tech_context', '')
+    TradeRepository.save_ai_decision(symbol, position_side, risk_score, decision, reason, tech_context, market_type=market_type)
+        
+    model_used = ai_result.get('model_used', 'UNKNOWN')
+    is_error = ai_result.get('is_error', False)
+    
+    if is_error:
+        log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type=market_type)
+        log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type=market_type)
+        update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type=market_type)
+        state_manager.update_state(symbol, last_trade_time=None)
+        return None
+        
+    log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} (Risk: {risk_score}) | Reason: {reason}", market_type=market_type)
+        
+    ai_debate_payload = {
+        "symbol": symbol,
+        "strategy": strategy_used,
+        "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
+        "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
+        "chief_reason": sanitize_text(reason),
+        "decision": decision,
+        "risk_score": risk_score
+    }
+        
+    update_bot_state(state_manager, f"AI: {decision} {symbol} {market_type.capitalize()} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type=market_type)
+    return decision, risk_score, reason, ai_result
+
+def _calculate_futures_position_size(state_manager: StateManager, symbol: str, allocation_percentage: float, current_price: float) -> tuple[float, float] | None:
+    allocation_percentage = max(10.0, min(40.0, float(allocation_percentage)))
+    total_margin = state_manager.live_usdt_balance
+    if total_margin < 5.0:
+        log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol} (Balance: {total_margin}). Aborting trade.", market_type="futures")
+        return None
+        
+    trade_margin = total_margin * (allocation_percentage / 100.0)
+    if trade_margin < 5.0:
+        trade_margin = 5.0
+    
+    from .config import FUTURES_LEVERAGE
+    notional_value = trade_margin * FUTURES_LEVERAGE
+    
+    if notional_value < 21.0:
+        required_margin = 21.0 / max(FUTURES_LEVERAGE, 1)
+        if total_margin >= required_margin:
+            trade_margin = required_margin
+            notional_value = 21.0
+        else:
+            log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance to meet Binance min notional of 21 USDT for {symbol}. Need {required_margin:.2f} USDT, have {total_margin:.2f}. Aborting.", market_type="futures")
+            return None
+            
+    qty = notional_value / current_price
+    return qty, notional_value
+
+def _calculate_spot_position_size(state_manager: StateManager, symbol: str, allocation_percentage: float, current_price: float, current_holding_value: float) -> tuple[float, float] | None:
+    allocation_percentage = max(10.0, min(40.0, float(allocation_percentage)))
+    live_usdt_balance = state_manager.live_usdt_balance
+    total_equity = live_usdt_balance + current_holding_value
+    trade_amount = total_equity * (allocation_percentage / 100.0)
+    if trade_amount < 10.0: trade_amount = 10.0
+    if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
+    
+    if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
+        log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
+        return None
+        
+    safe_trade_amount = trade_amount * 0.98
+    qty = safe_trade_amount / current_price 
+    return qty, trade_amount
+
 def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
         control = get_bot_control()
-        if control.get("futures_paused"):
-            log_msg("WARNING", f"⏸️ Trading is Paused for Futures. Skipping AI evaluation and order for {symbol}.")
-            update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type='futures')
-            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+        if _check_trading_paused(control, "futures", symbol, state_manager):
             return
 
-        from .database import TradeRepository
-        lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type='futures')
+        tech_data = _build_ai_tech_context(state_manager, symbol, strategy_used, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val, position_side, "futures")
+        ai_result = analyze_sentiment(state_manager.latest_news, symbol, tech_data, market_type='futures')
         
-        tech_data = {
-            "market_regime": market_regime_val,
-            "strategy_used": strategy_used,
-            "adx": adx_val,
-            "rsi": rsi_val,
-            "macd_histogram": macd_histogram_val,
-            "atr": atr_val,
-            "bb_width": bb_width_val,
-            "dist_sma_200": dist_sma_200_val,
-            "vol_surge_multiplier": vol_surge_val,
-            "funding_rate": state_manager.get_funding_rate(symbol),
-            "long_short_ratio": state_manager.get_long_short_ratio(symbol),
-            "liquidations": state_manager.get_liquidations(symbol),
-            "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.fear_greed_index,
-            "lessons_learned": lessons_learned,
-            "winning_trades": TradeRepository.get_recent_winning_trades(symbol, limit=2, market_type='futures'),
-            "proposed_direction": position_side
-        }
-        
-        latest_news = state_manager.latest_news
-        ai_result = analyze_sentiment(latest_news, symbol, tech_data, market_type='futures')
-        
-        if not isinstance(ai_result, dict):
-            log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting futures trade.")
+        eval_res = _process_ai_evaluation(state_manager, symbol, ai_result, position_side, strategy_used, "futures")
+        if not eval_res:
             return
-            
-        decision = ai_result.get('decision')
-        risk_score = ai_result.get('risk_score')
-        reason = str(ai_result.get('reason', 'No reason provided'))[:255]
-        committee_debate = ai_result.get('committee_debate', {})
+        decision, risk_score, reason, ai_result_dict = eval_res
         
-        if risk_score is None or not isinstance(risk_score, (int, float)):
-            risk_score = 100
-            
-        # Save decision for Opportunity Cost Tracker
-        tech_context = ai_result.get('tech_context', '')
-        TradeRepository.save_ai_decision(symbol, position_side, risk_score, decision, reason, tech_context, market_type='futures')
-            
-        model_used = ai_result.get('model_used', 'UNKNOWN')
-        is_error = ai_result.get('is_error', False)
-        
-        if is_error:
-            log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='futures')
-            log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='futures')
-            update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='futures')
-            state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
-            return
-            
-        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} (Risk: {risk_score}) | Reason: {reason}", market_type='futures')
-            
-        ai_debate_payload = {
-            "symbol": symbol,
-            "strategy": strategy_used,
-            "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
-            "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
-            "chief_reason": sanitize_text(reason),
-            "decision": decision,
-            "risk_score": risk_score
-        }
-            
-        update_bot_state(state_manager, f"AI: {decision} {symbol} Futures (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='futures')
-        
-        # Option A: Technical Indicator leads. AI only manages risk and provides allocation.
-        # We proceed as long as AI approves the risk (decision == "PROCEED") and risk <= 70.
-        
-        if decision == "PROCEED" and risk_score <= 70:
-            # Check Slippage
-            state = state_manager.get_state(symbol)
-            live_price = state.last_price if state.last_price > 0 else current_price
-            if live_price > 0:
-                slippage = abs(live_price - current_price) / current_price
-                if slippage > 0.005:
-                    log_msg("WARNING", f"⚠️ Slippage Guard: Aborting Futures {symbol} trade. Price moved >0.5% ({current_price} -> {live_price}).")
-                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol, market_type='futures')
-                    state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
-                    return
-                current_price = live_price
+        if decision in ("PROCEED", "BUY", "SELL", signal) and risk_score <= 70:
+            current_price = _check_slippage_guard(state_manager, symbol, current_price, "futures")
+            if current_price is None:
+                return
                 
             log_msg("INFO", f"🚀 Executing {signal} ({position_side}) for {symbol} via {strategy_used} at {current_price}...")
             
-            # Allocation based on Risk
-            allocation_percentage = ai_result.get('allocation_percentage', 20)
-            if not isinstance(allocation_percentage, (int, float)): allocation_percentage = 20
-            if allocation_percentage < 20: allocation_percentage = 20
-            if allocation_percentage > 40: allocation_percentage = 40
-            
-            total_margin = state_manager.live_usdt_balance
-            if total_margin < 5.0:
-                log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance for {symbol} (Balance: {total_margin}). Aborting trade.", market_type="futures")
+            size_res = _calculate_futures_position_size(state_manager, symbol, ai_result_dict.get('allocation_percentage', 20), current_price)
+            if not size_res:
                 return
-                
-            trade_margin = total_margin * (allocation_percentage / 100.0)
-            if trade_margin < 5.0: trade_margin = 5.0
-            
-            from .config import FUTURES_LEVERAGE
-            notional_value = trade_margin * FUTURES_LEVERAGE
-            
-            # Ensure notional_value is at least 21 USDT to satisfy Binance API minimums
-            if notional_value < 21.0:
-                required_margin = 21.0 / max(FUTURES_LEVERAGE, 1)
-                if total_margin >= required_margin:
-                    trade_margin = required_margin
-                    notional_value = 21.0
-                else:
-                    log_msg("WARNING", f"⚠️ Insufficient Futures USDT balance to meet Binance min notional of 21 USDT for {symbol}. Need {required_margin:.2f} USDT, have {total_margin:.2f}. Aborting.", market_type="futures")
-                    return
-                    
-            qty = notional_value / current_price
+            qty, notional_value = size_res
             
             from .trade_executor import execute_futures_trade
             trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=PAPER_TRADING)
@@ -141,22 +174,14 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             if trade:
                 send_discord_alert(f"🤖 **[FUTURES] Sniper Entry: {signal} {symbol}**\nReason: {reason}")
                 state_manager.update_state(symbol, 
-                    position=qty, 
-                    buy_price=current_price, 
-                    highest_price=current_price, 
-                    lowest_price=current_price,
-                    last_trade_time=datetime.now(timezone.utc),
-                    trade_entry_time=datetime.now(timezone.utc),
-                    active_strategy=strategy_used,
-                    dynamic_sl=sl_target,
-                    dynamic_tp=tp_target,
-                    max_time_in_trade=time_limit,
-                    position_side=position_side,
-                    ai_hold_cooldown_until=None
+                    position=qty, buy_price=current_price, highest_price=current_price, lowest_price=current_price,
+                    last_trade_time=datetime.now(timezone.utc), trade_entry_time=datetime.now(timezone.utc),
+                    active_strategy=strategy_used, dynamic_sl=sl_target, dynamic_tp=tp_target, max_time_in_trade=time_limit,
+                    position_side=position_side, ai_hold_cooldown_until=None
                 )
             else:
                 log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="futures")
-                state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
+                state_manager.update_state(symbol, last_trade_time=None)
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
@@ -164,11 +189,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 log_msg("INFO", f"⚠️ AI flagged high risk ({risk_score} > 70) for {symbol}. Aborting Futures {signal} and applying 45-Min cooldown.", market_type="futures")
             else:
                 log_msg("INFO", f"⚠️ AI aborted Futures {signal} for {symbol} (Decision: {decision}, Risk: {risk_score}).", market_type="futures")
-            state_manager.update_state(symbol, 
-                last_trade_time=datetime.now(timezone.utc),
-                ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(minutes=45),
-                cooldown_start_price=current_price
-            )
+            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc), ai_hold_cooldown_until=datetime.now(timezone.utc) + timedelta(minutes=45), cooldown_start_price=current_price)
             
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_futures_trade_signal for {symbol}: {e}")
@@ -176,13 +197,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
 def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
     try:
         control = get_bot_control()
-        if control.get("spot_paused"):
-            log_msg("WARNING", f"⏸️ Trading is Paused for Spot. Skipping AI evaluation and order for {symbol}.")
-            update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type='spot')
-            state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
+        if _check_trading_paused(control, "spot", symbol, state_manager):
             return
 
-        # Calculate holding value dynamically at the time of evaluation, not at queue time
         states = state_manager.get_all_states()
         current_holding_value = sum(s.position * (s.last_price if s.last_price > 0 else s.buy_price) for s in states.values() if s.position > 0)
         
@@ -191,134 +208,38 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             walls = analyze_order_book_walls(symbol)
             log_msg("INFO", f"Order Book Check for {symbol} - Largest Bid: {walls['largest_bid_price']}, Total Bid Vol: {walls.get('total_bid_qty', 0)}")
 
-        from .database import TradeRepository
-        lessons_learned = TradeRepository.get_recent_losing_trades(symbol, limit=3, market_type='spot')
-
-        tech_data = {
-            "market_regime": market_regime_val,
-            "strategy_used": strategy_used,
-            "adx": adx_val,
-            "rsi": rsi_val,
-            "macd_histogram": macd_histogram_val,
-            "atr": atr_val,
-            "bb_width": bb_width_val,
-            "dist_sma_200": dist_sma_200_val,
-            "vol_surge_multiplier": vol_surge_val,
-            "funding_rate": state_manager.get_funding_rate(symbol),
-            "long_short_ratio": state_manager.get_long_short_ratio(symbol),
-            "liquidations": state_manager.get_liquidations(symbol),
-            "order_book": state_manager.get_order_book(symbol),
-            "fear_greed_index": state_manager.fear_greed_index,
-            "lessons_learned": lessons_learned,
-            "winning_trades": TradeRepository.get_recent_winning_trades(symbol, limit=2, market_type='spot'),
-            "proposed_direction": "BUY"
-        }
+        tech_data = _build_ai_tech_context(state_manager, symbol, strategy_used, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val, "BUY", "spot")
+        ai_result = analyze_sentiment(state_manager.latest_news, symbol, tech_data, market_type='spot')
         
-        latest_news = state_manager.latest_news
-        ai_result = analyze_sentiment(latest_news, symbol, tech_data, market_type='spot')
-        
-        if not isinstance(ai_result, dict):
-            log_msg("WARNING", f"⚠️ Invalid AI response for {symbol}. Aborting trade.")
+        eval_res = _process_ai_evaluation(state_manager, symbol, ai_result, "BUY", strategy_used, "spot")
+        if not eval_res:
             return
-            
-        decision = ai_result.get('decision')
-        risk_score = ai_result.get('risk_score')
-        reason = str(ai_result.get('reason', 'No reason provided'))[:255]
-        committee_debate = ai_result.get('committee_debate', {})
+        decision, risk_score, reason, ai_result_dict = eval_res
         
-        if risk_score is None or not isinstance(risk_score, (int, float)):
-            risk_score = 100
-            
-        # Save decision for Opportunity Cost Tracker
-        tech_context = ai_result.get('tech_context', '')
-        TradeRepository.save_ai_decision(symbol, "BUY", risk_score, decision, reason, tech_context, market_type='spot')
-            
-        model_used = ai_result.get('model_used', 'UNKNOWN')
-        is_error = ai_result.get('is_error', False)
-        
-        if is_error:
-            log_msg("ERROR", f"🚨 AI API Error [{model_used}]: {reason}", market_type='spot')
-            log_msg("WARNING", f"⚠️ Trade for {symbol} skipped due to AI API Failure. Will retry next signal without cooldown.", market_type='spot')
-            update_bot_state(state_manager, f"AI Error: {reason[:50]}...", thinking=False, symbol=symbol, market_type='spot')
-            state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
-            return
-            
-        log_msg("INFO", f"🤖 AI Evaluation [{model_used}]: {symbol} -> {decision} (Risk: {risk_score}) | Reason: {reason}", market_type='spot')
-            
-        ai_debate_payload = {
-            "symbol": symbol,
-            "strategy": strategy_used,
-            "bull": sanitize_text(committee_debate.get("bullish_analysis", "")),
-            "bear": sanitize_text(committee_debate.get("bearish_analysis", "")),
-            "chief_reason": sanitize_text(reason),
-            "decision": decision,
-            "risk_score": risk_score
-        }
-            
-        update_bot_state(state_manager, f"AI: {decision} {symbol} (Risk: {risk_score})", symbol=symbol, ai_debate=ai_debate_payload, market_type='spot')
-        
-        # Option A: Technical Indicator leads. AI manages risk and position sizing.
-        # We proceed as long as AI approves the risk (decision == "PROCEED") and risk <= 60.
-        
-        if decision == "PROCEED" and risk_score <= 60:
-            # --- Slippage Guard (Mitigation 4) ---
-            state = state_manager.get_state(symbol)
-            live_price = state.last_price if state.last_price > 0 else current_price
-            if live_price > 0:
-                slippage = (live_price - current_price) / current_price
-                if slippage > 0.005:  # Price drifted more than 0.5% while waiting for AI
-                    log_msg("WARNING", f"⚠️ Slippage Guard: Aborting {symbol} trade. Price moved +{slippage*100:.2f}% ({current_price} -> {live_price}) while waiting for AI.")
-                    update_bot_state(state_manager, f"Aborted: Slippage >0.5%", symbol=symbol, market_type='spot')
-                    state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
-                    return
-                # Update current_price to live_price for accurate execution tracking
-                current_price = live_price
-            # -------------------------------------
+        if decision in ("PROCEED", "BUY") and risk_score <= 60:
+            current_price = _check_slippage_guard(state_manager, symbol, current_price, "spot")
+            if current_price is None:
+                return
                 
             log_msg("INFO", f"🚀 Executing BUY for {symbol} via {strategy_used} at {current_price}...")
             
-            allocation_percentage = ai_result.get('allocation_percentage', 20)
-            if not isinstance(allocation_percentage, (int, float)):
-                allocation_percentage = 20
-            
-            if allocation_percentage < 20:
-                allocation_percentage = 20
-            elif allocation_percentage > 40:
-                allocation_percentage = 40
-                
-            live_usdt_balance = state_manager.live_usdt_balance
-            total_equity = live_usdt_balance + current_holding_value
-            trade_amount = total_equity * (allocation_percentage / 100.0)
-            if trade_amount < 10.0: trade_amount = 10.0
-            if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
-            
-            if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
-                log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
+            size_res = _calculate_spot_position_size(state_manager, symbol, ai_result_dict.get('allocation_percentage', 20), current_price, current_holding_value)
+            if not size_res:
                 return
-                
-            safe_trade_amount = trade_amount * 0.98 # 2% buffer for slippage and fees
-            qty = safe_trade_amount / current_price 
+            qty, trade_amount = size_res
             
             trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING)
             if trade:
                 send_discord_alert(f"🤖 **[SPOT] Sniper Entry: BUY {symbol}**\nReason: {reason}")
                 state_manager.add_to_balance(-trade_amount)
-
                 state_manager.update_state(symbol, 
-                    position=qty, 
-                    buy_price=current_price, 
-                    highest_price=current_price, 
-                    lowest_price=current_price,
-                    last_trade_time=datetime.now(timezone.utc),
-                    trade_entry_time=datetime.now(timezone.utc),
-                    active_strategy=strategy_used,
-                    dynamic_sl=sl_target,
-                    dynamic_tp=tp_target,
-                    max_time_in_trade=time_limit
+                    position=qty, buy_price=current_price, highest_price=current_price, lowest_price=current_price,
+                    last_trade_time=datetime.now(timezone.utc), trade_entry_time=datetime.now(timezone.utc),
+                    active_strategy=strategy_used, dynamic_sl=sl_target, dynamic_tp=tp_target, max_time_in_trade=time_limit
                 )
             else:
                 log_msg("WARNING", f"⚠️ Trade execution for {symbol} returned None (Aborted internally).", market_type="spot")
-                state_manager.update_state(symbol, last_trade_time=None) # FIX: Release Pyramiding Lock
+                state_manager.update_state(symbol, last_trade_time=None)
         else:
             if decision == "HOLD":
                 log_msg("INFO", f"⚠️ AI explicitly requested HOLD for {symbol}. Aborting Spot BUY and applying Cooldown.", market_type="spot")

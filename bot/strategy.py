@@ -239,6 +239,29 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
         position_side=""
     )
 
+def _check_liquidity_sweeps(open_p: float, high_p: float, low_p: float, close_p: float, bb_lower: float, bb_upper: float, body: float) -> tuple[bool, bool]:
+    lower_wick = min(open_p, close_p) - low_p
+    upper_wick = high_p - max(open_p, close_p)
+    bullish_sweep = (lower_wick > 2 * body) and (low_p <= bb_lower) and (close_p > bb_lower)
+    bearish_sweep = (upper_wick > 2 * body) and (high_p >= bb_upper) and (close_p < bb_upper)
+    return bullish_sweep, bearish_sweep
+
+def _check_rsi_divergence(df: pd.DataFrame, close_p: float, open_p: float, rsi_curr: float) -> tuple[bool, bool]:
+    bullish_div = False
+    bearish_div = False
+    if len(df) >= 16:
+        window = df.iloc[-16:-1]
+        prev_min_idx = window['close'].idxmin()
+        prev_max_idx = window['close'].idxmax()
+        bullish_div = (close_p <= df.loc[prev_min_idx, 'close']) and (rsi_curr > df.loc[prev_min_idx, 'RSI'] + 2.0) and (close_p > open_p)
+        bearish_div = (close_p >= df.loc[prev_max_idx, 'close']) and (rsi_curr < df.loc[prev_max_idx, 'RSI'] - 2.0) and (close_p < open_p)
+    return bullish_div, bearish_div
+
+def _check_sma200_rejections(open_p: float, high_p: float, low_p: float, close_p: float, sma_200: float) -> tuple[bool, bool]:
+    sma200_bounce = (low_p <= sma_200) and (close_p > sma_200) and (close_p > open_p)
+    sma200_reject = (high_p >= sma_200) and (close_p < sma_200) and (close_p < open_p)
+    return sma200_bounce, sma200_reject
+
 def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
     """
     Analyzes the latest 30m candle for Futures Long/Short trading.
@@ -247,123 +270,53 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         action="HOLD", strategy_used="NONE", stop_loss=0.0, 
         take_profit=0.0, time_in_trade=0, near_miss_reason="", position_side=""
     )
-
     if len(df) < 200:
         return default_signal
         
     latest = df.iloc[-1]
     prev = df.iloc[-2]
-    
     required_cols = ['SMA_200', 'SMA_99', 'RSI', 'ATR', 'SMA_20_Vol', 'BB_Lower', 'BB_Upper', 'ADX']
     if not all(col in latest for col in required_cols) or pd.isna(latest['SMA_200']):
         return default_signal
         
-    price = latest['close']
-    atr = latest['ATR']
-    sma_200 = latest['SMA_200']
-    sma_99 = latest['SMA_99']
-    adx_curr = latest.get('ADX', 0)
-    rsi_curr = latest['RSI']
-    vol_curr = latest['volume']
-    vol_sma = latest['SMA_20_Vol']
-    
-    # --- OHLC & BB Variables ---
-    open_p = latest['open']
-    high_p = latest['high']
-    low_p = latest['low']
-    close_p = latest['close']
-    bb_lower = latest['BB_Lower']
-    bb_upper = latest['BB_Upper']
-    
-    # 30M V-Shape Sniper: Tight stop loss for risk management
+    price, atr, sma_200, sma_99 = latest['close'], latest['ATR'], latest['SMA_200'], latest['SMA_99']
+    rsi_curr, vol_curr, vol_sma = latest['RSI'], latest['volume'], latest['SMA_20_Vol']
+    open_p, high_p, low_p, close_p = latest['open'], latest['high'], latest['low'], latest['close']
+    bb_lower, bb_upper = latest['BB_Lower'], latest['BB_Upper']
     sl_multiplier = 1.5
     
-    # Trend Strength & Macro Filters
-    ema_50 = latest.get('EMA_50', 0)
-    is_macro_uptrend = price > sma_200
-    # For SHORT: Price must not be above SMA 200
-    is_macro_downtrend = price < sma_200
-    
-    # MA99 Support/Resistance Filter
-    above_ma99 = price >= sma_99
-    below_ma99 = price <= sma_99
-    
-    # Volume Filter: Must be above average
+    is_macro_uptrend, is_macro_downtrend = price > sma_200, price < sma_200
+    above_ma99, below_ma99 = price >= sma_99, price <= sma_99
     strong_volume = vol_curr > vol_sma
-    
-    # 1. Liquidity Sweeps (Pin Bar Traps)
     body = abs(close_p - open_p)
-    lower_wick = min(open_p, close_p) - low_p
-    upper_wick = high_p - max(open_p, close_p)
     
-    bullish_sweep = (lower_wick > 2 * body) and (low_p <= bb_lower) and (close_p > bb_lower)
-    bearish_sweep = (upper_wick > 2 * body) and (high_p >= bb_upper) and (close_p < bb_upper)
-    
-    # 2. RSI Divergence (15 period lookback)
-    bullish_div = False
-    bearish_div = False
-    if len(df) >= 16:
-        window = df.iloc[-16:-1]
-        prev_min_idx = window['close'].idxmin()
-        prev_max_idx = window['close'].idxmax()
-        
-        bullish_div = (close_p <= df.loc[prev_min_idx, 'close']) and (rsi_curr > df.loc[prev_min_idx, 'RSI'] + 2.0) and (close_p > open_p)
-        bearish_div = (close_p >= df.loc[prev_max_idx, 'close']) and (rsi_curr < df.loc[prev_max_idx, 'RSI'] - 2.0) and (close_p < open_p)
-        
-    # 3. Exact S/R Touches (SMA 200 Rejections)
-    sma200_bounce = (low_p <= sma_200) and (close_p > sma_200) and (close_p > open_p)
-    sma200_reject = (high_p >= sma_200) and (close_p < sma_200) and (close_p < open_p)
-    
-    # 4. Anti-FOMO Volatility Breaker (Do not chase giant candles)
+    bullish_sweep, bearish_sweep = _check_liquidity_sweeps(open_p, high_p, low_p, close_p, bb_lower, bb_upper, body)
+    bullish_div, bearish_div = _check_rsi_divergence(df, close_p, open_p, rsi_curr)
+    sma200_bounce, sma200_reject = _check_sma200_rejections(open_p, high_p, low_p, close_p, sma_200)
     is_giant_candle = body > (atr * 2.0)
     
-    # Final Aggregation
     sniper_long = (bullish_sweep or bullish_div or sma200_bounce) and strong_volume and is_macro_uptrend and not is_giant_candle and (close_p <= bb_upper) and above_ma99
     sniper_short = (bearish_sweep or bearish_div or sma200_reject) and strong_volume and is_macro_downtrend and not is_giant_candle and (close_p >= bb_lower) and below_ma99
     
     if sniper_long:
-        return SignalPlan(
-            action="BUY", strategy_used="FUTURES_30M_SNIPER_LONG",
-            stop_loss=price - (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=0, near_miss_reason="", position_side="LONG"
-        )
-        
+        return SignalPlan("BUY", "FUTURES_30M_SNIPER_LONG", price - (atr * sl_multiplier), 0.0, 0, "", "LONG")
     if sniper_short:
-        return SignalPlan(
-            action="SELL", strategy_used="FUTURES_30M_SNIPER_SHORT",
-            stop_loss=price + (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=0, near_miss_reason="", position_side="SHORT"
-        )
+        return SignalPlan("SELL", "FUTURES_30M_SNIPER_SHORT", price + (atr * sl_multiplier), 0.0, 0, "", "SHORT")
         
-    # We exit SHORT if RSI was oversold recently (< 30) and hooks up
     if rsi_curr > prev['RSI'] and prev['RSI'] < 30:
-        return SignalPlan("BUY", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "SHORT") # Close Short
-    # We exit LONG if RSI was overbought recently (> 70) and hooks down
+        return SignalPlan("BUY", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "SHORT")
     if rsi_curr < prev['RSI'] and prev['RSI'] > 70:
-        return SignalPlan("SELL", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "LONG") # Close Long
+        return SignalPlan("SELL", "FUTURES_30M_EXIT", 0.0, 0.0, 0, "", "LONG")
         
-    # Provide a near miss reason if structural conditions met but no volume or macro alignment
-    near_miss_reason = ""
-    strategy_used = "NONE"
-    
+    near_miss_reason, strategy_used = "", "NONE"
     if bullish_sweep or bullish_div or sma200_bounce:
         strategy_used = "FUTURES_30M_SNIPER_LONG"
-        if not strong_volume:
-            near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
-        elif not is_macro_uptrend:
-            near_miss_reason = "Against Macro Uptrend"
-            
+        near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})" if not strong_volume else ("Against Macro Uptrend" if not is_macro_uptrend else "")
     elif bearish_sweep or bearish_div or sma200_reject:
         strategy_used = "FUTURES_30M_SNIPER_SHORT"
-        if not strong_volume:
-            near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})"
-        elif not is_macro_downtrend:
-            near_miss_reason = "Against Macro Downtrend"
+        near_miss_reason = f"No Volume Surge ({vol_curr:.1f} <= {vol_sma:.1f})" if not strong_volume else ("Against Macro Downtrend" if not is_macro_downtrend else "")
             
     if near_miss_reason:
-        return SignalPlan(
-            action="HOLD", strategy_used=strategy_used, stop_loss=0.0, 
-            take_profit=0.0, time_in_trade=0, near_miss_reason=near_miss_reason, position_side=""
-        )
+        return SignalPlan("HOLD", strategy_used, 0.0, 0.0, 0, near_miss_reason, "")
         
     return default_signal

@@ -9,12 +9,17 @@ client = Client()
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"]
 interval = Client.KLINE_INTERVAL_30MINUTE
 
-os.makedirs("scratch", exist_ok=True)
+os.makedirs("binace_backtest1y", exist_ok=True)
 
-print("1. Loading 365 days of 30m klines...")
+print("1. Loading 365 days of 30m klines from binace_backtest1y...")
 all_dfs = {}
 for symbol in SYMBOLS:
-    cache_file = f"scratch/{symbol}_30m_1y.pkl"
+    cache_file = f"binace_backtest1y/{symbol}_30m_1y.pkl"
+    if not os.path.exists(cache_file):
+        # fallback to scratch if exists
+        fallback = f"scratch/{symbol}_30m_1y.pkl"
+        if os.path.exists(fallback):
+            cache_file = fallback
     if os.path.exists(cache_file):
         df = pd.read_pickle(cache_file)
         if df['timestamp'].dt.tz is None:

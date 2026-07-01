@@ -23,7 +23,9 @@ def update_symbol_data(symbol: str, state_managers: list):
         sm.set_liquidations(symbol, liqs)
         sm.set_order_book(symbol, walls)
 
-def market_context_updater_loop(state_managers: list):
+def market_context_updater_loop(state_managers):
+    if not isinstance(state_managers, (list, tuple)):
+        state_managers = [state_managers]
     log_msg("INFO", "Starting Market Context Worker...")
     
     UPDATE_NEWS_INTERVAL = 12 # 12 * 300s = 3600s (1 hour)
@@ -32,7 +34,7 @@ def market_context_updater_loop(state_managers: list):
     while True:
         try:
             if iteration % UPDATE_NEWS_INTERVAL == 0:
-                news = fetch_crypto_news(limit=5)
+                news = fetch_crypto_news(5)
                 for sm in state_managers:
                     sm.latest_news = news
             

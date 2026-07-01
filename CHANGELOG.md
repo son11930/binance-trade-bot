@@ -1,12 +1,14 @@
 ## [4.7.3] - 2026-07-01
-### Unlock Trade Time Limit for Max Compounding Power
+### Unlock Trade Time Limit & Optimize Swing Profit Takers
 **English:**
 - **Unlock Time-Expired Exit**: Set `time_in_trade=0` across all Futures (`FUTURES_30M_SNIPER`) and Spot strategies (`TREND_MACD`, `SIDEWAYS_RSI_BB`) in `bot/strategy.py`.
-- **Prevent Premature Trade Cutoffs**: Backtest data confirmed that cutting trades after 12 candles (6 hours) caused excessive re-entries in consolidating markets, jumping from 112 to 393 trades and draining profits from +326.88% to -29.19%. Removing the time restriction allows the 4-Gear Hybrid Risk Manager (Gear 1-4) to ride major trends to completion.
+- **Restore RSI Swing Profit Taker**: Restored `FUTURES_30M_EXIT` (RSI > 70 hook down / RSI < 30 hook up) in `bot/strategy.py`. Real trading logs from July 1st confirmed that for moderate swing trades where RSI peaks around 70-73 (below Gear 1's 75 threshold), `FUTURES_30M_EXIT` is the primary profit taker that successfully locks in +5% to +6% gains (e.g. DOT +5.53%, OP +6.58%) before market pullbacks occur.
+- **Prevent Premature Time Cutoffs**: Removing the arbitrary 12-candle time limit prevents premature cutoffs during consolidation periods, while keeping the RSI hook exit ensures profits are captured at swing peaks.
 
 **Thai (ภาษาไทย):**
 - **ปลดล็อคข้อจำกัดเวลาถือออเดอร์**: ปรับค่า `time_in_trade=0` ใน `bot/strategy.py` ทั้งระบบ Futures และ Spot เพื่อยกเลิกการตัดไม้ออกเมื่อถือครบ 12 แท่ง (6 ชั่วโมง)
-- **ปล่อยให้ระบบ 4 เกียร์รีดกำไรคำโตสุดขีด**: จากสถิติ Backtest ยืนยันว่าการตั้งเวลาตัดทิ้ง 12 แท่งทำให้บอทเปิดปิดออเดอร์ซ้ำซ้อนในช่วงสะสมพลัง (จาก 112 ไม้พุ่งเป็น 393 ไม้) และกดกำไรลดลงจาก +326.88% เหลือติดลบ การปลดล็อคเวลาออกจะช่วยให้ระบบ 4-Gear Trailing ทำงานเกาะคลื่นใหญ่ไปจนสุดทาง
+- **คืนชีพเงื่อนไขเก็บกำไรสวิงเทรด (`FUTURES_30M_EXIT`)**: นำโค้ดเช็ค RSI ยอดเขา (RSI > 70 แล้วหักลง) กลับมาใส่ใน `bot/strategy.py` เนื่องจากประวัติการเทรดจริงวันที่ 1 ก.ค. ยืนยันว่าในจังหวะคลื่นสวิงปกติที่ RSI ขึ้นไปแตะ 70-73 (ไม่ถึงเกณฑ์ 75 ของเกียร์ 1) เงื่อนไขนี้คือพระเอกตัวจริงที่ช่วยล็อคกำไร +5% ถึง +6% (เช่น DOT +5.53%, OP +6.58%) เข้ากระเป๋าก่อนที่กราฟจะย่อตัวลง
+- **ส่วนผสมที่ลงตัวที่สุดสำหรับตลาดจริง**: การปลดล็อคเวลา 12 แท่งช่วยไม่ให้บอทเปิดปิดไม้ซ้ำซ้อนช่วงสะสมพลัง ในขณะที่การรักษา `FUTURES_30M_EXIT` ไว้ช่วยให้ไม่พลาดการล็อคกำไรที่ยอดคลื่นสวิงครับ
 
 ## [4.7.2] - 2026-07-01
 ### Binance API Rate Limit Protection & Fallback Fee Caching

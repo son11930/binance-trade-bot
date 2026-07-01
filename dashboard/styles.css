@@ -1,0 +1,39 @@
+body { 
+    background: radial-gradient(circle at top center, #0F172A, #020617);
+    color: #F8FAFC;
+    background-attachment: fixed;
+}
+.glass-card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.glass-card:hover {
+    box-shadow: 0 0 25px rgba(0, 240, 255, 0.3);
+}
+.text-glow-green { text-shadow: 0 0 15px rgba(57, 255, 20, 0.9); }
+.text-glow-red { text-shadow: 0 0 15px rgba(255, 0, 60, 0.9); }
+.border-glow-pink { box-shadow: 0 0 20px rgba(255, 0, 255, 0.4); }
+.border-glow { box-shadow: 0 0 15px rgba(59, 130, 246, 0.2); }
+
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+.ai-pulse {
+    animation: aiPulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    will-change: opacity;
+}
+@keyframes aiPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .4; }
+}
+
+/* Market toggle active states */
+.tab-active {
+    background: rgba(0, 240, 255, 0.2);
+    border-color: rgba(0, 240, 255, 0.5);
+    color: #00F0FF;
+    box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+}

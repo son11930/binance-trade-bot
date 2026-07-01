@@ -151,7 +151,9 @@ def get_cached_spot_fee(symbol: str) -> float:
             _spot_fee_ts[symbol] = now
             return fee
     except Exception as e:
-        log_msg("WARNING", f"Could not fetch spot fee for {symbol}, using default 0.001: {e}")
+        log_msg("WARNING", f"Could not fetch spot fee for {symbol}, caching default 0.001: {e}")
+    _spot_fees[symbol] = 0.001
+    _spot_fee_ts[symbol] = now
     return 0.001
 
 def get_cached_futures_fee(symbol: str) -> float:
@@ -168,7 +170,9 @@ def get_cached_futures_fee(symbol: str) -> float:
             _futures_fee_ts[symbol] = now
             return fee
     except Exception as e:
-        log_msg("WARNING", f"Could not fetch futures fee for {symbol}, using default 0.0005: {sanitize_error(e)}", market_type='futures')
+        log_msg("WARNING", f"Could not fetch futures fee for {symbol}, caching default 0.0005: {sanitize_error(e)}", market_type='futures')
+    _futures_fees[symbol] = 0.0005
+    _futures_fee_ts[symbol] = now
     return 0.0005
 
 STEP_SIZE_CACHE = {}

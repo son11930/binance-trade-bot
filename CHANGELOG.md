@@ -1,3 +1,15 @@
+## [4.7.2] - 2026-07-01
+### Binance API Rate Limit Protection & Fallback Fee Caching
+**English:**
+- **Rate Limit Protection**: Updated `bot/binance_client.py` (`get_cached_futures_fee` and `get_cached_spot_fee`) to immediately cache fallback fee rates (0.0005 for Futures, 0.001 for Spot) for 1 hour whenever an API error or Global Rate Limit occurs.
+- **Prevent API Spam Loop**: Fixed a critical issue where failing to fetch trade commission rates caused repetitive API requests every second, preventing the Binance connection from recovering during rate limits.
+- **Full Engine Backtest Suite**: Added comprehensive verification scripts (`test_30m_multiperiod.py`, `run_full_engine_backtest.py`, `optimizer.py`) to simulate and benchmark the 4-Gear Hybrid Risk Manager across 1m, 3m, 6m, and 1y periods.
+
+**Thai (ภาษาไทย):**
+- **ป้องกันการติด Rate Limit**: อัปเกรดระบบดึงค่าธรรมเนียมใน `bot/binance_client.py` เมื่อเกิด Error หรือติด Rate Limit บอทจะบันทึกค่าธรรมเนียมสำรอง (0.0005 สำหรับ Futures และ 0.001 สำหรับ Spot) เก็บลงแคชทันทีเป็นเวลา 1 ชั่วโมง
+- **แก้ลูปยิง API ซ้ำรัวๆ**: แก้ปัญหาที่บอทพยายามยิงเช็คค่าธรรมเนียมทุกวินาทีตอนเน็ตสะดุด ช่วยให้การเชื่อมต่อกับ Binance หลุดจาก Rate Limit และกลับมาทำงานเป็นปกติได้อย่างรวดเร็วและปลอดภัย
+- **ระบบ Backtest ทดสอบ 4 เกียร์เต็มรูปแบบ**: เพิ่มชุดสคริปต์ทดสอบระบบจริงบน Timeframe 30 นาที ย้อนหลัง 1 เดือน, 3 เดือน, 6 เดือน และ 1 ปีเต็ม
+
 ## [4.7.1] - 2026-06-30
 ### 30m Timeframe Migration & High-Accuracy Sniper Fixes
 **English:**

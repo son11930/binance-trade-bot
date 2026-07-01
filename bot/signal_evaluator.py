@@ -439,7 +439,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         if trade:
                             from .binance_client import futures_cancel_all_orders
                             futures_cancel_all_orders(symbol)
-                            profit_pct = trade.pnl_percent if getattr(trade, "pnl_percent", None) is not None else 0.0
+                            profit_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
                             send_discord_alert(f"🤖 **[FUTURES] Reversal Exit: {symbol}**\nClosed {state.position_side} position.\nProfit/Loss: {profit_pct:.2f}%")
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
@@ -517,7 +517,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     if trade:
                         from .binance_client import futures_cancel_all_orders
                         futures_cancel_all_orders(symbol)
-                        profit_pct = trade.pnl_percent if getattr(trade, "pnl_percent", None) is not None else 0.0
+                        profit_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
                         send_discord_alert(f"🤖 **[FUTURES] Strategy Exit: {symbol}**\nClosed {state.position_side} position.\nProfit/Loss: {profit_pct:.2f}%")
                         state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                         update_bot_state(state_manager, f"FUTURES EXIT executed for {symbol}", symbol=symbol, market_type='futures')

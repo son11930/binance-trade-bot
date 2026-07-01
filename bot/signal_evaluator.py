@@ -393,6 +393,12 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             log_msg("INFO", f"📉 SELL Signal for {symbol} via {strategy_used}. Executing...")
             trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=PAPER_TRADING)
             if trade:
+                pnl_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
+                pnl_amt = trade.get("pnl_amount") if isinstance(trade, dict) else (getattr(trade, "pnl_amount", 0.0) or 0.0)
+                if pnl_pct >= 0:
+                    send_discord_alert(f"🟢💰 **[TAKE PROFIT - WIN! 🏆] SPOT {symbol}** 🎯✨\n📉 Closed position via {strategy_used}\n💵 **Net Profit: +{pnl_pct:.2f}% (+{pnl_amt:.2f} USDT)** 🟢🚀")
+                else:
+                    send_discord_alert(f"🔴🚨 **[STOP LOSS / EXIT] SPOT {symbol}** ⚠️\n📉 Closed position via {strategy_used}\n💸 **Net Loss: {pnl_pct:.2f}% ({pnl_amt:.2f} USDT)** 🔴")
                 gross_return = state.position * current_price
                 fee = gross_return * 0.001
                 net_return = gross_return - fee
@@ -440,7 +446,11 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                             from .binance_client import futures_cancel_all_orders
                             futures_cancel_all_orders(symbol)
                             profit_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
-                            send_discord_alert(f"🤖 **[FUTURES] Reversal Exit: {symbol}**\nClosed {state.position_side} position.\nProfit/Loss: {profit_pct:.2f}%")
+                            profit_amt = trade.get("pnl_amount") if isinstance(trade, dict) else (getattr(trade, "pnl_amount", 0.0) or 0.0)
+                            if profit_pct >= 0:
+                                send_discord_alert(f"🟢💰 **[TAKE PROFIT - WIN! 🏆] FUTURES {symbol}** 🎯✨\n📉 Closed **{state.position_side}** via Reversal Exit\n💵 **Net Profit: +{profit_pct:.2f}% (+{profit_amt:.2f} USDT)** 🟢🚀")
+                            else:
+                                send_discord_alert(f"🔴🚨 **[STOP LOSS / EXIT] FUTURES {symbol}** ⚠️\n📉 Closed **{state.position_side}** via Reversal Exit\n💸 **Net Loss: {profit_pct:.2f}% ({profit_amt:.2f} USDT)** 🔴")
                             state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                             update_bot_state(state_manager, f"Reversal {exit_side} executed for {symbol}", symbol=symbol, market_type='futures')
                             is_reversal = True
@@ -518,7 +528,11 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         from .binance_client import futures_cancel_all_orders
                         futures_cancel_all_orders(symbol)
                         profit_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
-                        send_discord_alert(f"🤖 **[FUTURES] Strategy Exit: {symbol}**\nClosed {state.position_side} position.\nProfit/Loss: {profit_pct:.2f}%")
+                        profit_amt = trade.get("pnl_amount") if isinstance(trade, dict) else (getattr(trade, "pnl_amount", 0.0) or 0.0)
+                        if profit_pct >= 0:
+                            send_discord_alert(f"🟢💰 **[TAKE PROFIT - WIN! 🏆] FUTURES {symbol}** 🎯✨\n📉 Closed **{state.position_side}** via {strategy_used}\n💵 **Net Profit: +{profit_pct:.2f}% (+{profit_amt:.2f} USDT)** 🟢🚀")
+                        else:
+                            send_discord_alert(f"🔴🚨 **[STOP LOSS / EXIT] FUTURES {symbol}** ⚠️\n📉 Closed **{state.position_side}** via {strategy_used}\n💸 **Net Loss: {profit_pct:.2f}% ({profit_amt:.2f} USDT)** 🔴")
                         state_manager.update_state(symbol, position=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), position_side="")
                         update_bot_state(state_manager, f"FUTURES EXIT executed for {symbol}", symbol=symbol, market_type='futures')
         else:

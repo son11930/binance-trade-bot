@@ -107,10 +107,12 @@ class WebSocketManager:
                         def _execute_spot_rm():
                             trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
                             if trade:
-                                if "Loss" not in rm_signal:
-                                    pnl_pct = trade.get('pnl_percent') or 0.0
-                                    pnl_amt = trade.get('pnl_amount') or 0.0
-                                    send_discord_alert(f"🎯 **WIN! [SPOT] {symbol}**\nReason: {rm_signal}\nProfit: {pnl_pct:.2f}% (${pnl_amt:.2f})")
+                                pnl_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
+                                pnl_amt = trade.get("pnl_amount") if isinstance(trade, dict) else (getattr(trade, "pnl_amount", 0.0) or 0.0)
+                                if "Loss" not in rm_signal and pnl_pct >= 0:
+                                    send_discord_alert(f"🟢💰 **[TAKE PROFIT - WIN! 🏆] SPOT {symbol}** 🎯✨\n⚡ Gear/Reason: **{rm_signal}**\n💵 **Net Profit: +{pnl_pct:.2f}% (+{pnl_amt:.2f} USDT)** 🟢🚀")
+                                else:
+                                    send_discord_alert(f"🔴🚨 **[STOP LOSS TRIGGERED] SPOT {symbol}** ⚠️\n⚡ Gear/Reason: **{rm_signal}**\n💸 **Net Loss: {pnl_pct:.2f}% ({pnl_amt:.2f} USDT)** 🔴")
                                     
                                 gross_return = state.position * current_price
                                 fee = gross_return * 0.001
@@ -168,10 +170,12 @@ class WebSocketManager:
                             if trade:
                                 from .binance_client import futures_cancel_all_orders
                                 futures_cancel_all_orders(symbol)
-                                if "Loss" not in rm_signal:
-                                    pnl_pct = trade.get('pnl_percent') or 0.0
-                                    pnl_amt = trade.get('pnl_amount') or 0.0
-                                    send_discord_alert(f"🎯 **WIN! [{self.market_type.upper()}] {symbol}**\nReason: {rm_signal}\nProfit: {pnl_pct:.2f}% (${pnl_amt:.2f})")
+                                pnl_pct = trade.get("pnl_percent") if isinstance(trade, dict) else (getattr(trade, "pnl_percent", 0.0) or 0.0)
+                                pnl_amt = trade.get("pnl_amount") if isinstance(trade, dict) else (getattr(trade, "pnl_amount", 0.0) or 0.0)
+                                if "Loss" not in rm_signal and pnl_pct >= 0:
+                                    send_discord_alert(f"🟢💰 **[TAKE PROFIT - WIN! 🏆] {self.market_type.upper()} {symbol}** 🎯✨\n⚡ Gear/Reason: **{rm_signal}**\n💵 **Net Profit: +{pnl_pct:.2f}% (+{pnl_amt:.2f} USDT)** 🟢🚀")
+                                else:
+                                    send_discord_alert(f"🔴🚨 **[STOP LOSS TRIGGERED] {self.market_type.upper()} {symbol}** ⚠️\n⚡ Gear/Reason: **{rm_signal}**\n💸 **Net Loss: {pnl_pct:.2f}% ({pnl_amt:.2f} USDT)** 🔴")
                                 
                                 # Update local balance if we track it (optional for futures but let's do it)
                                 pnl_amount = trade.get('pnl_amount')

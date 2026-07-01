@@ -1,3 +1,13 @@
+## [4.7.3] - 2026-07-01
+### Unlock Trade Time Limit for Max Compounding Power
+**English:**
+- **Unlock Time-Expired Exit**: Set `time_in_trade=0` across all Futures (`FUTURES_30M_SNIPER`) and Spot strategies (`TREND_MACD`, `SIDEWAYS_RSI_BB`) in `bot/strategy.py`.
+- **Prevent Premature Trade Cutoffs**: Backtest data confirmed that cutting trades after 12 candles (6 hours) caused excessive re-entries in consolidating markets, jumping from 112 to 393 trades and draining profits from +326.88% to -29.19%. Removing the time restriction allows the 4-Gear Hybrid Risk Manager (Gear 1-4) to ride major trends to completion.
+
+**Thai (ภาษาไทย):**
+- **ปลดล็อคข้อจำกัดเวลาถือออเดอร์**: ปรับค่า `time_in_trade=0` ใน `bot/strategy.py` ทั้งระบบ Futures และ Spot เพื่อยกเลิกการตัดไม้ออกเมื่อถือครบ 12 แท่ง (6 ชั่วโมง)
+- **ปล่อยให้ระบบ 4 เกียร์รีดกำไรคำโตสุดขีด**: จากสถิติ Backtest ยืนยันว่าการตั้งเวลาตัดทิ้ง 12 แท่งทำให้บอทเปิดปิดออเดอร์ซ้ำซ้อนในช่วงสะสมพลัง (จาก 112 ไม้พุ่งเป็น 393 ไม้) และกดกำไรลดลงจาก +326.88% เหลือติดลบ การปลดล็อคเวลาออกจะช่วยให้ระบบ 4-Gear Trailing ทำงานเกาะคลื่นใหญ่ไปจนสุดทาง
+
 ## [4.7.2] - 2026-07-01
 ### Binance API Rate Limit Protection & Fallback Fee Caching
 **English:**

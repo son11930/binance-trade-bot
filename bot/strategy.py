@@ -153,7 +153,7 @@ def execute_trend_strategy(df, latest, prev, price, atr) -> SignalPlan:
             strategy_used="TREND_MACD",
             stop_loss=price - (atr * 1.5), # Keep trailing SL
             take_profit=0.0,               # Remove fixed TP for trend riding
-            time_in_trade=24,
+            time_in_trade=0,
             near_miss_reason=""
         )
         
@@ -214,7 +214,7 @@ def execute_sideways_strategy(latest, prev, price, atr) -> SignalPlan:
             strategy_used="SIDEWAYS_RSI_BB",
             stop_loss=price - (atr * 1.5),
             take_profit=bb_upper,
-            time_in_trade=16,
+            time_in_trade=0,
             near_miss_reason=""
         )
         
@@ -325,14 +325,14 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
         return SignalPlan(
             action="BUY", strategy_used="FUTURES_30M_SNIPER_LONG",
             stop_loss=price - (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=12, near_miss_reason="", position_side="LONG"
+            time_in_trade=0, near_miss_reason="", position_side="LONG"
         )
         
     if sniper_short:
         return SignalPlan(
             action="SELL", strategy_used="FUTURES_30M_SNIPER_SHORT",
             stop_loss=price + (atr * sl_multiplier), take_profit=0.0,
-            time_in_trade=12, near_miss_reason="", position_side="SHORT"
+            time_in_trade=0, near_miss_reason="", position_side="SHORT"
         )
         
     # We exit SHORT if RSI was oversold recently (< 30) and hooks up

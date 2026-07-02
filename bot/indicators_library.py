@@ -24,9 +24,9 @@ def calc_supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0)
     st_arr = np.zeros(len(df))
     dir_arr = np.zeros(len(df), dtype=int)
     
-    close_arr = df['close'].values
-    ub_arr = upperband.values
-    lb_arr = lowerband.values
+    close_arr = np.array(df['close'].values, copy=True)
+    ub_arr = np.array(upperband.values, copy=True)
+    lb_arr = np.array(lowerband.values, copy=True)
     
     for i in range(1, len(df)):
         if close_arr[i] > ub_arr[i - 1]:

@@ -407,7 +407,7 @@ def push_leaderboard_to_db_and_json(leaderboard: List[Dict[str, Any]]) -> None:
 _last_progress_write = 0.0
 _last_db_progress_write = 0.0
 
-def save_lab_progress(status: str, current_trial: int, total_trials: int, best_score: float, best_name: str, elapsed_sec: int):
+def save_lab_progress(status: str, current_trial: int, total_trials: int, best_score: float, best_name: str, elapsed_sec: int, total_db_trials: int = 0):
     global _last_progress_write, _last_db_progress_write
     now_ts = time.time()
     if status == "running" and (now_ts - _last_progress_write < 1.0):
@@ -421,6 +421,7 @@ def save_lab_progress(status: str, current_trial: int, total_trials: int, best_s
         "status": status,
         "current_trial": current_trial,
         "total_trials": total_trials if (total_trials and total_trials > 0) else 0,
+        "total_db_trials": total_db_trials if total_db_trials > 0 else current_trial,
         "progress_pct": pct,
         "best_score": round(float(best_score), 2),
         "best_strategy_name": str(best_name),
@@ -596,8 +597,11 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         if enqueued_count > 0:
             logger.info(f"⚡ Enqueued {enqueued_count} historical champion genomes into Optuna study!")
         
+        session_start_trial_id = len(study.trials)
+        
         def objective(trial):
             nonlocal best_so_far_score, best_so_far_name
+            cur_session_step = max(1, (trial.number - session_start_trial_id) + 1)
             genome = {
                 "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce", "stoch_mfi_flow", "williams_mean_rev", "donchian_breakout"]),
                 "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
@@ -625,7 +629,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_1m, step=1)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
+                save_lab_progress("running", cur_session_step, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
                 raise optuna.TrialPruned()
                 
             # Step 2: 3M Horizon
@@ -633,7 +637,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_3m, step=2)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
+                save_lab_progress("running", cur_session_step, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
                 raise optuna.TrialPruned()
                 
             # Step 3: 6M Horizon
@@ -641,7 +645,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_6m, step=3)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
+                save_lab_progress("running", cur_session_step, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
                 raise optuna.TrialPruned()
                 
             # Step 4: Full Annual Evaluation
@@ -654,7 +658,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             if full_res["fitness_score"] > best_so_far_score:
                 best_so_far_score = full_res["fitness_score"]
                 best_so_far_name = full_res["name"]
-            save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
+            save_lab_progress("running", cur_session_step, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
             
             # LIVE LEADERBOARD SYNC (every 5 completed trials or if best score is tied/beaten)
             if trial.number % 5 == 0 or full_res["fitness_score"] >= best_so_far_score:

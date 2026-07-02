@@ -566,39 +566,88 @@ async function fetchLabProgress() {
         
         banner.classList.remove('hidden');
         const isInfinite = prog.total_trials === 0 || prog.total_trials === 'Infinite' || prog.total_trials === null;
-        const pct = isInfinite ? 100 : (prog.progress_pct || 0);
+        const pct = isInfinite ? 100 : min(100, (prog.progress_pct || 0));
         const current = prog.current_trial || 0;
         const total = isInfinite ? '∞ (Infinite Mode)' : prog.total_trials;
+        const totalDb = prog.total_db_trials || current;
         const bestScore = prog.best_score || 0;
         const bestName = prog.best_strategy_name || 'N/A';
         const elapsed = prog.elapsed_seconds || 0;
-        const mins = Math.floor(elapsed / 60);
+        const hours = Math.floor(elapsed / 3600);
+        const mins = Math.floor((elapsed % 3600) / 60);
         const secs = elapsed % 60;
-        const timeStr = `${mins}m ${secs}s`;
+        const timeStr = hours > 0 ? `${hours}h ${mins}m ${secs}s` : `${mins}m ${secs}s`;
         
         const isRunning = prog.status === 'running' || prog.status === 'starting';
         
         banner.innerHTML = `
-            <div class="glass-card p-6 rounded-2xl border ${isRunning ? 'border-neonCyan/60 bg-gradient-to-r from-neonCyan/10 via-slate-900/80 to-blue-500/10 shadow-[0_0_20px_rgba(0,240,255,0.15)] animate-pulse' : 'border-neonGreen/40 bg-gradient-to-r from-neonGreen/10 to-transparent'}">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                    <div class="flex items-center gap-3">
-                        <span class="text-2xl">${isRunning ? '⚡' : '✅'}</span>
+            <div class="glass-card p-6 md:p-8 rounded-3xl border ${isRunning ? 'border-neonCyan/50 bg-gradient-to-br from-slate-900/95 via-slate-900/90 to-cyan-950/30 shadow-[0_0_30px_rgba(0,240,255,0.15)]' : 'border-neonGreen/40 bg-gradient-to-br from-slate-900/95 to-emerald-950/20'} transition-all duration-500">
+                
+                <!-- Top Header Row -->
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800/80 pb-5 mb-6">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 rounded-2xl ${isRunning ? 'bg-neonCyan/20 border border-neonCyan/50 text-neonCyan animate-pulse' : 'bg-neonGreen/20 border border-neonGreen/50 text-neonGreen'} flex items-center justify-center text-2xl shadow-lg">
+                            ${isRunning ? '⚡' : '✅'}
+                        </div>
                         <div>
-                            <h3 class="text-base font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
-                                ${isRunning ? (isInfinite ? '⚡ INFINITE EVOLUTION MODE (Running Unlimited)' : `🧬 EVOLVING ALPHA GENOME: Trial ${current} / ${total}`) : `✅ SYNTHESIS COMPLETED (${current} Trials Evaluated)`}
-                            </h3>
-                            <p class="text-xs text-slate-400">
-                                Best Blueprint So Far: <span class="text-neonCyan font-bold">${escapeHTML(bestName)}</span> (Score: <span class="text-amber-400 font-bold">${bestScore}</span>) | Elapsed: <span class="text-white font-mono">${timeStr}</span>
-                            </p>
+                            <div class="flex items-center gap-2">
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${isRunning ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'}">
+                                    ${isRunning ? '🔥 AI LAB ACTIVE' : '✨ COMPLETED'}
+                                </span>
+                                <span class="text-xs text-slate-400 font-mono">⏱️ Elapsed: ${timeStr}</span>
+                            </div>
+                            <h2 class="text-lg md:text-xl font-extrabold text-white uppercase tracking-wide mt-1">
+                                ${isRunning ? (isInfinite ? '⚡ INFINITE ALPHA EVOLUTION (Unlimited Mode)' : `🧬 EVOLVING ALPHA GENOME (21 Variables / 8 Systems)`) : `✅ ALPHA SYNTHESIS COMPLETED`}
+                            </h2>
                         </div>
                     </div>
-                    <span class="px-3 py-1 rounded-full text-xs font-bold font-mono ${isRunning ? 'bg-neonCyan/20 text-neonCyan border border-neonCyan/50' : 'bg-neonGreen/20 text-neonGreen border border-neonGreen/50'}">
-                        ${isRunning ? (isInfinite ? '∞ RUNNING' : `${pct}%`) : '100% DONE'}
-                    </span>
+                    
+                    <div class="flex items-center gap-3 self-end md:self-center">
+                        <div class="text-right">
+                            <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Session Progress</div>
+                            <div class="text-lg font-black font-mono ${isRunning ? 'text-neonCyan' : 'text-neonGreen'}">
+                                ${isRunning ? (isInfinite ? '∞ RUNNING' : `${current} / ${total}`) : `${current} Evaluated`}
+                            </div>
+                        </div>
+                        <span class="px-4 py-2 rounded-2xl text-sm font-black font-mono shadow-inner ${isRunning ? 'bg-neonCyan/10 text-neonCyan border border-neonCyan/40' : 'bg-neonGreen/10 text-neonGreen border border-neonGreen/40'}">
+                            ${isRunning ? (isInfinite ? '∞' : `${pct}%`) : '100%'}
+                        </span>
+                    </div>
                 </div>
-                <div class="w-full bg-slate-800/80 rounded-full h-3 overflow-hidden border border-slate-700/50 p-0.5">
-                    <div class="h-full rounded-full transition-all duration-500 ${isRunning ? 'bg-gradient-to-r from-neonCyan via-blue-400 to-purple-500 shadow-[0_0_10px_rgba(0,240,255,0.8)]' : 'bg-neonGreen'}" style="width: ${pct}%"></div>
+                
+                <!-- Progress Bar -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-xs text-slate-400 mb-2 font-semibold">
+                        <span>🧪 Current Session: <strong class="text-white">${current}</strong> of <strong class="text-white">${total}</strong> trials</span>
+                        <span>📚 All-Time DB Memory: <strong class="text-amber-400 font-mono">${totalDb}</strong> total trials</span>
+                    </div>
+                    <div class="w-full bg-slate-800/90 rounded-full h-4 overflow-hidden border border-slate-700/60 p-0.5 shadow-inner">
+                        <div class="h-full rounded-full transition-all duration-700 ${isRunning ? 'bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_15px_rgba(0,240,255,0.8)]' : 'bg-gradient-to-r from-emerald-400 to-teal-500 shadow-[0_0_15px_rgba(16,185,129,0.8)]'}" style="width: ${pct}%"></div>
+                    </div>
                 </div>
+                
+                <!-- Bottom Stat Grid (2 Columns) -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:border-slate-600 transition-colors">
+                        <div class="flex items-center gap-3.5">
+                            <span class="text-3xl">🏆</span>
+                            <div>
+                                <div class="text-[11px] text-slate-400 uppercase font-bold tracking-wider">Best Blueprint Found So Far</div>
+                                <div class="text-sm md:text-base font-extrabold text-neonCyan font-mono mt-0.5 truncate max-w-[240px] sm:max-w-[320px]">${escapeHTML(bestName)}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:border-slate-600 transition-colors">
+                        <div class="flex items-center gap-3.5">
+                            <span class="text-3xl">🔥</span>
+                            <div>
+                                <div class="text-[11px] text-slate-400 uppercase font-bold tracking-wider">Top Fitness Score (Alpha Rating)</div>
+                                <div class="text-lg md:text-xl font-black text-amber-400 font-mono mt-0.5">${bestScore} <span class="text-xs text-slate-400 font-normal">pts</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
             </div>
         `;
     } catch (err) {

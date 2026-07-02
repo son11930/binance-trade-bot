@@ -24,6 +24,12 @@ Requirements:
 
 import os
 import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    try: sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception: pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try: sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception: pass
 import time
 import json
 import pickle
@@ -97,6 +103,38 @@ N_CPU_WORKERS = min(multiprocessing.cpu_count(), 8)
 
 # GPU thread block size (tune for RTX 3070: 2560 CUDA cores)
 CUDA_THREADS_PER_BLOCK = 256
+
+# ── Mega-Batch Kernel Constants ──────────────────────────────────────────────
+# Batch 256 genomes per kernel launch (256 × 20 syms × 4 horizons = 20,480 threads)
+GENOME_BATCH_SIZE = 256
+# Horizon bars for 1M, 3M, 6M, 1Y at 30-min candles (48 bars/day)
+HORIZON_BARS = [30 * 48, 90 * 48, 180 * 48, 365 * 48]  # [1440, 4320, 8640, 17520]
+# Feature column order for flat VRAM pack (must match _pack_symbols_to_flat_gpu)
+N_FEATURES = 23
+FEATURE_ORDER = [
+    "close", "high", "low", "open", "vol",
+    "sma200", "sma50", "atr", "rsi", "adx",
+    "vol_sma", "bb_up", "ema10", "ema50", "st_dir",
+    "mfi", "stoch_k", "cci", "williams",
+    "keltner_low", "tenkan", "kijun", "donchian_high",
+]
+# Genome parameter order for flat pack (must match _pack_genomes_to_flat)
+N_GENOME_PARAMS = 29
+GENOME_PARAM_ORDER = [
+    "adx_trend_thresh", "vol_surge_mult", "sl_atr_mult", "tp_rr_mult", "gear1_rsi_sniper",
+    "stoch_k_thresh", "mfi_bull_thresh", "cci_trend_thresh", "williams_r_thresh",
+    "gear2_moonshot_trigger_pct", "gear2_moonshot_gap_pct",
+    "gear3_trailing_trigger_pct", "gear3_trailing_gap_pct",
+    "gear4_breakeven_trigger_pct", "gear4_breakeven_buffer_pct",
+    "max_hold_bars", "sma200_buffer_pct", "volume_floor_mult",
+    "rsi_surge_ceiling", "sl_hard_cap_pct", "tp_hard_cap_pct",
+    "cooldown_bars_after_sl", "kelly_fraction_cap", "giant_candle_atr_mult",
+    "use_dual_trend",       # bool → 1.0/0.0
+    "require_green_candle", # bool → 1.0/0.0
+    "strategy_type",        # str  → 0..7
+    "macro_regime_filter",  # str  → 0..2
+    "trend_strength_min_adx",
+]
 
 Base = declarative_base()
 
@@ -527,6 +565,236 @@ def _batch_gpu_backtest(
 
 
 # ──────────────────────────────────────────────────────────
+#  1b. MEGA-BATCH CUDA KERNEL (3D thread indexing)
+#      tid → (genome_idx, sym_idx, horizon_idx)
+#      One kernel launch evaluates 256 genomes × 20 syms × 4 horizons = 20,480 threads
+# ──────────────────────────────────────────────────────────
+
+if GPU_AVAILABLE and _cuda_jit:
+    @_cuda_jit
+    def _mega_backtest_kernel(
+        price_flat,      # [total_bars, N_FEATURES=23] — flat VRAM price tensor
+        sym_offsets,     # [n_symbols] — start bar index of each symbol
+        sym_lengths,     # [n_symbols] — bar count of each symbol
+        horizon_bars,    # [n_horizons=4] = [1440, 4320, 8640, 17520]
+        genome_params,   # [n_genomes, N_GENOME_PARAMS=29] — packed genome float32 matrix
+        out_results,     # [n_genomes × n_symbols × n_horizons × 4] flat output
+        n_genomes, n_symbols, n_horizons
+    ):
+        """
+        Mega-batch CUDA kernel. Each thread handles one (genome, symbol, horizon) triple.
+        Output layout per thread: [net_profit, win_rate, max_dd, trades]
+        Column index in price_flat matches FEATURE_ORDER:
+          0=close,1=high,2=low,3=open,4=vol,5=sma200,6=sma50,7=atr,8=rsi,9=adx,
+          10=vol_sma,11=bb_up,12=ema10,13=ema50,14=st_dir,15=mfi,16=stoch_k,
+          17=cci,18=williams,19=keltner_low,20=tenkan,21=kijun,22=donchian_high
+        """
+        tid = cuda.grid(1)
+        total = n_genomes * n_symbols * n_horizons
+        if tid >= total:
+            return
+
+        genome_idx  = tid // (n_symbols * n_horizons)
+        rem         = tid % (n_symbols * n_horizons)
+        sym_idx     = rem // n_horizons
+        horizon_idx = rem % n_horizons
+
+        bars   = horizon_bars[horizon_idx]
+        offset = sym_offsets[sym_idx]
+        length = sym_lengths[sym_idx]
+        if length < bars:
+            # Not enough data for this horizon — write zeros
+            base = (genome_idx * n_symbols * n_horizons + sym_idx * n_horizons + horizon_idx) * 4
+            out_results[base + 0] = 0.0
+            out_results[base + 1] = 0.0
+            out_results[base + 2] = 0.0
+            out_results[base + 3] = 0.0
+            return
+
+        # Price slice: last `bars` candles of this symbol
+        start = offset + length - bars
+
+        # Genome params (29 values, see GENOME_PARAM_ORDER)
+        adx_thresh    = genome_params[genome_idx, 0]
+        vol_mult      = genome_params[genome_idx, 1]
+        sl_atr        = genome_params[genome_idx, 2]
+        tp_rr         = genome_params[genome_idx, 3]
+        rsi_sniper    = genome_params[genome_idx, 4]
+        stoch_thresh  = genome_params[genome_idx, 5]
+        mfi_thresh    = genome_params[genome_idx, 6]
+        cci_thresh    = genome_params[genome_idx, 7]
+        wlr_thresh    = genome_params[genome_idx, 8]
+        moon_trig     = genome_params[genome_idx, 9]
+        moon_gap      = genome_params[genome_idx, 10]
+        trail_trig    = genome_params[genome_idx, 11]
+        trail_gap     = genome_params[genome_idx, 12]
+        be_trig       = genome_params[genome_idx, 13]
+        be_buf        = genome_params[genome_idx, 14]
+        max_hold      = int(genome_params[genome_idx, 15])
+        sma200_buf    = genome_params[genome_idx, 16]
+        vol_floor     = genome_params[genome_idx, 17]
+        rsi_surge_ceil= genome_params[genome_idx, 18]
+        sl_cap        = genome_params[genome_idx, 19]
+        tp_cap        = genome_params[genome_idx, 20]
+        cooldown_lim  = int(genome_params[genome_idx, 21])
+        kelly         = genome_params[genome_idx, 22]
+        giant_mult    = genome_params[genome_idx, 23]
+        use_dual      = genome_params[genome_idx, 24] > 0.5
+        req_green     = genome_params[genome_idx, 25] > 0.5
+        strat         = int(genome_params[genome_idx, 26])
+        macro         = int(genome_params[genome_idx, 27])
+        trend_min_adx = genome_params[genome_idx, 28]
+
+        # Simulation state
+        in_pos          = False
+        entry_p         = 0.0
+        sl_p            = 0.0
+        tp_p            = 0.0
+        balance         = 1000.0
+        peak_balance    = 1000.0
+        max_dd          = 0.0
+        wins            = 0
+        total_trades    = 0
+        bars_in_trade   = 0
+        cooldown_counter= 0
+
+        for i in range(200, bars):
+            gi = start + i   # global row index in price_flat
+            c  = price_flat[gi, 0]   # close
+            h  = price_flat[gi, 1]   # high
+            l  = price_flat[gi, 2]   # low
+            o  = price_flat[gi, 3]   # open
+            v  = price_flat[gi, 4]   # vol
+            s200 = price_flat[gi, 5] # sma200
+            s50  = price_flat[gi, 6] # sma50
+            atr  = price_flat[gi, 7] # atr
+            rsi  = price_flat[gi, 8] # rsi
+            adx  = price_flat[gi, 9] # adx
+            vsma = price_flat[gi, 10]# vol_sma
+            bbu  = price_flat[gi, 11]# bb_up
+            e10  = price_flat[gi, 12]# ema10
+            e50  = price_flat[gi, 13]# ema50
+            std  = price_flat[gi, 14]# st_dir
+            mfi  = price_flat[gi, 15]# mfi
+            stk  = price_flat[gi, 16]# stoch_k
+            cci  = price_flat[gi, 17]# cci
+            wlr  = price_flat[gi, 18]# williams
+            kel  = price_flat[gi, 19]# keltner_low
+            ten  = price_flat[gi, 20]# tenkan
+            kij  = price_flat[gi, 21]# kijun
+            don  = price_flat[gi, 22]# donchian_high
+
+            # Previous bar donchian (safe guard)
+            gi_prev = start + i - 1
+            don_prev = price_flat[gi_prev, 22]
+            e10_prev = price_flat[gi_prev, 12]
+            e50_prev = price_flat[gi_prev, 13]
+
+            if cooldown_counter > 0:
+                cooldown_counter -= 1
+
+            if not in_pos and cooldown_counter == 0:
+                if adx > adx_thresh and v > vsma * vol_floor:
+                    trend_ok = False
+                    if macro == 0:   # sma200_only
+                        trend_ok = (c > s200 * sma200_buf)
+                        if use_dual:
+                            trend_ok = trend_ok and (s50 > s200)
+                    elif macro == 1: # sma200_and_adx
+                        trend_ok = (c > s200 * sma200_buf) and (adx > trend_min_adx)
+                    else:            # none
+                        trend_ok = True
+
+                    not_blowoff = (h - l) <= (atr * giant_mult)
+                    candle_ok   = (c > o) if req_green else True
+
+                    if trend_ok and not_blowoff and candle_ok and c <= bbu:
+                        entry_ok = False
+                        if   strat == 0: entry_ok = (rsi < rsi_sniper) or (v > vsma * vol_mult and rsi < rsi_surge_ceil)
+                        elif strat == 1: entry_ok = (e10 > e50 and e10_prev <= e50_prev)
+                        elif strat == 2: entry_ok = (std == 1.0 and mfi > mfi_thresh)
+                        elif strat == 3: entry_ok = (c > ten and ten > kij and cci > cci_thresh)
+                        elif strat == 4: entry_ok = (l <= kel and c > kel)
+                        elif strat == 5: entry_ok = (stk < stoch_thresh and mfi > mfi_thresh)
+                        elif strat == 6: entry_ok = (wlr < wlr_thresh and rsi < rsi_sniper)
+                        elif strat == 7: entry_ok = (c >= don_prev and adx > 25.0)
+
+                        if entry_ok:
+                            in_pos       = True
+                            entry_p      = c
+                            sl_val       = c - (atr * sl_atr)
+                            sl_floor     = c * (1.0 - sl_cap)
+                            sl_p         = sl_val if sl_val > sl_floor else sl_floor
+                            tp_val       = c + (atr * sl_atr * tp_rr)
+                            tp_cap_val   = c * (1.0 + tp_cap)
+                            tp_p         = tp_val if tp_val < tp_cap_val else tp_cap_val
+                            bars_in_trade = 0
+
+            elif in_pos:
+                bars_in_trade += 1
+                cur_gain = (h - entry_p) / entry_p
+                cur_close= (c - entry_p) / entry_p
+
+                if cur_gain >= be_trig:
+                    be_sl = entry_p * (1.0 + be_buf)
+                    if be_sl > sl_p:
+                        sl_p = be_sl
+                if cur_gain >= trail_trig:
+                    trail_sl = c * (1.0 - trail_gap)
+                    if trail_sl > sl_p:
+                        sl_p = trail_sl
+                if cur_gain >= moon_trig:
+                    moon_sl = c * (1.0 - moon_gap)
+                    if moon_sl > sl_p:
+                        sl_p = moon_sl
+
+                exited  = False
+                pnl_pct = 0.0
+                if l <= sl_p:
+                    pnl_pct = (sl_p - entry_p) / entry_p
+                    balance *= (1.0 + pnl_pct * kelly * 4.0)
+                    total_trades += 1
+                    in_pos = False; bars_in_trade = 0
+                    cooldown_counter = cooldown_lim
+                    exited = True
+                elif h >= tp_p:
+                    pnl_pct = (tp_p - entry_p) / entry_p
+                    balance *= (1.0 + pnl_pct * kelly * 4.0)
+                    wins += 1; total_trades += 1
+                    in_pos = False; bars_in_trade = 0
+                    exited = True
+                elif bars_in_trade >= max_hold:
+                    pnl_pct = cur_close
+                    balance *= (1.0 + pnl_pct * kelly * 4.0)
+                    if pnl_pct > 0:
+                        wins += 1
+                    total_trades += 1
+                    in_pos = False; bars_in_trade = 0
+                    exited = True
+
+                if not exited:
+                    trailing_sl = c - (atr * sl_atr)
+                    if trailing_sl > sl_p:
+                        sl_p = trailing_sl
+
+            if balance > peak_balance:
+                peak_balance = balance
+            if peak_balance > 0.0:
+                dd = (peak_balance - balance) / peak_balance
+                if dd > max_dd:
+                    max_dd = dd
+
+        # Write output (4 values per thread)
+        net_profit = ((balance - 1000.0) / 1000.0) * 100.0
+        win_rate   = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
+        base = (genome_idx * n_symbols * n_horizons + sym_idx * n_horizons + horizon_idx) * 4
+        out_results[base + 0] = net_profit
+        out_results[base + 1] = win_rate
+        out_results[base + 2] = max_dd * 100.0
+        out_results[base + 3] = float(total_trades)
+
+
+# ──────────────────────────────────────────────────────────
 #  2. CPU FALLBACK: simulate_strategy_genome (Numba @njit)
 #     Used when GPU is not available. Still 4-8x faster than pure Python.
 # ──────────────────────────────────────────────────────────
@@ -823,6 +1091,57 @@ def preload_all_symbols_to_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]]) 
     logger.info(f"✅ VRAM Pre-load: {len(_GPU_DEVICE_ARRAYS)} symbols locked in GPU VRAM ({total_bytes/1e6:.1f} MB / 8,192 MB)")
 
 
+# ── Mega-Batch VRAM Flat Pack ─────────────────────────────────────────────────
+# _GPU_FLAT_DATA: holds the single contiguous [total_bars, 23] VRAM tensor
+# populated once at startup by _pack_symbols_to_flat_gpu()
+_GPU_FLAT_DATA: Dict[str, Any] = {}
+
+
+def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]]) -> None:
+    """
+    Pack all 20 symbols into a single contiguous [total_bars, 23] float32 VRAM tensor.
+    Also stores sym_offsets, sym_lengths, and horizon_bars on device.
+    Memory: 20 sym × 17,520 bars × 23 feat × 4 B ≈ 32 MB (0.4% of 8 GB VRAM).
+    Called once at startup; result cached in _GPU_FLAT_DATA.
+    """
+    global _GPU_FLAT_DATA
+    if not GPU_AVAILABLE:
+        _GPU_FLAT_DATA = {}  # stays empty — mega-batch path disabled
+        return
+    from numba import cuda as nb_cuda
+
+    sym_list = list(symbol_arrays.keys())
+    lengths  = [symbol_arrays[s]["close"].shape[0] for s in sym_list]
+    offsets  = np.zeros(len(sym_list), dtype=np.int32)
+    for i in range(1, len(sym_list)):
+        offsets[i] = offsets[i - 1] + lengths[i - 1]
+    total_bars = int(offsets[-1]) + lengths[-1] if sym_list else 0
+
+    # Build CPU flat array then transfer once
+    flat = np.zeros((total_bars, N_FEATURES), dtype=np.float32)
+    for i, sym in enumerate(sym_list):
+        start = int(offsets[i])
+        end   = start + lengths[i]
+        arr   = symbol_arrays[sym]
+        for fi, feat in enumerate(FEATURE_ORDER):
+            if feat in arr:
+                flat[start:end, fi] = arr[feat]
+
+    _GPU_FLAT_DATA = {
+        "price_flat":   nb_cuda.to_device(flat),
+        "sym_offsets":  nb_cuda.to_device(offsets),
+        "sym_lengths":  nb_cuda.to_device(np.array(lengths, dtype=np.int32)),
+        "horizon_bars": nb_cuda.to_device(np.array(HORIZON_BARS, dtype=np.int32)),
+        "sym_list":     sym_list,
+        "n_symbols":    len(sym_list),
+        "n_horizons":   len(HORIZON_BARS),
+    }
+    logger.info(
+        f"✅ Mega-Batch VRAM pack: {flat.nbytes/1e6:.1f} MB "
+        f"({len(sym_list)} syms × {max(lengths)} bars × {N_FEATURES} feats) ready."
+    )
+
+
 # ──────────────────────────────────────────────────────────
 #  5. DB & PROGRESS UTILITIES (same as CPU version)
 # ──────────────────────────────────────────────────────────
@@ -934,8 +1253,182 @@ def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]]):
     except Exception as e:
         logger.error(f"Failed to push leaderboard to DB: {e}")
 
+# ──────────────────────────────────────────────────────────────────────────────
+#  MEGA-BATCH: Helper functions for Part 2
+# ──────────────────────────────────────────────────────────────────────────────
+
+_STRAT_MAP_MB  = {"rsi_sniper": 0, "ema_cross": 1, "supertrend_momentum": 2,
+                  "ichimoku_cloud": 3, "keltner_bounce": 4, "stoch_mfi_flow": 5,
+                  "williams_mean_rev": 6, "donchian_breakout": 7}
+_MACRO_MAP_MB  = {"sma200_only": 0, "sma200_and_adx": 1, "none": 2}
+
+
+def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
+    """
+    Convert a list of genome dicts into a [n_genomes, N_GENOME_PARAMS=29] float32 matrix.
+    Parameter order matches GENOME_PARAM_ORDER and the mega-kernel's indexing.
+    """
+    n = len(genome_batch)
+    mat = np.zeros((n, N_GENOME_PARAMS), dtype=np.float32)
+    for gi, gn in enumerate(genome_batch):
+        mat[gi, 0]  = float(gn.get("adx_trend_thresh",           20.0))
+        mat[gi, 1]  = float(gn.get("vol_surge_mult",              1.2))
+        mat[gi, 2]  = float(gn.get("sl_atr_mult",                 1.5))
+        mat[gi, 3]  = float(gn.get("tp_rr_mult",                  2.5))
+        mat[gi, 4]  = float(gn.get("gear1_rsi_sniper",           78.0))
+        mat[gi, 5]  = float(gn.get("stoch_k_thresh",             80.0))
+        mat[gi, 6]  = float(gn.get("mfi_bull_thresh",            40.0))
+        mat[gi, 7]  = float(gn.get("cci_trend_thresh",            0.0))
+        mat[gi, 8]  = float(gn.get("williams_r_thresh",          -80.0))
+        mat[gi, 9]  = float(gn.get("gear2_moonshot_trigger_pct",  0.02))
+        mat[gi, 10] = float(gn.get("gear2_moonshot_gap_pct",      0.005))
+        mat[gi, 11] = float(gn.get("gear3_trailing_trigger_pct",  0.012))
+        mat[gi, 12] = float(gn.get("gear3_trailing_gap_pct",      0.008))
+        mat[gi, 13] = float(gn.get("gear4_breakeven_trigger_pct", 0.006))
+        mat[gi, 14] = float(gn.get("gear4_breakeven_buffer_pct",  0.001))
+        mat[gi, 15] = float(gn.get("max_hold_bars",               36.0))
+        mat[gi, 16] = float(gn.get("sma200_buffer_pct",           0.995))
+        mat[gi, 17] = float(gn.get("volume_floor_mult",           0.7))
+        mat[gi, 18] = float(gn.get("rsi_surge_ceiling",           82.0))
+        mat[gi, 19] = float(gn.get("sl_hard_cap_pct",             0.04))
+        mat[gi, 20] = float(gn.get("tp_hard_cap_pct",             0.10))
+        mat[gi, 21] = float(gn.get("cooldown_bars_after_sl",       2.0))
+        mat[gi, 22] = float(gn.get("kelly_fraction_cap",           0.25))
+        mat[gi, 23] = float(gn.get("giant_candle_atr_mult",        2.0))
+        mat[gi, 24] = 1.0 if gn.get("use_dual_trend", True) else 0.0
+        mat[gi, 25] = 1.0 if gn.get("require_green_candle", False) else 0.0
+        mat[gi, 26] = float(_STRAT_MAP_MB.get(gn.get("strategy_type", "rsi_sniper"), 0))
+        mat[gi, 27] = float(_MACRO_MAP_MB.get(gn.get("macro_regime_filter", "sma200_only"), 0))
+        mat[gi, 28] = float(gn.get("trend_strength_min_adx", 15.0))
+    return mat
+
+
+def _compute_fitness_from_matrix(raw_gi: np.ndarray, h_names: List[str]) -> Dict[str, Any]:
+    """
+    Aggregate one genome's raw GPU output matrix into a fitness dict.
+    raw_gi shape: [n_symbols, n_horizons, 4]  (4 = profit, winrate, maxdd, trades)
+    h_names: list of horizon labels e.g. ['1m','3m','6m','1y']
+    Returns a dict with net_profit_*, win_rate_1y, max_dd, total_trades_1y, fitness_score, etc.
+    """
+    n_s, n_h, _ = raw_gi.shape
+    res: Dict[str, Any] = {}
+    total_trades_1y = 0
+    win_rate_1y     = 0.0
+    max_dd_all      = 0.0
+    moonshots       = 0
+
+    for hi, h_name in enumerate(h_names):
+        profits = []
+        for si in range(n_s):
+            profit = float(raw_gi[si, hi, 0])
+            # Skip symbols that had no data (all zeros from kernel guard)
+            if raw_gi[si, hi, 3] == 0.0 and raw_gi[si, hi, 0] == 0.0:
+                continue
+            profits.append(profit)
+            if h_name == "1y":
+                trades = int(raw_gi[si, hi, 3])
+                wins   = int(raw_gi[si, hi, 1] * trades / 100.0) if trades > 0 else 0
+                dd     = float(raw_gi[si, hi, 2])
+                total_trades_1y += trades
+                if dd > max_dd_all:
+                    max_dd_all = dd
+                if profit > 30.0:
+                    moonshots += 1
+
+        avg = float(np.mean(profits)) if profits else 0.0
+        res[f"net_profit_{h_name}"]        = round(avg, 2)
+        res[f"net_profit_{h_name}_dollar"] = round(avg * 10.0, 2)
+
+        if h_name == "1y" and total_trades_1y > 0:
+            # Recompute win_rate from per-symbol winrate × trades
+            total_wins = 0
+            for si in range(n_s):
+                t = int(raw_gi[si, hi, 3])
+                if t > 0:
+                    total_wins += int(raw_gi[si, hi, 1] * t / 100.0)
+            win_rate_1y = (total_wins / total_trades_1y * 100.0) if total_trades_1y > 0 else 0.0
+
+    res["win_rate_1y"]      = round(win_rate_1y, 2)
+    res["max_dd"]           = round(max_dd_all, 2)
+    res["total_trades_1y"]  = total_trades_1y
+    res["moonshots_1y"]     = moonshots
+    res["avg_trades_month"] = round(total_trades_1y / 12.0, 1)
+    res["avg_trades_day"]   = round(total_trades_1y / 365.0, 1)
+
+    total_profit    = sum(res.get(f"net_profit_{h}", 0.0) for h in h_names)
+    all_horizon_bonus = 500.0 if all(res.get(f"net_profit_{h}", 0.0) > 0 for h in h_names) else 0.0
+    win_score       = res["win_rate_1y"] * 2.0
+    trade_score     = min(res["avg_trades_month"], 100.0) * 0.5
+    fitness = total_profit + all_horizon_bonus + win_score + trade_score - res["max_dd"] * 1.5
+    res["fitness_score"] = round(fitness, 2)
+    return res
+
+
+def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Single mega-kernel call: evaluates genome_batch (up to GENOME_BATCH_SIZE genomes)
+    across ALL symbols × ALL horizons simultaneously.
+    Returns list of fitness dicts (same format as evaluate_genome_gpu).
+    Falls back to per-genome CPU evaluation if GPU or _GPU_FLAT_DATA not ready.
+    """
+    if not GPU_AVAILABLE or not _GPU_FLAT_DATA:
+        # CPU fallback: evaluate sequentially (should not normally happen in GPU mode)
+        return [evaluate_genome_gpu(_build_symbol_arrays_for_cpu(), g) for g in genome_batch]
+
+    from numba import cuda as nb_cuda
+
+    n_g  = len(genome_batch)
+    n_s  = _GPU_FLAT_DATA["n_symbols"]
+    n_h  = _GPU_FLAT_DATA["n_horizons"]
+    total_threads = n_g * n_s * n_h   # e.g. 256 × 20 × 4 = 20,480
+
+    # Pack genomes → float32 matrix → GPU
+    genome_mat    = _pack_genomes_to_flat(genome_batch)
+    d_genome_params = nb_cuda.to_device(genome_mat)
+    d_out         = nb_cuda.device_array(total_threads * 4, dtype=np.float32)
+    stream        = nb_cuda.stream()
+
+    try:
+        blocks = (total_threads + CUDA_THREADS_PER_BLOCK - 1) // CUDA_THREADS_PER_BLOCK
+        _mega_backtest_kernel[blocks, CUDA_THREADS_PER_BLOCK, stream](
+            _GPU_FLAT_DATA["price_flat"],
+            _GPU_FLAT_DATA["sym_offsets"],
+            _GPU_FLAT_DATA["sym_lengths"],
+            _GPU_FLAT_DATA["horizon_bars"],
+            d_genome_params,
+            d_out,
+            n_g, n_s, n_h
+        )
+        try:
+            stream.synchronize()
+        except Exception as cuda_err:
+            logger.error(f"Mega-kernel CUDA error: {cuda_err}")
+            return [{"fitness_score": 0.0, "net_profit_1y": 0.0, "net_profit_6m": 0.0,
+                     "net_profit_3m": 0.0, "net_profit_1m": 0.0, "win_rate_1y": 0.0,
+                     "max_dd": 0.0, "total_trades_1y": 0, "moonshots_1y": 0,
+                     "avg_trades_month": 0.0, "avg_trades_day": 0.0}] * n_g
+
+        # Copy results back and reshape to [n_g, n_s, n_h, 4]
+        raw = np.nan_to_num(
+            d_out.copy_to_host(stream=stream),
+            nan=0.0, posinf=0.0, neginf=0.0
+        ).reshape(n_g, n_s, n_h, 4)
+    finally:
+        del d_genome_params, d_out
+
+    h_names = ["1m", "3m", "6m", "1y"]
+    return [_compute_fitness_from_matrix(raw[gi], h_names) for gi in range(n_g)]
+
+
+def _build_symbol_arrays_for_cpu() -> Dict[str, Dict[str, np.ndarray]]:
+    """CPU-fallback: return symbol arrays from the old per-symbol VRAM store (or empty)."""
+    # When GPU unavailable, symbol_arrays is in scope inside run_gpu_synthesizer_lab.
+    # This is a stub — the real path passes symbol_arrays explicitly.
+    return {}
+
 
 def get_deduplicated_top10_gpu(lb_map: dict) -> list:
+
     all_items = sorted(lb_map.values(), key=lambda x: x.get("fitness_score", -9999), reverse=True)
     unique, seen = [], set()
     for item in all_items:
@@ -996,6 +1489,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     # PERF-C1: Pre-load ALL symbol data to GPU VRAM once (~33 MB, eliminates 160 MB/trial transfer)
     if GPU_AVAILABLE:
         preload_all_symbols_to_gpu(symbol_arrays)
+        # Mega-Batch: also pack as single flat tensor for mega-kernel
+        _pack_symbols_to_flat_gpu(symbol_arrays)
 
     leaderboard_map: Dict[str, Any] = {}
 
@@ -1068,11 +1563,9 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     session_start_id = len(study.trials)
     lock = threading.Lock()
 
-    def objective(trial):
-        nonlocal best_so_far_score, best_so_far_name
-        cur_step = max(1, (trial.number - session_start_id) + 1)
-
-        genome = {
+    # ── Build genome dict from an Optuna trial ───────────────────────────────
+    def _build_genome_from_trial(trial) -> Dict[str, Any]:
+        return {
             "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper","ema_cross","supertrend_momentum","ichimoku_cloud","keltner_bounce","stoch_mfi_flow","williams_mean_rev","donchian_breakout"]),
             "adx_trend_thresh":   trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
             "use_dual_trend":     trial.suggest_categorical("use_dual_trend", [True, False]),
@@ -1155,64 +1648,134 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
             "macro_regime_filter": trial.suggest_categorical("macro_regime_filter", ["sma200_only","sma200_and_adx","none"])
         }
 
-        # Early prune gate: 1M horizon across all symbols (quick check)
-        p_1m_list = []
-        for sym, arrays in symbol_arrays.items():
-            bars = 30 * 48
-            if arrays["close"].shape[0] < bars: continue
-            stats = (_batch_gpu_backtest(arrays, [genome], bars)[0]
-                     if GPU_AVAILABLE else _cpu_eval_from_arrays(arrays, genome, bars))
-            p_1m_list.append(stats["net_profit_pct"])
-        p_1m = float(np.mean(p_1m_list)) if p_1m_list else 0.0
-        trial.report(p_1m, step=1)
-        if trial.should_prune():
-            elapsed = int(time.time() - start_time)
-            save_lab_progress_gpu("running", cur_step, n_trials or 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
-            raise optuna.TrialPruned()
+    # ── Ask-and-Tell Mega-Batch Loop (replaces study.optimize) ───────────────
+    # GPU path: batch GENOME_BATCH_SIZE trials → 1 kernel call → tell all results
+    # CPU path: fallback to per-genome evaluation (same as before)
+    USE_MEGA_BATCH = GPU_AVAILABLE and bool(_GPU_FLAT_DATA)
+    if USE_MEGA_BATCH:
+        logger.info(f"🚀 MEGA-BATCH MODE: {GENOME_BATCH_SIZE} genomes per kernel call (RTX 3070)")
+    else:
+        logger.info(f"🧬 Standard mode: 1 genome per trial, {N_CPU_WORKERS} parallel workers")
 
-        # Full 4-horizon evaluation
-        full_res = evaluate_genome_gpu(symbol_arrays, genome)
-        st_name = str(genome.get("strategy_type", "rsi")).upper()
-        full_res["name"] = f"Blueprint #{trial.number + 2}: [{st_name}] GPU Alpha #{trial.number}"
-        full_res["parameters"] = genome
-
-        # C2 fix: capture is_new_best inside lock — prevents torn read of best_so_far_score
-        # outside the lock (race condition where another thread writes between our read and compare)
-        with lock:
-            leaderboard_map[f"trial_{trial.number}"] = full_res
-            is_new_best = full_res["fitness_score"] > best_so_far_score
-            if is_new_best:
-                best_so_far_score = full_res["fitness_score"]
-                best_so_far_name  = full_res["name"]
-
-        elapsed = int(time.time() - start_time)
-        save_lab_progress_gpu("running", cur_step, n_trials or 0, best_so_far_score, best_so_far_name, elapsed, total_db_trials=trial.number + 1)
-
-        # Sync leaderboard every 10 trials or on confirmed new best (use snapshot, not bare read)
-        if trial.number % 10 == 0 or is_new_best:
-            try:
-                with lock:
-                    # H3 fix: always hold lock when iterating leaderboard_map
-                    top_10 = get_deduplicated_top10_gpu(leaderboard_map)
-                push_leaderboard_to_db_and_json_gpu(top_10)
-            except Exception as e:
-                logger.error(f"Leaderboard sync error: {e}")
-
-        return full_res["fitness_score"]
-
-    logger.info(f"🧬 Starting Optuna TPE with {N_CPU_WORKERS} parallel workers...")
+    completed = 0
+    batch_idx = 0
     try:
-        study.optimize(
-            objective,
-            n_trials=n_trials,
-            n_jobs=N_CPU_WORKERS,
-            show_progress_bar=True
-        )
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("🛑 GPU Lab interrupted by user. Saving final leaderboard...")
+        while True:
+            # Stop condition
+            if n_trials is not None and completed >= n_trials:
+                break
 
-    # H3 fix: hold lock for final read — study.optimize() returning doesn't guarantee
-    # all n_jobs worker threads have stopped writing to leaderboard_map yet.
+            if USE_MEGA_BATCH:
+                # ── MEGA-BATCH GPU PATH ──
+                remaining = (n_trials - completed) if n_trials else GENOME_BATCH_SIZE
+                batch_size = min(GENOME_BATCH_SIZE, remaining)
+
+                # 1. Ask Optuna for batch_size trials
+                optuna_trials = [study.ask() for _ in range(batch_size)]
+                genomes = [_build_genome_from_trial(t) for t in optuna_trials]
+
+                # 2. ONE kernel call: 256 genomes × 20 syms × 4 horizons
+                batch_results = _mega_batch_gpu_backtest(genomes)
+
+                # 3. Tell Optuna results + update leaderboard
+                with lock:
+                    for t, genome, res in zip(optuna_trials, genomes, batch_results):
+                        st_name = str(genome.get("strategy_type", "rsi")).upper()
+                        res["name"] = f"[{st_name}] Evolved Alpha TPE #{t.number}"
+                        res["parameters"] = genome
+                        leaderboard_map[f"trial_{t.number}"] = res
+                        study.tell(t, res["fitness_score"])
+                        is_new = res["fitness_score"] > best_so_far_score
+                        if is_new:
+                            best_so_far_score = res["fitness_score"]
+                            best_so_far_name  = res["name"]
+
+                completed += batch_size
+                batch_idx += 1
+                elapsed = int(time.time() - start_time)
+                logger.info(
+                    f"[Batch {batch_idx}] {completed} genomes done | "
+                    f"Best: {best_so_far_score:.2f} ({best_so_far_name[:40]}) | "
+                    f"Elapsed: {elapsed//60}m{elapsed%60}s"
+                )
+                save_lab_progress_gpu(
+                    "running", completed, n_trials or 0,
+                    best_so_far_score, best_so_far_name, elapsed,
+                    total_db_trials=completed
+                )
+
+                # Sync leaderboard every 5 batches
+                if batch_idx % 5 == 0 or best_so_far_score > (batch_idx - 1) * 0:
+                    try:
+                        with lock:
+                            top_10 = get_deduplicated_top10_gpu(leaderboard_map)
+                        push_leaderboard_to_db_and_json_gpu(top_10)
+                    except Exception as e:
+                        logger.error(f"Leaderboard sync error: {e}")
+
+            else:
+                # ── CPU FALLBACK PATH (standard 1-by-1 objective) ──
+                def objective(trial):
+                    nonlocal best_so_far_score, best_so_far_name
+                    cur_step = max(1, (trial.number - session_start_id) + 1)
+                    genome = _build_genome_from_trial(trial)
+
+                    # Early prune: 1M horizon
+                    p_1m_list = []
+                    for sym, arrays in symbol_arrays.items():
+                        bars = 30 * 48
+                        if arrays["close"].shape[0] < bars: continue
+                        stats = _cpu_eval_from_arrays(arrays, genome, bars)
+                        p_1m_list.append(stats["net_profit_pct"])
+                    p_1m = float(np.mean(p_1m_list)) if p_1m_list else 0.0
+                    trial.report(p_1m, step=1)
+                    if trial.should_prune():
+                        elapsed = int(time.time() - start_time)
+                        save_lab_progress_gpu("running", cur_step, n_trials or 0,
+                                              best_so_far_score, best_so_far_name, elapsed,
+                                              total_db_trials=trial.number + 1)
+                        raise optuna.TrialPruned()
+
+                    full_res = evaluate_genome_gpu(symbol_arrays, genome)
+                    st_name = str(genome.get("strategy_type", "rsi")).upper()
+                    full_res["name"] = f"[{st_name}] Evolved Alpha TPE #{trial.number}"
+                    full_res["parameters"] = genome
+
+                    with lock:
+                        leaderboard_map[f"trial_{trial.number}"] = full_res
+                        is_new_best = full_res["fitness_score"] > best_so_far_score
+                        if is_new_best:
+                            best_so_far_score = full_res["fitness_score"]
+                            best_so_far_name  = full_res["name"]
+
+                    elapsed = int(time.time() - start_time)
+                    save_lab_progress_gpu("running", cur_step, n_trials or 0,
+                                          best_so_far_score, best_so_far_name, elapsed,
+                                          total_db_trials=trial.number + 1)
+                    if trial.number % 10 == 0 or is_new_best:
+                        try:
+                            with lock:
+                                top_10 = get_deduplicated_top10_gpu(leaderboard_map)
+                            push_leaderboard_to_db_and_json_gpu(top_10)
+                        except Exception as e:
+                            logger.error(f"Leaderboard sync error: {e}")
+                    return full_res["fitness_score"]
+
+                try:
+                    study.optimize(
+                        objective,
+                        n_trials=n_trials,
+                        n_jobs=N_CPU_WORKERS,
+                        show_progress_bar=True
+                    )
+                except (KeyboardInterrupt, SystemExit):
+                    logger.info("Interrupted.")
+                break  # study.optimize handles full loop in CPU mode
+
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("GPU Lab interrupted by user. Saving final leaderboard...")
+
+    # Final leaderboard push
     with lock:
         top_10 = get_deduplicated_top10_gpu(leaderboard_map)
     push_leaderboard_to_db_and_json_gpu(top_10)
@@ -1225,8 +1788,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     final_status = "stopped" if not n_trials else "completed"
     save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
                            best_val, best_item.get("name", "N/A"), elapsed)
-    logger.info(f"✅ GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
-    logger.info(f"🏆 Best: {best_item.get('name', 'N/A')} | Score: {best_val:.2f}")
+    logger.info(f"GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
+    logger.info(f"Best: {best_item.get('name', 'N/A')} | Score: {best_val:.2f}")
     return top_10
 
 

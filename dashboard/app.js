@@ -566,7 +566,7 @@ async function fetchLabProgress() {
         
         banner.classList.remove('hidden');
         const isInfinite = prog.total_trials === 0 || prog.total_trials === 'Infinite' || prog.total_trials === null;
-        const pct = isInfinite ? 100 : min(100, (prog.progress_pct || 0));
+        const pct = isInfinite ? 100 : Math.min(100, (prog.progress_pct || 0));
         const current = prog.current_trial || 0;
         const total = isInfinite ? '∞ (Infinite Mode)' : prog.total_trials;
         const totalDb = prog.total_db_trials || current;

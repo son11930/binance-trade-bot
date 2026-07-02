@@ -215,6 +215,18 @@ class StrategyLeaderboard(Base):
     parameters_json = Column(String(2000))
     created_at = Column(DateTime(timezone=True), default=func.now())
 
+class LabProgressState(Base):
+    __tablename__ = "lab_progress_state"
+    id = Column(Integer, primary_key=True, default=1)
+    status = Column(String(50))
+    current_trial = Column(Integer)
+    total_trials = Column(Integer)
+    progress_pct = Column(Float)
+    best_score = Column(Float)
+    best_strategy_name = Column(String(200))
+    elapsed_seconds = Column(Integer)
+    updated_at = Column(String(100))
+
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
     Base.metadata.create_all(bind=engine_futures)

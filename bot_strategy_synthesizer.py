@@ -330,9 +330,10 @@ def push_leaderboard_to_db_and_json(leaderboard: List[Dict[str, Any]]) -> None:
 
 
 _last_progress_write = 0.0
+_last_db_progress_write = 0.0
 
 def save_lab_progress(status: str, current_trial: int, total_trials: int, best_score: float, best_name: str, elapsed_sec: int):
-    global _last_progress_write
+    global _last_progress_write, _last_db_progress_write
     now_ts = time.time()
     if status == "running" and (now_ts - _last_progress_write < 1.0):
         return  # Debounce intermediate writes to avoid disk I/O thrashing
@@ -358,6 +359,37 @@ def save_lab_progress(status: str, current_trial: int, total_trials: int, best_s
         os.replace(tmp_path, prog_path)
     except Exception as e:
         logger.error(f"Failed to write lab progress: {e}")
+
+    if status != "running" or (now_ts - _last_db_progress_write >= 3.0):
+        _last_db_progress_write = now_ts
+        try:
+            from bot.database import LabProgressState, Base
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            from bot.config import DATABASE_URL_FUTURES, DATABASE_URL_SPOT
+            db_url = DATABASE_URL_FUTURES or DATABASE_URL_SPOT or "sqlite:///./trades_futures.db"
+            if db_url and db_url.startswith("postgres://"):
+                db_url = db_url.replace("postgres://", "postgresql://", 1)
+            engine = create_engine(db_url, pool_pre_ping=True)
+            Base.metadata.create_all(bind=engine)
+            SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            session = SessionLocal()
+            row = session.query(LabProgressState).filter_by(id=1).first()
+            if not row:
+                row = LabProgressState(id=1)
+                session.add(row)
+            row.status = data["status"]
+            row.current_trial = data["current_trial"]
+            row.total_trials = data["total_trials"]
+            row.progress_pct = data["progress_pct"]
+            row.best_score = data["best_score"]
+            row.best_strategy_name = data["best_strategy_name"]
+            row.elapsed_seconds = data["elapsed_seconds"]
+            row.updated_at = data["updated_at"]
+            session.commit()
+            session.close()
+        except Exception:
+            pass
 
 
 def _get_safe_best_value(study, fallback=0.0):
@@ -497,5 +529,12 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     return leaderboard[:10]
 
 if __name__ == "__main__":
-    run_synthesizer_lab()
+    import sys
+    trials = 30
+    if len(sys.argv) > 1:
+        try:
+            trials = int(sys.argv[1])
+        except ValueError:
+            pass
+    run_synthesizer_lab(n_trials=trials)
 

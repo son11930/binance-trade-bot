@@ -39,7 +39,8 @@ goto MENU
 echo.
 echo 🚀 Starting AI Strategy Synthesizer Lab (30 Trials)...
 echo 📋 Output will be logged to logs\strategy_lab.log
-start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python -c "from bot_strategy_synthesizer import run_synthesizer_lab; run_synthesizer_lab(n_trials=30)" > logs\strategy_lab.log 2>&1"
+if not exist logs mkdir logs
+start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python bot_strategy_synthesizer.py 30 > logs\strategy_lab.log 2>&1"
 echo ✅ Lab launched in background! You can check status with Option [5] or logs with Option [6].
 echo.
 pause
@@ -56,7 +57,8 @@ if "%trials%"=="0" (
     echo 🌙 Starting AI Strategy Synthesizer Lab (%trials% Trials)...
 )
 echo 📋 Output will be logged to logs\strategy_lab.log
-start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python -c "from bot_strategy_synthesizer import run_synthesizer_lab; run_synthesizer_lab(n_trials=%trials%)" > logs\strategy_lab.log 2>&1"
+if not exist logs mkdir logs
+start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python bot_strategy_synthesizer.py %trials% > logs\strategy_lab.log 2>&1"
 echo ✅ Lab launched in background!
 echo.
 pause
@@ -79,7 +81,8 @@ echo 🔄 Restarting Lab...
 taskkill /f /fi "WINDOWTITLE eq AI_Strategy_Synthesizer_Lab*" >nul 2>&1
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*bot_strategy_synthesizer*' } | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
 timeout /t 2 >nul
-start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python -c "from bot_strategy_synthesizer import run_synthesizer_lab; run_synthesizer_lab(n_trials=30)" > logs\strategy_lab.log 2>&1"
+if not exist logs mkdir logs
+start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python bot_strategy_synthesizer.py 30 > logs\strategy_lab.log 2>&1"
 echo ✅ Lab restarted with 30 trials!
 echo.
 pause

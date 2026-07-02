@@ -484,7 +484,28 @@ def get_strategy_leaderboard():
 
 @app.get("/api/lab/progress")
 def get_strategy_lab_progress():
-    """Returns live real-time progress of the local AI Strategy Synthesizer Lab."""
+    """Returns live real-time progress of the AI Strategy Synthesizer Lab from Aiven DB or local file fallback."""
+    try:
+        from bot.database import LabProgressState
+        db = SessionLocalFutures()
+        row = db.query(LabProgressState).filter_by(id=1).first()
+        if row and row.status and row.status != "idle":
+            res = {
+                "status": row.status,
+                "current_trial": row.current_trial or 0,
+                "total_trials": row.total_trials or 0,
+                "progress_pct": row.progress_pct or 0.0,
+                "best_score": row.best_score or 0.0,
+                "best_strategy_name": row.best_strategy_name or "N/A",
+                "elapsed_seconds": row.elapsed_seconds or 0,
+                "updated_at": row.updated_at or ""
+            }
+            db.close()
+            return {"status": "ok", "progress": res}
+        db.close()
+    except Exception:
+        pass
+
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "lab_progress.json")
     if os.path.exists(json_path):
         try:

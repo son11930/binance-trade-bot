@@ -133,6 +133,7 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     vol_mult = genome.get("vol_surge_mult", 1.2)
     sl_atr = genome.get("sl_atr_mult", 1.5)
     rsi_sniper = genome.get("gear1_rsi_sniper", 78.0)
+    strategy_type = genome.get("strategy_type", "rsi_sniper")
     
     # Pre-extract numpy arrays for fast vectorized loop backtest
     close_arr = df['close'].values
@@ -148,6 +149,14 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     vol_sma_arr = df.get('SMA_20_Vol', pd.Series(0, index=df.index)).values
     bb_up_arr = df.get('BB_Upper', pd.Series(0, index=df.index)).values
     
+    ema10_arr = df.get('EMA_10', pd.Series(0, index=df.index)).values
+    ema50_arr = df.get('EMA_50', pd.Series(0, index=df.index)).values
+    st_dir_arr = df.get('supertrend_dir', pd.Series(0, index=df.index)).values
+    mfi_arr = df.get('mfi', pd.Series(50, index=df.index)).values
+    keltner_low_arr = df.get('keltner_lower', pd.Series(0, index=df.index)).values
+    tenkan_arr = df.get('ichimoku_tenkan', pd.Series(0, index=df.index)).values
+    kijun_arr = df.get('ichimoku_kijun', pd.Series(0, index=df.index)).values
+    
     in_pos = False
     entry_p, sl_p, tp_p = 0.0, 0.0, 0.0
     balance = 1000.0
@@ -162,11 +171,24 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
         if not in_pos:
             if adx_arr[i] > adx_thresh and v > (vol_sma_arr[i] * vol_mult):
                 trend_ok = (c > sma200_arr[i]) and ((not use_dual) or (sma50_arr[i] > sma200_arr[i]))
-                if trend_ok and c <= bb_up_arr[i] and rsi_arr[i] < rsi_sniper:
-                    in_pos = True
-                    entry_p = c
-                    sl_p = c - (atr * sl_atr)
-                    tp_p = c + (atr * sl_atr * 2.5) # 2.5 R:R target
+                if trend_ok and c <= bb_up_arr[i]:
+                    entry_ok = False
+                    if strategy_type == "rsi_sniper":
+                        entry_ok = (rsi_arr[i] < rsi_sniper)
+                    elif strategy_type == "ema_cross":
+                        entry_ok = (ema10_arr[i] > ema50_arr[i] and ema10_arr[i - 1] <= ema50_arr[i - 1])
+                    elif strategy_type == "supertrend_momentum":
+                        entry_ok = (st_dir_arr[i] == 1 and mfi_arr[i] > 35.0)
+                    elif strategy_type == "ichimoku_cloud":
+                        entry_ok = (c > tenkan_arr[i] and tenkan_arr[i] > kijun_arr[i] and mfi_arr[i] > 40.0)
+                    elif strategy_type == "keltner_bounce":
+                        entry_ok = (l <= keltner_low_arr[i] and c > keltner_low_arr[i])
+                        
+                    if entry_ok:
+                        in_pos = True
+                        entry_p = c
+                        sl_p = c - (atr * sl_atr)
+                        tp_p = c + (atr * sl_atr * 2.5) # 2.5 R:R target
         else:
             # Check exit
             if l <= sl_p:
@@ -180,7 +202,11 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                 wins += 1
                 total_trades += 1
                 in_pos = False
-            elif rsi_arr[i] >= rsi_sniper:
+            elif (strategy_type == "rsi_sniper" and rsi_arr[i] >= rsi_sniper) or \
+                 (strategy_type == "ema_cross" and ema10_arr[i] < ema50_arr[i]) or \
+                 (strategy_type == "supertrend_momentum" and st_dir_arr[i] == -1) or \
+                 (strategy_type == "ichimoku_cloud" and c < kijun_arr[i]) or \
+                 (strategy_type == "keltner_bounce" and c >= sma50_arr[i]):
                 win_pct = (c - entry_p) / entry_p
                 balance *= (1.0 + win_pct)
                 if win_pct > 0:
@@ -440,6 +466,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     for sym in SYMBOLS:
         df = download_symbol_klines_safe(sym)
         if not df.empty:
+            from bot.indicators_library import calc_supertrend, calc_ichimoku, calc_keltner_channels, calc_momentum_flow
             df['SMA_200'] = ta.trend.sma_indicator(df['close'], window=200)
             df['SMA_50'] = ta.trend.sma_indicator(df['close'], window=50)
             df['ATR'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=14)
@@ -448,6 +475,12 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             df['SMA_20_Vol'] = df['volume'].rolling(window=20).mean()
             bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2.0)
             df['BB_Upper'] = bb.bollinger_hband()
+            df['EMA_10'] = ta.trend.ema_indicator(df['close'], window=10)
+            df['EMA_50'] = ta.trend.ema_indicator(df['close'], window=50)
+            df = calc_supertrend(df, period=10, multiplier=3.0)
+            df = calc_ichimoku(df)
+            df = calc_keltner_channels(df, window=20, mult=2.0)
+            df = calc_momentum_flow(df)
             symbol_dfs[sym] = df
             
     logger.info(f"Loaded and processed historical data for {len(symbol_dfs)} symbols.")
@@ -516,6 +549,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         def objective(trial):
             nonlocal best_so_far_score, best_so_far_name
             genome = {
+                "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce"]),
                 "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 32.0, step=1.0),
                 "use_dual_trend": trial.suggest_categorical("use_dual_trend", [True, False]),
                 "vol_surge_mult": trial.suggest_float("vol_surge_mult", 1.0, 2.2, step=0.1),
@@ -549,7 +583,8 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
                 
             # Step 4: Full Annual Evaluation
             full_res = evaluate_genome_4_horizons(symbol_dfs, genome)
-            full_res["name"] = f"Blueprint #{trial.number + 2}: Evolved Alpha TPE #{trial.number}"
+            st_name = str(genome.get("strategy_type", "rsi")).upper()
+            full_res["name"] = f"Blueprint #{trial.number + 2}: [{st_name}] Evolved Alpha #{trial.number}"
             full_res["parameters"] = genome
             leaderboard_map[f"trial_{trial.number}"] = full_res
             elapsed = int(time.time() - start_time)
@@ -575,11 +610,11 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     else:
         logger.warning("Optuna not available, falling back to candidate grid search...")
         candidates = [
-            {"adx_trend_thresh": 25.0, "use_dual_trend": True, "vol_surge_mult": 1.5, "sl_atr_mult": 1.8, "gear1_rsi_sniper": 80.0, "name": "Blueprint #2: High-ADX Momentum Sniper"},
-            {"adx_trend_thresh": 18.0, "use_dual_trend": True, "vol_surge_mult": 1.1, "sl_atr_mult": 1.3, "gear1_rsi_sniper": 75.0, "name": "Blueprint #3: Agile Trend Scalper"},
-            {"adx_trend_thresh": 22.0, "use_dual_trend": False, "vol_surge_mult": 2.0, "sl_atr_mult": 2.0, "gear1_rsi_sniper": 82.0, "name": "Blueprint #4: Institutional Volume Breakout"},
-            {"adx_trend_thresh": 28.0, "use_dual_trend": True, "vol_surge_mult": 1.3, "sl_atr_mult": 1.5, "gear1_rsi_sniper": 77.0, "name": "Blueprint #5: Macro Trend Armor"},
-            {"adx_trend_thresh": 20.0, "use_dual_trend": True, "vol_surge_mult": 1.4, "sl_atr_mult": 1.6, "gear1_rsi_sniper": 79.0, "name": "Blueprint #6: Balanced Alpha Genome"}
+            {"strategy_type": "rsi_sniper", "adx_trend_thresh": 25.0, "use_dual_trend": True, "vol_surge_mult": 1.5, "sl_atr_mult": 1.8, "gear1_rsi_sniper": 80.0, "name": "Blueprint #2: [RSI_SNIPER] High-ADX Momentum Sniper"},
+            {"strategy_type": "ema_cross", "adx_trend_thresh": 18.0, "use_dual_trend": True, "vol_surge_mult": 1.1, "sl_atr_mult": 1.3, "gear1_rsi_sniper": 75.0, "name": "Blueprint #3: [EMA_CROSS] Agile Trend Scalper"},
+            {"strategy_type": "supertrend_momentum", "adx_trend_thresh": 22.0, "use_dual_trend": False, "vol_surge_mult": 2.0, "sl_atr_mult": 2.0, "gear1_rsi_sniper": 82.0, "name": "Blueprint #4: [SUPERTREND] Institutional Breakout"},
+            {"strategy_type": "ichimoku_cloud", "adx_trend_thresh": 28.0, "use_dual_trend": True, "vol_surge_mult": 1.3, "sl_atr_mult": 1.5, "gear1_rsi_sniper": 77.0, "name": "Blueprint #5: [ICHIMOKU] Macro Trend Armor"},
+            {"strategy_type": "keltner_bounce", "adx_trend_thresh": 20.0, "use_dual_trend": True, "vol_surge_mult": 1.4, "sl_atr_mult": 1.6, "gear1_rsi_sniper": 79.0, "name": "Blueprint #6: [KELTNER] Balanced Alpha Genome"}
         ]
         for idx, cand in enumerate(candidates, 2):
             name = cand.pop("name")

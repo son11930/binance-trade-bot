@@ -430,6 +430,21 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     
     leaderboard_map = {}
     
+    # 0. Load Historical Champions from strategy_leaderboard.json so we NEVER forget past winners!
+    lb_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "data", "strategy_leaderboard.json")
+    historical_champions = []
+    if os.path.exists(lb_path):
+        try:
+            with open(lb_path, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                historical_champions = saved_data.get("strategies", [])
+                for idx, champ in enumerate(historical_champions):
+                    if "parameters" in champ and "fitness_score" in champ:
+                        leaderboard_map[f"hist_{idx}"] = champ
+            logger.info(f"🧠 Loaded {len(leaderboard_map)} historical Alpha champions into memory!")
+        except Exception as e:
+            logger.warning(f"Could not load historical leaderboard: {e}")
+    
     # 1. Baseline System 4 Reference
     base_genome = {"adx_trend_thresh": 20.0, "use_dual_trend": True, "vol_surge_mult": 1.2, "sl_atr_mult": 1.5, "gear1_rsi_sniper": 78.0}
     base_res = evaluate_genome_4_horizons(symbol_dfs, base_genome)
@@ -437,16 +452,42 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     base_res["parameters"] = base_genome
     leaderboard_map["baseline"] = base_res
     
+    # Determine best so far from baseline + historical champions
     best_so_far_score = base_res["fitness_score"]
     best_so_far_name = base_res["name"]
+    for item in leaderboard_map.values():
+        if item.get("fitness_score", -9999) > best_so_far_score:
+            best_so_far_score = item["fitness_score"]
+            best_so_far_name = item.get("name", "Historical Champion")
     
     if OPTUNA_AVAILABLE:
-        logger.info("Running Optuna Tree-Structured Parzen Estimators with Early Median Pruning...")
+        logger.info("Running Optuna Tree-Structured Parzen Estimators with Persistent SQLite Storage...")
+        opt_db_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "data")
+        os.makedirs(opt_db_dir, exist_ok=True)
+        opt_db_path = os.path.join(opt_db_dir, "optuna_evolution.db")
+        storage_url = f"sqlite:///{opt_db_path}"
+        
         study = optuna.create_study(
+            study_name="alpha_genome_30m",
+            storage=storage_url,
+            load_if_exists=True,
             direction="maximize",
             sampler=TPESampler(seed=42),
             pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
         )
+        
+        # Enqueue historical champion parameters into Optuna so TPE starts by evolving the winners!
+        enqueued_count = 0
+        for champ in historical_champions:
+            params = champ.get("parameters")
+            if params and isinstance(params, dict):
+                try:
+                    study.enqueue_trial(params, skip_if_exists=True)
+                    enqueued_count += 1
+                except Exception:
+                    pass
+        if enqueued_count > 0:
+            logger.info(f"⚡ Enqueued {enqueued_count} historical champion genomes into Optuna study!")
         
         def objective(trial):
             nonlocal best_so_far_score, best_so_far_name

@@ -492,9 +492,31 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
                 best_so_far_score = full_res["fitness_score"]
                 best_so_far_name = full_res["name"]
             save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
+            
+            # LIVE LEADERBOARD SYNC (every 5 completed trials or if best score is tied/beaten)
+            if trial.number % 5 == 0 or full_res["fitness_score"] >= best_so_far_score:
+                try:
+                    cur_lb = list(leaderboard_map.values())
+                    cur_lb.sort(key=lambda x: x["fitness_score"], reverse=True)
+                    top_10 = []
+                    for r_idx, item in enumerate(cur_lb[:10], 1):
+                        item_copy = dict(item)
+                        item_copy["rank"] = r_idx
+                        if r_idx == 1:
+                            item_copy["name"] = f"🏆 #{r_idx} ALPHA GENOME: " + item_copy["name"].split(": ")[-1]
+                        else:
+                            item_copy["name"] = f"#{r_idx} BLUEPRINT: " + item_copy["name"].split(": ")[-1]
+                        top_10.append(item_copy)
+                    push_leaderboard_to_db_and_json(top_10)
+                except Exception as lb_err:
+                    logger.error(f"Live leaderboard sync error: {lb_err}")
+            
             return full_res["fitness_score"]
             
-        study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        try:
+            study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("🛑 Optuna optimization interrupted by user or system! Saving existing leaderboard...")
     else:
         logger.warning("Optuna not available, falling back to candidate grid search...")
         candidates = [
@@ -525,7 +547,8 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     elapsed = int(time.time() - start_time)
     best_item = leaderboard[0] if leaderboard else {}
     best_val = _get_safe_best_value(study if OPTUNA_AVAILABLE else None, best_item.get("fitness_score", 0.0))
-    save_lab_progress("completed", n_trials if n_trials else len(leaderboard_map), n_trials if n_trials else 0, best_val, best_item.get("name", "N/A"), elapsed)
+    final_status = "stopped" if (n_trials == 0 or not n_trials) else "completed"
+    save_lab_progress(final_status, n_trials if n_trials else len(leaderboard_map), n_trials if n_trials else 0, best_val, best_item.get("name", "N/A"), elapsed)
     return leaderboard[:10]
 
 if __name__ == "__main__":

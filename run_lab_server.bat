@@ -34,7 +34,7 @@ echo    [3] Stop Lab on Server (Terminate running synthesizer processes)
 echo    [4] Restart Lab on Server (Stop existing lab and start 30 trials)
 echo    [5] Check Lab Status and Top 3 Alpha Blueprints on Server
 echo    [6] View Live Log Stream from Server (Tail strategy_lab.log)
-echo    [7] Sync Code & Update Dependencies on Server (Git Pull + Pip Install)
+echo    [7] Sync Code ^& Update Dependencies on Server (Git Pull + Pip Install)
 echo    [0] Exit
 echo.
 echo ===============================================================================

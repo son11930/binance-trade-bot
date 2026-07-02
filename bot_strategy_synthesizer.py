@@ -132,8 +132,23 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     use_dual = genome.get("use_dual_trend", True)
     vol_mult = genome.get("vol_surge_mult", 1.2)
     sl_atr = genome.get("sl_atr_mult", 1.5)
+    tp_rr = genome.get("tp_rr_mult", 2.5)
     rsi_sniper = genome.get("gear1_rsi_sniper", 78.0)
     strategy_type = genome.get("strategy_type", "rsi_sniper")
+    
+    stoch_k_thresh = genome.get("stoch_k_thresh", 80.0)
+    mfi_thresh = genome.get("mfi_bull_thresh", 40.0)
+    cci_thresh = genome.get("cci_trend_thresh", 0.0)
+    williams_thresh = genome.get("williams_r_thresh", -80.0)
+    
+    moonshot_trigger = genome.get("gear2_moonshot_trigger_pct", 0.02)
+    moonshot_gap = genome.get("gear2_moonshot_gap_pct", 0.005)
+    trailing_trigger = genome.get("gear3_trailing_trigger_pct", 0.012)
+    trailing_gap = genome.get("gear3_trailing_gap_pct", 0.008)
+    breakeven_trigger = genome.get("gear4_breakeven_trigger_pct", 0.006)
+    breakeven_buf = genome.get("gear4_breakeven_buffer_pct", 0.001)
+    max_hold_bars = genome.get("max_hold_bars", 36)
+    vol_exh_mult = genome.get("vol_exhaustion_mult", 0.5)
     
     # Pre-extract numpy arrays for fast vectorized loop backtest
     close_arr = df['close'].values
@@ -157,12 +172,18 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     tenkan_arr = df.get('ichimoku_tenkan', pd.Series(0, index=df.index)).values
     kijun_arr = df.get('ichimoku_kijun', pd.Series(0, index=df.index)).values
     
+    stoch_k_arr = df.get('stoch_rsi_k', pd.Series(50, index=df.index)).values
+    cci_arr = df.get('cci', pd.Series(0, index=df.index)).values
+    williams_arr = df.get('williams_r', pd.Series(-50, index=df.index)).values
+    donchian_high_arr = df.get('donchian_high_20', pd.Series(close_arr, index=df.index)).values
+    
     in_pos = False
     entry_p, sl_p, tp_p = 0.0, 0.0, 0.0
     balance = 1000.0
     peak_balance = 1000.0
     max_dd = 0.0
     wins, total_trades = 0, 0
+    bars_in_trade = 0
     
     for i in range(200, len(df)):
         c, h, l, v = close_arr[i], high_arr[i], low_arr[i], vol_arr[i]
@@ -178,43 +199,71 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                     elif strategy_type == "ema_cross":
                         entry_ok = (ema10_arr[i] > ema50_arr[i] and ema10_arr[i - 1] <= ema50_arr[i - 1])
                     elif strategy_type == "supertrend_momentum":
-                        entry_ok = (st_dir_arr[i] == 1 and mfi_arr[i] > 35.0)
+                        entry_ok = (st_dir_arr[i] == 1 and mfi_arr[i] > mfi_thresh)
                     elif strategy_type == "ichimoku_cloud":
-                        entry_ok = (c > tenkan_arr[i] and tenkan_arr[i] > kijun_arr[i] and mfi_arr[i] > 40.0)
+                        entry_ok = (c > tenkan_arr[i] and tenkan_arr[i] > kijun_arr[i] and cci_arr[i] > cci_thresh)
                     elif strategy_type == "keltner_bounce":
                         entry_ok = (l <= keltner_low_arr[i] and c > keltner_low_arr[i])
+                    elif strategy_type == "stoch_mfi_flow":
+                        entry_ok = (stoch_k_arr[i] < stoch_k_thresh and mfi_arr[i] > mfi_thresh)
+                    elif strategy_type == "williams_mean_rev":
+                        entry_ok = (williams_arr[i] < williams_thresh and rsi_arr[i] < rsi_sniper)
+                    elif strategy_type == "donchian_breakout":
+                        entry_ok = (c >= donchian_high_arr[i - 1] and adx_arr[i] > 25.0)
                         
                     if entry_ok:
                         in_pos = True
                         entry_p = c
                         sl_p = c - (atr * sl_atr)
-                        tp_p = c + (atr * sl_atr * 2.5) # 2.5 R:R target
+                        tp_p = c + (atr * sl_atr * tp_rr)
+                        bars_in_trade = 0
         else:
-            # Check exit
+            bars_in_trade += 1
+            cur_gain_pct = (max(h, c) - entry_p) / entry_p
+            cur_close_pct = (c - entry_p) / entry_p
+            
+            # Gear 4: Early Breakeven
+            if cur_gain_pct >= breakeven_trigger:
+                sl_p = max(sl_p, entry_p * (1.0 + breakeven_buf))
+            # Gear 3: Standard Trailing
+            if cur_gain_pct >= trailing_trigger:
+                sl_p = max(sl_p, c * (1.0 - trailing_gap))
+            # Gear 2: Moonshot
+            if cur_gain_pct >= moonshot_trigger:
+                sl_p = max(sl_p, c * (1.0 - moonshot_gap))
+                
+            # Check exit conditions
             if l <= sl_p:
                 loss_pct = (sl_p - entry_p) / entry_p
                 balance *= (1.0 + loss_pct)
                 total_trades += 1
                 in_pos = False
+                bars_in_trade = 0
             elif h >= tp_p:
                 win_pct = (max(tp_p, c) - entry_p) / entry_p
                 balance *= (1.0 + win_pct)
                 wins += 1
                 total_trades += 1
                 in_pos = False
+                bars_in_trade = 0
             elif (strategy_type == "rsi_sniper" and rsi_arr[i] >= rsi_sniper) or \
                  (strategy_type == "ema_cross" and ema10_arr[i] < ema50_arr[i]) or \
                  (strategy_type == "supertrend_momentum" and st_dir_arr[i] == -1) or \
                  (strategy_type == "ichimoku_cloud" and c < kijun_arr[i]) or \
-                 (strategy_type == "keltner_bounce" and c >= sma50_arr[i]):
-                win_pct = (c - entry_p) / entry_p
+                 (strategy_type == "keltner_bounce" and c >= sma50_arr[i]) or \
+                 (strategy_type == "stoch_mfi_flow" and stoch_k_arr[i] >= stoch_k_thresh) or \
+                 (strategy_type == "williams_mean_rev" and williams_arr[i] >= -20.0) or \
+                 (strategy_type == "donchian_breakout" and c < sma50_arr[i]) or \
+                 (bars_in_trade >= max_hold_bars) or \
+                 (v < vol_sma_arr[i] * vol_exh_mult and cur_close_pct > 0):
+                win_pct = cur_close_pct
                 balance *= (1.0 + win_pct)
                 if win_pct > 0:
                     wins += 1
                 total_trades += 1
                 in_pos = False
+                bars_in_trade = 0
             else:
-                # Trailing stop update
                 sl_p = max(sl_p, c - (atr * sl_atr))
                 
         if balance > peak_balance:
@@ -466,7 +515,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     for sym in SYMBOLS:
         df = download_symbol_klines_safe(sym)
         if not df.empty:
-            from bot.indicators_library import calc_supertrend, calc_ichimoku, calc_keltner_channels, calc_momentum_flow
+            from bot.indicators_library import calc_supertrend, calc_ichimoku, calc_keltner_channels, calc_momentum_flow, calc_volatility_volume
             df['SMA_200'] = ta.trend.sma_indicator(df['close'], window=200)
             df['SMA_50'] = ta.trend.sma_indicator(df['close'], window=50)
             df['ATR'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=14)
@@ -481,6 +530,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             df = calc_ichimoku(df)
             df = calc_keltner_channels(df, window=20, mult=2.0)
             df = calc_momentum_flow(df)
+            df = calc_volatility_volume(df)
             symbol_dfs[sym] = df
             
     logger.info(f"Loaded and processed historical data for {len(symbol_dfs)} symbols.")
@@ -525,7 +575,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         storage_url = f"sqlite:///{opt_db_path}"
         
         study = optuna.create_study(
-            study_name="alpha_genome_30m",
+            study_name="alpha_genome_21genes_v1",
             storage=storage_url,
             load_if_exists=True,
             direction="maximize",
@@ -533,11 +583,11 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
         )
         
-        # Enqueue historical champion parameters into Optuna so TPE starts by evolving the winners!
+        # Enqueue historical champion parameters into Optuna only if they match our rich 21-parameter schema!
         enqueued_count = 0
         for champ in historical_champions:
             params = champ.get("parameters")
-            if params and isinstance(params, dict):
+            if params and isinstance(params, dict) and len(params) >= 15:
                 try:
                     study.enqueue_trial(params, skip_if_exists=True)
                     enqueued_count += 1
@@ -549,12 +599,25 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         def objective(trial):
             nonlocal best_so_far_score, best_so_far_name
             genome = {
-                "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce"]),
-                "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 32.0, step=1.0),
+                "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce", "stoch_mfi_flow", "williams_mean_rev", "donchian_breakout"]),
+                "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
                 "use_dual_trend": trial.suggest_categorical("use_dual_trend", [True, False]),
-                "vol_surge_mult": trial.suggest_float("vol_surge_mult", 1.0, 2.2, step=0.1),
-                "sl_atr_mult": trial.suggest_float("sl_atr_mult", 1.2, 2.2, step=0.1),
-                "gear1_rsi_sniper": trial.suggest_float("gear1_rsi_sniper", 73.0, 84.0, step=1.0)
+                "vol_surge_mult": trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),
+                "sl_atr_mult": trial.suggest_float("sl_atr_mult", 1.0, 3.0, step=0.1),
+                "tp_rr_mult": trial.suggest_float("tp_rr_mult", 1.5, 4.5, step=0.2),
+                "gear1_rsi_sniper": trial.suggest_float("gear1_rsi_sniper", 68.0, 86.0, step=1.0),
+                "stoch_k_thresh": trial.suggest_float("stoch_k_thresh", 65.0, 88.0, step=1.0),
+                "mfi_bull_thresh": trial.suggest_float("mfi_bull_thresh", 30.0, 60.0, step=2.0),
+                "cci_trend_thresh": trial.suggest_float("cci_trend_thresh", -50.0, 100.0, step=10.0),
+                "williams_r_thresh": trial.suggest_float("williams_r_thresh", -90.0, -66.0, step=2.0),
+                "gear2_moonshot_trigger_pct": trial.suggest_float("gear2_moonshot_trigger_pct", 0.015, 0.04, step=0.005),
+                "gear2_moonshot_gap_pct": trial.suggest_float("gear2_moonshot_gap_pct", 0.003, 0.01, step=0.001),
+                "gear3_trailing_trigger_pct": trial.suggest_float("gear3_trailing_trigger_pct", 0.008, 0.024, step=0.002),
+                "gear3_trailing_gap_pct": trial.suggest_float("gear3_trailing_gap_pct", 0.005, 0.015, step=0.001),
+                "gear4_breakeven_trigger_pct": trial.suggest_float("gear4_breakeven_trigger_pct", 0.004, 0.012, step=0.001),
+                "gear4_breakeven_buffer_pct": trial.suggest_float("gear4_breakeven_buffer_pct", 0.0005, 0.003, step=0.0005),
+                "max_hold_bars": trial.suggest_int("max_hold_bars", 12, 72, step=6),
+                "vol_exhaustion_mult": trial.suggest_float("vol_exhaustion_mult", 0.3, 0.8, step=0.1)
             }
             
             # Step 1: 1M Horizon (Early Pruning Gate - cuts bottom 50% immediately!)

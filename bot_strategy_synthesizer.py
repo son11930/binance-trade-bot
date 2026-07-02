@@ -329,8 +329,42 @@ def push_leaderboard_to_db_and_json(leaderboard: List[Dict[str, Any]]) -> None:
         logger.error(f"Failed to push leaderboard to database: {e}")
 
 
+def save_lab_progress(status: str, current_trial: int, total_trials: int, best_score: float, best_name: str, elapsed_sec: int):
+    prog_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "data", "lab_progress.json")
+    os.makedirs(os.path.dirname(prog_path), exist_ok=True)
+    pct = round(min(100.0, (current_trial / total_trials) * 100.0), 1) if (total_trials and total_trials > 0) else 100.0
+    data = {
+        "status": status,
+        "current_trial": current_trial,
+        "total_trials": total_trials if (total_trials and total_trials > 0) else 0,
+        "progress_pct": pct,
+        "best_score": round(float(best_score), 2),
+        "best_strategy_name": str(best_name),
+        "elapsed_seconds": int(elapsed_sec),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    try:
+        with open(prog_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to write lab progress: {e}")
+
+
+def _get_safe_best_value(study, fallback=0.0):
+    if not study:
+        return fallback
+    try:
+        return study.best_value
+    except (ValueError, AttributeError):
+        return fallback
+
+
 def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     """Runs the full Evolutionary Strategy Lab across all 20 symbols with Optuna TPE Early Pruning."""
+    start_time = time.time()
+    if n_trials <= 0:
+        n_trials = None  # 0 means Infinite / Unlimited runs in Optuna!
+    save_lab_progress("running", 0, n_trials if n_trials else 0, 0.0, "Initializing Lab...", 0)
     logger.info("==========================================================")
     logger.info("Starting Evolutionary Strategy Synthesizer Lab (Optuna TPE)")
     logger.info("==========================================================")
@@ -382,18 +416,27 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             p_1m = evaluate_single_horizon(symbol_dfs, genome, 30 * 48)
             trial.report(p_1m, step=1)
             if trial.should_prune():
+                elapsed = int(time.time() - start_time)
+                best_val = _get_safe_best_value(study, 0.0)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 2: 3M Horizon
             p_3m = evaluate_single_horizon(symbol_dfs, genome, 90 * 48)
             trial.report(p_3m, step=2)
             if trial.should_prune():
+                elapsed = int(time.time() - start_time)
+                best_val = _get_safe_best_value(study, 0.0)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 3: 6M Horizon
             p_6m = evaluate_single_horizon(symbol_dfs, genome, 180 * 48)
             trial.report(p_6m, step=3)
             if trial.should_prune():
+                elapsed = int(time.time() - start_time)
+                best_val = _get_safe_best_value(study, 0.0)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 4: Full Annual Evaluation
@@ -401,6 +444,9 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             full_res["name"] = f"Blueprint #{trial.number + 2}: Evolved Alpha TPE #{trial.number}"
             full_res["parameters"] = genome
             leaderboard_map[f"trial_{trial.number}"] = full_res
+            elapsed = int(time.time() - start_time)
+            best_val = _get_safe_best_value(study, full_res["fitness_score"])
+            save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, full_res["name"], elapsed)
             return full_res["fitness_score"]
             
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
@@ -431,6 +477,10 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             item["name"] = f"#{idx} BLUEPRINT: " + item["name"].split(": ")[-1]
             
     push_leaderboard_to_db_and_json(leaderboard[:10])
+    elapsed = int(time.time() - start_time)
+    best_item = leaderboard[0] if leaderboard else {}
+    best_val = _get_safe_best_value(study if OPTUNA_AVAILABLE else None, best_item.get("fitness_score", 0.0))
+    save_lab_progress("completed", n_trials if n_trials else len(leaderboard_map), n_trials if n_trials else 0, best_val, best_item.get("name", "N/A"), elapsed)
     return leaderboard[:10]
 
 if __name__ == "__main__":

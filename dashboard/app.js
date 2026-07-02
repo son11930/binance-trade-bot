@@ -86,10 +86,19 @@ function setMarket(market) {
     if (futuresTab) futuresTab.className = (market === 'futures') ? activeClass : inactiveClass;
     if (labTab) labTab.className = (market === 'lab') ? activeClass : inactiveClass;
     
+    if (window.labProgressInterval) {
+        clearInterval(window.labProgressInterval);
+        window.labProgressInterval = null;
+    }
     if (market === 'lab') {
         if (monitorView) monitorView.classList.add('hidden');
         if (labView) labView.classList.remove('hidden');
         fetchLeaderboard();
+        fetchLabProgress();
+        window.labProgressInterval = setInterval(() => {
+            fetchLabProgress();
+            if (document.visibilityState === 'visible') fetchLeaderboard();
+        }, 5000);
         return;
     } else {
         if (monitorView) monitorView.classList.remove('hidden');
@@ -541,6 +550,61 @@ function renderStatsUI(statsData) {
 // ==========================================
 // AI STRATEGY LAB & LEADERBOARD UI
 // ==========================================
+
+async function fetchLabProgress() {
+    const banner = document.getElementById('lab-progress-banner');
+    if (!banner) return;
+    try {
+        const res = await fetch('/api/lab/progress');
+        const data = await res.json();
+        const prog = data.progress || {};
+        
+        if (!prog.status || prog.status === 'idle') {
+            banner.classList.add('hidden');
+            return;
+        }
+        
+        banner.classList.remove('hidden');
+        const isInfinite = prog.total_trials === 0 || prog.total_trials === 'Infinite' || prog.total_trials === null;
+        const pct = isInfinite ? 100 : (prog.progress_pct || 0);
+        const current = prog.current_trial || 0;
+        const total = isInfinite ? '∞ (Infinite Mode)' : prog.total_trials;
+        const bestScore = prog.best_score || 0;
+        const bestName = prog.best_strategy_name || 'N/A';
+        const elapsed = prog.elapsed_seconds || 0;
+        const mins = Math.floor(elapsed / 60);
+        const secs = elapsed % 60;
+        const timeStr = `${mins}m ${secs}s`;
+        
+        const isRunning = prog.status === 'running' || prog.status === 'starting';
+        
+        banner.innerHTML = `
+            <div class="glass-card p-6 rounded-2xl border ${isRunning ? 'border-neonCyan/60 bg-gradient-to-r from-neonCyan/10 via-slate-900/80 to-blue-500/10 shadow-[0_0_20px_rgba(0,240,255,0.15)] animate-pulse' : 'border-neonGreen/40 bg-gradient-to-r from-neonGreen/10 to-transparent'}">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="text-2xl">${isRunning ? '⚡' : '✅'}</span>
+                        <div>
+                            <h3 class="text-base font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
+                                ${isRunning ? (isInfinite ? '⚡ INFINITE EVOLUTION MODE (Running Unlimited)' : `🧬 EVOLVING ALPHA GENOME: Trial ${current} / ${total}`) : `✅ SYNTHESIS COMPLETED (${current} Trials Evaluated)`}
+                            </h3>
+                            <p class="text-xs text-slate-400">
+                                Best Blueprint So Far: <span class="text-neonCyan font-bold">${escapeHTML(bestName)}</span> (Score: <span class="text-amber-400 font-bold">${bestScore}</span>) | Elapsed: <span class="text-white font-mono">${timeStr}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <span class="px-3 py-1 rounded-full text-xs font-bold font-mono ${isRunning ? 'bg-neonCyan/20 text-neonCyan border border-neonCyan/50' : 'bg-neonGreen/20 text-neonGreen border border-neonGreen/50'}">
+                        ${isRunning ? (isInfinite ? '∞ RUNNING' : `${pct}%`) : '100% DONE'}
+                    </span>
+                </div>
+                <div class="w-full bg-slate-800/80 rounded-full h-3 overflow-hidden border border-slate-700/50 p-0.5">
+                    <div class="h-full rounded-full transition-all duration-500 ${isRunning ? 'bg-gradient-to-r from-neonCyan via-blue-400 to-purple-500 shadow-[0_0_10px_rgba(0,240,255,0.8)]' : 'bg-neonGreen'}" style="width: ${pct}%"></div>
+                </div>
+            </div>
+        `;
+    } catch (err) {
+        console.error('Failed to fetch lab progress:', err);
+    }
+}
 
 async function fetchLeaderboard() {
     const container = document.getElementById('leaderboard-cards-container');

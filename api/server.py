@@ -482,6 +482,21 @@ async def get_strategy_leaderboard():
     return {"status": "ok", "strategies": strategies}
 
 
+@app.get("/api/lab/progress")
+def get_strategy_lab_progress():
+    """Returns live real-time progress of the local AI Strategy Synthesizer Lab."""
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "lab_progress.json")
+    if os.path.exists(json_path):
+        try:
+            import json
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return {"status": "ok", "progress": data}
+        except Exception as e:
+            logging.error(f"Error reading lab progress: {e}")
+    return {"status": "ok", "progress": {"status": "idle"}}
+
+
 @app.post("/api/lab/upload_results")
 async def upload_strategy_results(data: Dict[str, Any], request: Request):
     """Webhook endpoint for local AI Synthesizer Lab to push Top 10 results."""

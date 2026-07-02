@@ -11,7 +11,7 @@ echo            🧬 AI STRATEGY LAB CONTROLLER - WINDOWS LAUNCHER 🧬
 echo ===============================================================================
 echo.
 echo    [1] 🚀 Start Lab (Default: 30 Trials - Quick Alpha Search)
-echo    [2] 🌙 Start Lab (Custom / Overnight Run e.g. 100, 500 Trials)
+echo    [2] 🌙 Start Lab (Custom / Overnight Run: e.g. 100, 500, or 0 = Infinite)
 echo    [3] 🛑 Stop Lab (Terminate running synthesizer processes)
 echo    [4] 🔄 Restart Lab (Stop existing lab and start 30 trials)
 echo    [5] 📊 Check Lab Status ^& Top 3 Alpha Blueprints
@@ -47,12 +47,17 @@ goto MENU
 
 :START_CUSTOM
 echo.
-set /p trials="🔢 Enter number of trials to run (e.g. 50, 100, 500): "
+echo 💡 TIP: Enter 0 for INFINITE / UNLIMITED EVOLUTION MODE (Runs until stopped!)
+set /p trials="🔢 Enter number of trials to run (e.g. 50, 100, 500, or 0 for Infinite): "
 if "%trials%"=="" set trials=50
-echo 🌙 Starting AI Strategy Synthesizer Lab (%trials% Trials)...
+if "%trials%"=="0" (
+    echo ⚡ Starting AI Strategy Synthesizer Lab in INFINITE EVOLUTION MODE...
+) else (
+    echo 🌙 Starting AI Strategy Synthesizer Lab (%trials% Trials)...
+)
 echo 📋 Output will be logged to logs\strategy_lab.log
 start "AI_Strategy_Synthesizer_Lab" /min cmd /c "python -c "from bot_strategy_synthesizer import run_synthesizer_lab; run_synthesizer_lab(n_trials=%trials%)" > logs\strategy_lab.log 2>&1"
-echo ✅ Lab launched in background for %trials% trials!
+echo ✅ Lab launched in background!
 echo.
 pause
 goto MENU

@@ -401,6 +401,30 @@ def _get_safe_best_value(study, fallback=0.0):
         return fallback
 
 
+def get_deduplicated_top10(lb_map: dict) -> list:
+    """Deduplicates strategy blueprints by parameter set so the Top 10 leaderboard contains unique genomes."""
+    all_items = list(lb_map.values())
+    all_items.sort(key=lambda x: x.get("fitness_score", -9999), reverse=True)
+    unique_top10 = []
+    seen_genomes = set()
+    for item in all_items:
+        params = item.get("parameters", {})
+        param_key = tuple(sorted([(k, round(v, 4) if isinstance(v, float) else v) for k, v in params.items()]))
+        if param_key not in seen_genomes:
+            seen_genomes.add(param_key)
+            unique_top10.append(item)
+            if len(unique_top10) >= 10:
+                break
+    for idx, item in enumerate(unique_top10, 1):
+        item["rank"] = idx
+        raw_name = item.get("name", "").split(": ")[-1]
+        if idx == 1:
+            item["name"] = f"🏆 #{idx} ALPHA GENOME: {raw_name}"
+        else:
+            item["name"] = f"#{idx} BLUEPRINT: {raw_name}"
+    return unique_top10
+
+
 def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     """Runs the full Evolutionary Strategy Lab across all 20 symbols with Optuna TPE Early Pruning."""
     start_time = time.time()
@@ -537,17 +561,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             # LIVE LEADERBOARD SYNC (every 5 completed trials or if best score is tied/beaten)
             if trial.number % 5 == 0 or full_res["fitness_score"] >= best_so_far_score:
                 try:
-                    cur_lb = list(leaderboard_map.values())
-                    cur_lb.sort(key=lambda x: x["fitness_score"], reverse=True)
-                    top_10 = []
-                    for r_idx, item in enumerate(cur_lb[:10], 1):
-                        item_copy = dict(item)
-                        item_copy["rank"] = r_idx
-                        if r_idx == 1:
-                            item_copy["name"] = f"🏆 #{r_idx} ALPHA GENOME: " + item_copy["name"].split(": ")[-1]
-                        else:
-                            item_copy["name"] = f"#{r_idx} BLUEPRINT: " + item_copy["name"].split(": ")[-1]
-                        top_10.append(item_copy)
+                    top_10 = get_deduplicated_top10(leaderboard_map)
                     push_leaderboard_to_db_and_json(top_10)
                 except Exception as lb_err:
                     logger.error(f"Live leaderboard sync error: {lb_err}")
@@ -574,23 +588,14 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             res["parameters"] = cand
             leaderboard_map[f"cand_{idx}"] = res
             
-    leaderboard = list(leaderboard_map.values())
-    # Sort by user priority: All-Horizon winners first, then total profit, win rate, and activity
-    leaderboard.sort(key=lambda x: x["fitness_score"], reverse=True)
-    for idx, item in enumerate(leaderboard, 1):
-        item["rank"] = idx
-        if idx == 1:
-            item["name"] = f"🏆 #{idx} ALPHA GENOME: " + item["name"].split(": ")[-1]
-        else:
-            item["name"] = f"#{idx} BLUEPRINT: " + item["name"].split(": ")[-1]
-            
-    push_leaderboard_to_db_and_json(leaderboard[:10])
+    top_10 = get_deduplicated_top10(leaderboard_map)
+    push_leaderboard_to_db_and_json(top_10)
     elapsed = int(time.time() - start_time)
-    best_item = leaderboard[0] if leaderboard else {}
+    best_item = top_10[0] if top_10 else {}
     best_val = _get_safe_best_value(study if OPTUNA_AVAILABLE else None, best_item.get("fitness_score", 0.0))
     final_status = "stopped" if (n_trials == 0 or not n_trials) else "completed"
     save_lab_progress(final_status, n_trials if n_trials else len(leaderboard_map), n_trials if n_trials else 0, best_val, best_item.get("name", "N/A"), elapsed)
-    return leaderboard[:10]
+    return top_10
 
 if __name__ == "__main__":
     import sys

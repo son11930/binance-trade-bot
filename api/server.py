@@ -426,7 +426,7 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
 _leaderboard_cache = {"data": None, "expiry": 0}
 
 @app.get("/api/lab/leaderboard")
-async def get_strategy_leaderboard():
+def get_strategy_leaderboard():
     """Returns Top 10 synthesized strategies from Aiven DB or JSON fallback with 15s TTL cache."""
     now = time.time()
     if _leaderboard_cache["data"] and now < _leaderboard_cache["expiry"]:

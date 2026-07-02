@@ -4,11 +4,13 @@
 - **Infinite Evolution Mode (`n_trials=0`)**: Added full support for running Optuna TPE optimization indefinitely without stopping when the user inputs `0` for trial count in `run_strategy_lab.bat` or `bot_strategy_synthesizer.py`.
 - **Live Real-Time Progress Banner**: Created a glowing animated progress bar banner in `dashboard/index.html` and `dashboard/app.js` that polls `/api/lab/progress` every 5 seconds when viewing the AI Strategy Lab tab.
 - **Progress Reporting API**: Added `save_lab_progress` and `_get_safe_best_value` in `bot_strategy_synthesizer.py`, saving real-time trial stats, best score, elapsed time, and ETA to `dashboard/data/lab_progress.json`, served via `GET /api/lab/progress` in `api/server.py`.
+- **Subagent Code, Security & Performance Audit Fixes**: Conducted parallel subagent audits and applied actionable enhancements: implemented atomic file renaming (`os.replace`) and write debouncing (`1.0s` window) in `save_lab_progress` to eliminate JSON decode race conditions; added `best_so_far_score`/`name` tracking in `run_synthesizer_lab` to prevent Optuna score mismatch during pruning; updated `run_strategy_lab.bat` to reset lab status to `"stopped"` on termination; and changed `get_strategy_leaderboard` from `async def` to sync `def` to offload blocking ORM queries to FastAPI's threadpool without freezing the asyncio event loop.
 
 **Thai (ภาษาไทย):**
 - **โหมดวิวัฒนาการไม่จำกัด (`n_trials=0`)**: รองรับการใส่เลข `0` เพื่อสั่งให้ระบบค้นหากลยุทธ์ Optuna TPE ทำงานข้ามคืนหรือรันไปเรื่อยๆ อย่างต่อเนื่องโดยไม่จำกัดจำนวนรอบ จนกว่าผู้ใช้จะกดหยุดเอง
 - **แถบแสดงสถานะความคืบหน้าแบบ Real-Time**: สร้างแบนเนอร์แสดงหลอดโหลดความคืบหน้าสุดล้ำในหน้าเว็บแดชบอร์ด พร้อมไฟกะพริบและข้อมูลสดใหม่ (จำนวนรอบ, คะแนนสูงสุด, เวลาที่ใช้ไป) โดยดึงข้อมูลอัตโนมัติทุกๆ 5 วินาทีเมื่อเปิดแท็บ AI Strategy Lab
 - **ระบบบันทึกสถานะและ API Progress**: เพิ่มฟังก์ชัน `save_lab_progress` ใน `bot_strategy_synthesizer.py` เพื่อบันทึกสถานะการค้นหาลงไฟล์ และเปิดจุดเชื่อมต่อ `GET /api/lab/progress` ใน `api/server.py` เพื่อให้เว็บแสดงผลได้อย่างแม่นยำ
+- **ผลการตรวจสอบและปรับปรุงจากทีม Subagents (Code/Security/Performance)**: ปรับปรุงระบบตามคำแนะนำของ Subagent อย่างครบถ้วน โดยใช้เทคนิคสลับไฟล์ชั่วคราว (`os.replace`) และหน่วงเวลาเขียนไฟล์ (`1.0s` Debounce) เพื่อแก้ปัญหาเว็บโหลดไฟล์ชนกับบอทจนไฟล์พัง, ปรับตัวแปรติดตามชื่อกลยุทธ์ที่ดีที่สุดไม่ให้แสดงชื่อรอบที่ถูก Prune, เพิ่มคำสั่งรีเซ็ตสถานะเป็น `"stopped"` เมื่อกดปิดบอทในตัวรัน Windows, และเปลี่ยนการประกาศฟังก์ชันดึง Leaderboard ให้ทำงานแบบ Threadpool ไม่บล็อก Event Loop ของเซิร์ฟเวอร์หลัก
 
 ## [4.7.7] - 2026-07-02
 ### Complete AI Strategy Lab (Optuna TPE Early Pruning) & Subagent Security/Performance Audit

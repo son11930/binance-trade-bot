@@ -67,6 +67,7 @@ echo.
 echo 🛑 Terminating all AI Strategy Synthesizer processes...
 taskkill /f /fi "WINDOWTITLE eq AI_Strategy_Synthesizer_Lab*" >nul 2>&1
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*bot_strategy_synthesizer*' } | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
+python -c "import json, os; p='dashboard/data/lab_progress.json'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; json.dump(d,open(p,'w'),indent=2)" >nul 2>&1
 echo ✅ AI Strategy Synthesizer stopped.
 echo.
 pause

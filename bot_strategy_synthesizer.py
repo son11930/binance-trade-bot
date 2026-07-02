@@ -329,7 +329,15 @@ def push_leaderboard_to_db_and_json(leaderboard: List[Dict[str, Any]]) -> None:
         logger.error(f"Failed to push leaderboard to database: {e}")
 
 
+_last_progress_write = 0.0
+
 def save_lab_progress(status: str, current_trial: int, total_trials: int, best_score: float, best_name: str, elapsed_sec: int):
+    global _last_progress_write
+    now_ts = time.time()
+    if status == "running" and (now_ts - _last_progress_write < 1.0):
+        return  # Debounce intermediate writes to avoid disk I/O thrashing
+    _last_progress_write = now_ts
+
     prog_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "data", "lab_progress.json")
     os.makedirs(os.path.dirname(prog_path), exist_ok=True)
     pct = round(min(100.0, (current_trial / total_trials) * 100.0), 1) if (total_trials and total_trials > 0) else 100.0
@@ -344,8 +352,10 @@ def save_lab_progress(status: str, current_trial: int, total_trials: int, best_s
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
     try:
-        with open(prog_path, "w", encoding="utf-8") as f:
+        tmp_path = prog_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        os.replace(tmp_path, prog_path)
     except Exception as e:
         logger.error(f"Failed to write lab progress: {e}")
 
@@ -395,6 +405,9 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
     base_res["parameters"] = base_genome
     leaderboard_map["baseline"] = base_res
     
+    best_so_far_score = base_res["fitness_score"]
+    best_so_far_name = base_res["name"]
+    
     if OPTUNA_AVAILABLE:
         logger.info("Running Optuna Tree-Structured Parzen Estimators with Early Median Pruning...")
         study = optuna.create_study(
@@ -404,6 +417,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         )
         
         def objective(trial):
+            nonlocal best_so_far_score, best_so_far_name
             genome = {
                 "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 32.0, step=1.0),
                 "use_dual_trend": trial.suggest_categorical("use_dual_trend", [True, False]),
@@ -417,8 +431,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_1m, step=1)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                best_val = _get_safe_best_value(study, 0.0)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 2: 3M Horizon
@@ -426,8 +439,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_3m, step=2)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                best_val = _get_safe_best_value(study, 0.0)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 3: 6M Horizon
@@ -435,8 +447,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             trial.report(p_6m, step=3)
             if trial.should_prune():
                 elapsed = int(time.time() - start_time)
-                best_val = _get_safe_best_value(study, 0.0)
-                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, f"Pruned Trial #{trial.number}", elapsed)
+                save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
                 raise optuna.TrialPruned()
                 
             # Step 4: Full Annual Evaluation
@@ -445,8 +456,10 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             full_res["parameters"] = genome
             leaderboard_map[f"trial_{trial.number}"] = full_res
             elapsed = int(time.time() - start_time)
-            best_val = _get_safe_best_value(study, full_res["fitness_score"])
-            save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_val, full_res["name"], elapsed)
+            if full_res["fitness_score"] > best_so_far_score:
+                best_so_far_score = full_res["fitness_score"]
+                best_so_far_name = full_res["name"]
+            save_lab_progress("running", trial.number + 1, n_trials if n_trials else 0, best_so_far_score, best_so_far_name, elapsed)
             return full_res["fitness_score"]
             
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)

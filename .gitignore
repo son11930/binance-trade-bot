@@ -68,3 +68,18 @@ scratch*.py
 fix_db*.py
 sync_binance_history.py
 img/
+
+# AI Strategy Lab & Temp artifacts
+binace_backtest1y/
+scratch/
+*.pkl
+.api_ban_state
+logs/
+check_test.py
+compare_1m.py
+list_tables.py
+print_db.py
+query_ai.py
+search_db.py
+search_miss.py
+run_full_engine_backtest.py

@@ -13,3 +13,4 @@ ta
 defusedxml
 psycopg2-binary
 slowapi
+optuna

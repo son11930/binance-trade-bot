@@ -199,6 +199,22 @@ class AIDecision(Base):
         sqlalchemy.Index('ix_ai_decision_symbol_market_time', 'symbol', 'market_type', 'timestamp'),
     )
 
+class StrategyLeaderboard(Base):
+    __tablename__ = "strategy_leaderboard"
+    id = Column(Integer, primary_key=True, index=True)
+    rank = Column(Integer)
+    name = Column(String(100))
+    net_profit_1m = Column(Float)
+    net_profit_3m = Column(Float)
+    net_profit_6m = Column(Float)
+    net_profit_1y = Column(Float)
+    win_rate_1y = Column(Float)
+    max_drawdown = Column(Float)
+    total_trades_1y = Column(Integer)
+    moonshots_1y = Column(Integer)
+    parameters_json = Column(String(2000))
+    created_at = Column(DateTime(timezone=True), default=func.now())
+
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
     Base.metadata.create_all(bind=engine_futures)

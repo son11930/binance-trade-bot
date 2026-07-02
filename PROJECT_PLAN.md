@@ -206,3 +206,14 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - **Step 4: Signal Evaluator Decoupling (`bot/signal_evaluator.py`)**: Eliminate code duplication between Spot and Futures in `_evaluate_buy_signal` and `_evaluate_futures_trade_signal` by extracting modular domain helpers (`_check_trading_paused`, `_build_ai_tech_context`, `_process_ai_decision`, `_check_slippage_guard`, `_calculate_futures_position_size`, `_execute_reversal_exit`).
   - **Step 5: WebSocket Manager Cleanup (`bot/websocket_manager.py`)**: Clean up nested risk monitoring blocks in `process_kline_message` by extracting indicator extraction (`_extract_kline_indicators`) and async trade closure helpers (`_execute_risk_close_async`).
 - **Status**: Completed.
+
+## Phase 24: Evolutionary Strategy Synthesizer & AI Strategy Lab (Human-in-the-Loop Quant Workflow)
+- **Goal**: Create an automated R&D Alpha Lab running locally on Windows across all 20 symbols defined in `bot/config.py`. It discovers, evolves, and evaluates Strategy Genomes (Trend DNA, Momentum Gate DNA, Entry DNA, Exit DNA) across 4 Time Horizons (1M, 3M, 6M, 1Y).
+- **Architecture & Workflow**:
+  1. **Alpha Feature Library (`bot/indicators_library.py`)**: A standalone library of 15-20 technical indicators (Supertrend, Ichimoku, Parabolic SAR, Keltner, StochRSI, MFI, CCI, Williams %R, Donchian, VWAP, OBV, Chaikin, BB Width) isolated from production code.
+  2. **Safe Auto-Downloader (`bot_strategy_synthesizer.py`)**: Automatically fetches missing 1-year 30m klines from Binance's public endpoint with rate-limiting (`time.sleep(0.3)`) to guarantee zero IP bans.
+  3. **Aiven DB Leaderboard Integration**: Pushes Top 10 discovered strategy blueprints to our existing Aiven MySQL/PostgreSQL/SQLite database into a lightweight `strategy_leaderboard` table (~5 KB size, zero live bot interference).
+  4. **Interactive AI Strategy Lab UI (`dashboard/`)**: Adds an "🧬 AI Strategy Lab" tab to the web dashboard. Displays comparative Leaderboard Cards with 1M/3M/6M/1Y net profits, win rates, drawdowns, Strategy DNA code blocks, and a "📋 Copy AI Command" button for safe Human-in-the-Loop deployment.
+  5. **Subagent Verification**: Upon completion, invoke parallel subagents (`code-reviewer`, `security-reviewer`, `performance-optimizer` / `trade-strategist`) to audit the implementation.
+- **Status**: In Progress.
+

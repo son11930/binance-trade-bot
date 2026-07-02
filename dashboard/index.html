@@ -70,6 +70,7 @@
                     <div class="flex bg-slate-900/50 p-1 rounded-xl border border-slate-800">
                         <button onclick="setMarket('spot')" id="tab-spot" class="tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all">Spot Engine</button>
                         <button onclick="setMarket('futures')" id="tab-futures" class="px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent">Futures Engine</button>
+                        <button onclick="setMarket('lab')" id="tab-lab" class="px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent">🧬 AI Strategy Lab</button>
                     </div>
                 </div>
                 <!-- Futures specific badge (hidden in spot mode) -->
@@ -104,6 +105,8 @@
             </div>
         </header>
 
+        <!-- Trading Monitor View Container -->
+        <div id="trading-monitor-view">
         <!-- AI Committee UI -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <!-- Bullish Analyst -->
@@ -289,6 +292,28 @@
                 </div>
             </div>
             <div class="bg-black/50 p-4 h-64 overflow-y-auto font-mono text-xs" id="debug-log-container">
+            </div>
+        </div>
+        </div> <!-- End trading-monitor-view -->
+
+        <!-- AI Strategy Lab View Container -->
+        <div id="ai-lab-view" class="hidden space-y-6">
+            <div class="glass-card p-6 rounded-2xl border border-neonCyan/30 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h2 class="text-xl font-extrabold text-white tracking-wide uppercase flex items-center gap-2">
+                        <span class="text-2xl">🧬</span> AI Strategy Synthesizer & Alpha Lab
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-1">Autonomous Quantitative R&D Leaderboard across 20 Binance Symbols (1M, 3M, 6M, 1Y Horizons)</p>
+                </div>
+                <button onclick="fetchLeaderboard()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-neonCyan/20 to-blue-500/20 text-neonCyan font-bold text-xs uppercase tracking-widest border border-neonCyan/40 hover:bg-neonCyan/30 transition-all shadow-[0_0_15px_rgba(0,240,255,0.2)]">
+                    🔄 Refresh Lab Results
+                </button>
+            </div>
+
+            <div id="leaderboard-cards-container" class="grid grid-cols-1 gap-6">
+                <div class="glass-card p-8 rounded-2xl text-center text-slate-400">
+                    <p class="animate-pulse">Loading AI Strategy Synthesizer Leaderboard...</p>
+                </div>
             </div>
         </div>
     </div>

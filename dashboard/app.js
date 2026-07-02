@@ -75,13 +75,25 @@ function setMarket(market) {
     
     const spotTab = document.getElementById('tab-spot');
     const futuresTab = document.getElementById('tab-futures');
+    const labTab = document.getElementById('tab-lab');
+    const monitorView = document.getElementById('trading-monitor-view');
+    const labView = document.getElementById('ai-lab-view');
     
-    if (market === 'spot') {
-        spotTab.className = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
-        futuresTab.className = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
+    const activeClass = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
+    const inactiveClass = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
+    
+    if (spotTab) spotTab.className = (market === 'spot') ? activeClass : inactiveClass;
+    if (futuresTab) futuresTab.className = (market === 'futures') ? activeClass : inactiveClass;
+    if (labTab) labTab.className = (market === 'lab') ? activeClass : inactiveClass;
+    
+    if (market === 'lab') {
+        if (monitorView) monitorView.classList.add('hidden');
+        if (labView) labView.classList.remove('hidden');
+        fetchLeaderboard();
+        return;
     } else {
-        futuresTab.className = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
-        spotTab.className = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
+        if (monitorView) monitorView.classList.remove('hidden');
+        if (labView) labView.classList.add('hidden');
     }
     
     document.getElementById('positions-header').innerText = `Live Positions (${market === 'spot' ? 'Spot' : 'Futures'})`;
@@ -118,10 +130,10 @@ function setMarket(market) {
         `;
     }
     
-    if (dataStore[market].status) updateStatusUI(dataStore[market].status, dataStore[market].globalConfig);
-    if (dataStore[market].trades) updateTradesUI(dataStore[market].trades);
-    if (dataStore[market].logs) renderLogsUI(dataStore[market].logs);
-    if (dataStore[market].stats) renderStatsUI(dataStore[market].stats);
+    if (dataStore[market] && dataStore[market].status) updateStatusUI(dataStore[market].status, dataStore[market].globalConfig);
+    if (dataStore[market] && dataStore[market].trades) updateTradesUI(dataStore[market].trades);
+    if (dataStore[market] && dataStore[market].logs) renderLogsUI(dataStore[market].logs);
+    if (dataStore[market] && dataStore[market].stats) renderStatsUI(dataStore[market].stats);
 }
 
 function startApp() {
@@ -524,4 +536,122 @@ function renderStatsUI(statsData) {
     if (statsData['ALL']) {
         document.getElementById('total-trades').innerText = statsData['ALL'].wins + statsData['ALL'].losses;
     }
+}
+
+// ==========================================
+// AI STRATEGY LAB & LEADERBOARD UI
+// ==========================================
+
+async function fetchLeaderboard() {
+    const container = document.getElementById('leaderboard-cards-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="glass-card p-8 rounded-2xl text-center text-slate-400">
+            <p class="animate-pulse text-neonCyan font-bold">🧬 Synthesizing & Fetching Alpha Leaderboard...</p>
+        </div>
+    `;
+    
+    try {
+        const res = await fetch('/api/lab/leaderboard');
+        const data = await res.json();
+        const strategies = data.strategies || [];
+        
+        if (strategies.length === 0) {
+            container.innerHTML = `
+                <div class="glass-card p-8 rounded-2xl text-center text-slate-400 border border-slate-700">
+                    <p class="text-base font-bold text-white mb-2">No Synthesized Strategies Found Yet</p>
+                    <p class="text-xs">Run <code class="text-neonCyan">python bot_strategy_synthesizer.py</code> locally on your PC to evolve blueprints across 20 symbols!</p>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = "";
+        window.currentLeaderboardStrategies = strategies;
+        strategies.forEach((strat, idx) => {
+            const rankBadge = idx === 0 ? "🏆 #1 ALPHA GENOME" : `#${strat.rank} BLUEPRINT`;
+            const badgeColor = idx === 0 ? "bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.3)]" : "bg-slate-800 text-slate-300 border-slate-700";
+            
+            const params = strat.parameters || {};
+            const paramStr = JSON.stringify(params, null, 2);
+            
+            const card = document.createElement('div');
+            card.className = `glass-card p-6 rounded-2xl border transition-all duration-300 hover:scale-[1.01] ${idx === 0 ? 'border-amber-500/40 bg-gradient-to-br from-amber-500/5 to-transparent' : 'border-slate-800 hover:border-slate-700'}`;
+            
+            card.innerHTML = `
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800/80 pb-4 mb-4">
+                    <div>
+                        <div class="flex items-center gap-3">
+                            <span class="px-3 py-1 rounded-full text-xs font-extrabold border tracking-wider uppercase ${badgeColor}">
+                                ${rankBadge}
+                            </span>
+                            <h3 class="text-lg font-extrabold text-white tracking-wide">${escapeHTML(strat.name || 'Blueprint')}</h3>
+                        </div>
+                    </div>
+                    <button onclick="copyAICommandFromIndex(${idx})" class="px-4 py-2 rounded-xl bg-gradient-to-r from-neonCyan/20 to-blue-500/20 text-neonCyan font-bold text-xs uppercase tracking-widest border border-neonCyan/40 hover:bg-neonCyan/30 transition-all shadow-[0_0_10px_rgba(0,240,255,0.2)] flex items-center gap-2">
+                        <span>📋</span> Copy AI Command
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">1M Return</span>
+                        <span class="text-lg font-extrabold ${strat.net_profit_1m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_1m >= 0 ? '+' : ''}${strat.net_profit_1m}%</span>
+                        <span class="text-[11px] block ${strat.net_profit_1m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_1m_dollar !== undefined ? (strat.net_profit_1m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_1m_dollar) : '$' + (strat.net_profit_1m * 10).toFixed(2)})</span>
+                    </div>
+                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">3M Return</span>
+                        <span class="text-lg font-extrabold ${strat.net_profit_3m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_3m >= 0 ? '+' : ''}${strat.net_profit_3m}%</span>
+                        <span class="text-[11px] block ${strat.net_profit_3m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_3m_dollar !== undefined ? (strat.net_profit_3m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_3m_dollar) : '$' + (strat.net_profit_3m * 10).toFixed(2)})</span>
+                    </div>
+                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">6M Return</span>
+                        <span class="text-lg font-extrabold ${strat.net_profit_6m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_6m >= 0 ? '+' : ''}${strat.net_profit_6m}%</span>
+                        <span class="text-[11px] block ${strat.net_profit_6m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_6m_dollar !== undefined ? (strat.net_profit_6m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_6m_dollar) : '$' + (strat.net_profit_6m * 10).toFixed(2)})</span>
+                    </div>
+                    <div class="bg-slate-900/60 p-3 rounded-xl border ${idx === 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800'}">
+                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">1Y Annualized</span>
+                        <span class="text-xl font-extrabold ${strat.net_profit_1y >= 0 ? 'text-neonGreen text-glow-green' : 'text-neonRed'}">${strat.net_profit_1y >= 0 ? '+' : ''}${strat.net_profit_1y}%</span>
+                        <span class="text-[11px] block ${strat.net_profit_1y >= 0 ? 'text-neonGreen text-glow-green' : 'text-neonRed'} font-mono font-bold">(${strat.net_profit_1y_dollar !== undefined ? (strat.net_profit_1y_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_1y_dollar) : '$' + (strat.net_profit_1y * 10).toFixed(2)})</span>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4 text-xs bg-black/30 p-3 rounded-xl border border-slate-800/60">
+                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Win Rate:</span> <span class="text-white font-extrabold text-sm">${strat.win_rate_1y}%</span></div>
+                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Max Drawdown:</span> <span class="text-neonRed font-extrabold text-sm">-${strat.max_dd}%</span></div>
+                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Trade Activity:</span> <span class="text-neonCyan font-extrabold text-sm">${strat.total_trades_1y} ไม้</span> <span class="text-[10px] text-slate-400 block">(~${strat.avg_trades_month || (strat.total_trades_1y/12).toFixed(1)} ไม้/เดือน | ~${strat.avg_trades_day || (strat.total_trades_1y/365).toFixed(1)} ไม้/วัน)</span></div>
+                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Moonshots (>30%):</span> <span class="text-amber-400 font-extrabold text-sm">${strat.moonshots_1y} 🚀</span></div>
+                </div>
+                
+                <div class="bg-black/40 rounded-xl p-3 border border-slate-800/80 font-mono text-xs text-slate-300">
+                    <span class="text-slate-500 text-[10px] uppercase block mb-1 font-bold">🧬 Genome DNA Parameters:</span>
+                    <pre class="overflow-x-auto text-[11px] text-neonCyan/90">${escapeHTML(paramStr)}</pre>
+                </div>
+            `;
+            container.appendChild(card);
+        });
+    } catch (err) {
+        container.innerHTML = `
+            <div class="glass-card p-8 rounded-2xl text-center text-neonRed border border-neonRed/30">
+                <p class="font-bold">Error loading Leaderboard: ${escapeHTML(err.message)}</p>
+            </div>
+        `;
+    }
+}
+
+function copyAICommandFromIndex(idx) {
+    if (!window.currentLeaderboardStrategies || !window.currentLeaderboardStrategies[idx]) return;
+    const strat = window.currentLeaderboardStrategies[idx];
+    const paramStr = JSON.stringify(strat.parameters || {}, null, 2);
+    copyAICommand(strat.rank, strat.name || `Blueprint #${strat.rank}`, paramStr);
+}
+
+function copyAICommand(rank, name, paramStr) {
+    const cmd = `Antigravity อัปเกรดระบบเทรดใน bot/strategy.py ให้ใช้กลยุทธ์ Blueprint #${rank} (${name}) ตามที่ห้องแล็บค้นพบเลย!\nพารามิเตอร์ DNA:\n${paramStr}`;
+    navigator.clipboard.writeText(cmd).then(() => {
+        alert("✅ Copied AI Upgrade Command to clipboard!\n\nPaste it into chat to have AI deploy Blueprint #" + rank + "!");
+    }).catch(err => {
+        prompt("Copy this AI Command:", cmd);
+    });
 }

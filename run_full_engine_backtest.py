@@ -161,7 +161,7 @@ def run_full_backtest(dfs, days, mode="SYS3"):
 print("==========================================================================================")
 print("🏆 GRAND PRODUCTION SHOWDOWN: SYS 3 vs SYS 4 vs SYS 5A (HYBRID) IN SAME ENVIRONMENT")
 print("==========================================================================================")
-periods = [(30, "1 Month (30 Days)"), (90, "3 Months (90 Days)"), (180, "6 Months (180 Days)")]
+periods = [(30, "1 Month (30 Days)"), (90, "3 Months (90 Days)"), (180, "6 Months (180 Days)"), (365, "1 Year (365 Days)")]
 modes = [("System 3 (Standard RSI Exit)", "SYS3"), ("System 4 (No RSI Exit / 4-Gears)", "SYS4_NO_EXIT"), ("System 5A (Smart Hybrid Override)", "SYS5A_HYBRID")]
 
 for days, label in periods:

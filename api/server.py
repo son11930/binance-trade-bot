@@ -30,7 +30,7 @@ from slowapi.errors import RateLimitExceeded
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 load_dotenv()
 
-from bot.database import Trade, init_db, SystemLog, SessionLocalSpot, SessionLocalFutures, setup_logging
+from bot.database import Trade, init_db, SystemLog, SessionLocalSpot, SessionLocalFutures, setup_logging, StrategyLeaderboard
 
 setup_logging()
 
@@ -421,6 +421,120 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
         db_poll_event.set()
     
     return {"status": "ok"}
+
+
+_leaderboard_cache = {"data": None, "expiry": 0}
+
+@app.get("/api/lab/leaderboard")
+async def get_strategy_leaderboard():
+    """Returns Top 10 synthesized strategies from Aiven DB or JSON fallback with 15s TTL cache."""
+    now = time.time()
+    if _leaderboard_cache["data"] and now < _leaderboard_cache["expiry"]:
+        return {"status": "ok", "strategies": _leaderboard_cache["data"]}
+
+    strategies = []
+    db = SessionLocalFutures()
+    try:
+        rows = db.query(StrategyLeaderboard).order_by(StrategyLeaderboard.rank.asc()).limit(10).all()
+        for r in rows:
+            params = {}
+            if r.parameters_json:
+                try:
+                    import json
+                    params = json.loads(r.parameters_json)
+                except Exception:
+                    pass
+            strategies.append({
+                "rank": r.rank,
+                "name": r.name,
+                "net_profit_1m": r.net_profit_1m,
+                "net_profit_3m": r.net_profit_3m,
+                "net_profit_6m": r.net_profit_6m,
+                "net_profit_1y": r.net_profit_1y,
+                "win_rate_1y": r.win_rate_1y,
+                "max_dd": r.max_drawdown,
+                "total_trades_1y": r.total_trades_1y,
+                "moonshots_1y": r.moonshots_1y,
+                "parameters": params
+            })
+        if strategies:
+            _leaderboard_cache["data"] = strategies
+            _leaderboard_cache["expiry"] = now + 15.0
+    except Exception as e:
+        logging.warning(f"DB Leaderboard query failed ({e}), checking JSON fallback...")
+    finally:
+        db.close()
+        
+    if not strategies:
+        json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
+        if os.path.exists(json_path):
+            try:
+                import json
+                with open(json_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    strategies = data.get("strategies", [])
+                    if strategies:
+                        _leaderboard_cache["data"] = strategies
+                        _leaderboard_cache["expiry"] = now + 15.0
+            except Exception as e:
+                logging.error(f"Error reading JSON fallback leaderboard: {e}")
+                
+    return {"status": "ok", "strategies": strategies}
+
+
+@app.post("/api/lab/upload_results")
+async def upload_strategy_results(data: Dict[str, Any], request: Request):
+    """Webhook endpoint for local AI Synthesizer Lab to push Top 10 results."""
+    _leaderboard_cache["expiry"] = 0  # Invalidate cache instantly on new results
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "").strip() if auth_header else ""
+    if not token or (token != WEBHOOK_TOKEN and token != os.getenv("BOT_TOKEN", "")):
+        # Allow internal localhost loopback without auth token if token not provided
+        client_ip = get_remote_address(request)
+        if client_ip not in ("127.0.0.1", "localhost", "::1"):
+            raise HTTPException(status_code=401, detail="Unauthorized upload")
+            
+    strategies = data.get("strategies", [])
+    if not strategies:
+        return {"status": "error", "message": "No strategies provided"}
+        
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
+    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    try:
+        import json
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump({"updated_at": datetime.now(timezone.utc).isoformat(), "strategies": strategies}, f, indent=2)
+    except Exception as e:
+        logging.error(f"Failed to save JSON leaderboard: {e}")
+        
+    db = SessionLocalFutures()
+    try:
+        db.query(StrategyLeaderboard).delete()
+        for idx, item in enumerate(strategies[:10], 1):
+            import json
+            row = StrategyLeaderboard(
+                rank=int(idx),
+                name=str(item.get("name", f"Blueprint #{idx}")),
+                net_profit_1m=float(item.get("net_profit_1m", 0.0)),
+                net_profit_3m=float(item.get("net_profit_3m", 0.0)),
+                net_profit_6m=float(item.get("net_profit_6m", 0.0)),
+                net_profit_1y=float(item.get("net_profit_1y", 0.0)),
+                win_rate_1y=float(item.get("win_rate_1y", 0.0)),
+                max_drawdown=float(item.get("max_dd", 0.0)),
+                total_trades_1y=int(item.get("total_trades_1y", 0)),
+                moonshots_1y=int(item.get("moonshots_1y", 0)),
+                parameters_json=json.dumps(item.get("parameters", {}))
+            )
+            db.add(row)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Failed DB insert for leaderboard: {e}")
+    finally:
+        db.close()
+        
+    return {"status": "ok", "message": f"Successfully updated Top {len(strategies[:10])} strategies"}
+
 
 
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://45.136.254.62")

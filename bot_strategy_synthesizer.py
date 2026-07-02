@@ -530,6 +530,9 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] in ("stop", "--stop", "-s"):
+        save_lab_progress("stopped", 0, 0, 0.0, "Stopped by user", 0)
+        sys.exit(0)
     trials = 30
     if len(sys.argv) > 1:
         try:

@@ -150,10 +150,27 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     max_hold_bars = genome.get("max_hold_bars", 36)
     vol_exh_mult = genome.get("vol_exhaustion_mult", 0.5)
     
+    # Unpack expanded 80-gene quantitative parameters
+    sma200_buf = genome.get("sma200_buffer_pct", 0.995)
+    vol_floor = genome.get("volume_floor_mult", 0.7)
+    rsi_surge_ceil = genome.get("rsi_surge_ceiling", 82.0)
+    rsi_rev_exit = genome.get("rsi_reversal_exit_thresh", 64.0)
+    bb_low_buf = genome.get("bb_lower_buffer", 1.02)
+    bb_up_buf = genome.get("bb_upper_buffer", 0.99)
+    giant_mult = genome.get("giant_candle_atr_mult", 2.0)
+    req_green = genome.get("require_green_candle", False)
+    sl_cap = genome.get("sl_hard_cap_pct", 0.04)
+    tp_cap = genome.get("tp_hard_cap_pct", 0.10)
+    cooldown_limit = genome.get("cooldown_bars_after_sl", 2)
+    kelly_cap = genome.get("kelly_fraction_cap", 0.25)
+    macro_regime = genome.get("macro_regime_filter", "sma200_only")
+    trend_min_adx = genome.get("trend_strength_min_adx", 15.0)
+    
     # Pre-extract numpy arrays for fast vectorized loop backtest
     close_arr = df['close'].values
     high_arr = df['high'].values
     low_arr = df['low'].values
+    open_arr = df['open'].values
     vol_arr = df['volume'].values
     
     sma200_arr = df.get('SMA_200', pd.Series(0, index=df.index)).values
@@ -163,6 +180,7 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     adx_arr = df.get('ADX', pd.Series(0, index=df.index)).values
     vol_sma_arr = df.get('SMA_20_Vol', pd.Series(0, index=df.index)).values
     bb_up_arr = df.get('BB_Upper', pd.Series(0, index=df.index)).values
+    bb_low_arr = df.get('BB_Lower', pd.Series(0, index=df.index)).values
     
     ema10_arr = df.get('EMA_10', pd.Series(0, index=df.index)).values
     ema50_arr = df.get('EMA_50', pd.Series(0, index=df.index)).values
@@ -184,18 +202,34 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
     max_dd = 0.0
     wins, total_trades = 0, 0
     bars_in_trade = 0
+    cooldown_counter = 0
     
     for i in range(200, len(df)):
-        c, h, l, v = close_arr[i], high_arr[i], low_arr[i], vol_arr[i]
+        c, h, l, o, v = close_arr[i], high_arr[i], low_arr[i], open_arr[i], vol_arr[i]
         atr = atr_arr[i]
         
-        if not in_pos:
-            if adx_arr[i] > adx_thresh and v > (vol_sma_arr[i] * vol_mult):
-                trend_ok = (c > sma200_arr[i]) and ((not use_dual) or (sma50_arr[i] > sma200_arr[i]))
-                if trend_ok and c <= bb_up_arr[i]:
+        if cooldown_counter > 0:
+            cooldown_counter -= 1
+            
+        if not in_pos and cooldown_counter == 0:
+            if adx_arr[i] > adx_thresh and v > (vol_sma_arr[i] * vol_floor):
+                # Apply Macro Regime Filter
+                trend_ok = False
+                if macro_regime == "sma200_only":
+                    trend_ok = (c > sma200_arr[i] * sma200_buf) and ((not use_dual) or (sma50_arr[i] > sma200_arr[i]))
+                elif macro_regime == "sma200_and_adx":
+                    trend_ok = (c > sma200_arr[i] * sma200_buf) and (adx_arr[i] > trend_min_adx)
+                else:
+                    trend_ok = True
+                    
+                # Giant candle blow-off filter & green candle check
+                is_not_blowoff = (h - l) <= (atr * giant_mult)
+                candle_color_ok = (c > o) if req_green else True
+                
+                if trend_ok and is_not_blowoff and candle_color_ok and c <= bb_up_arr[i] * bb_up_buf:
                     entry_ok = False
                     if strategy_type == "rsi_sniper":
-                        entry_ok = (rsi_arr[i] < rsi_sniper)
+                        entry_ok = (rsi_arr[i] < rsi_sniper) or (v > vol_sma_arr[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
                     elif strategy_type == "ema_cross":
                         entry_ok = (ema10_arr[i] > ema50_arr[i] and ema10_arr[i - 1] <= ema50_arr[i - 1])
                     elif strategy_type == "supertrend_momentum":
@@ -214,10 +248,10 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                     if entry_ok:
                         in_pos = True
                         entry_p = c
-                        sl_p = c - (atr * sl_atr)
-                        tp_p = c + (atr * sl_atr * tp_rr)
+                        sl_p = max(c - (atr * sl_atr), c * (1.0 - sl_cap))
+                        tp_p = min(c + (atr * sl_atr * tp_rr), c * (1.0 + tp_cap))
                         bars_in_trade = 0
-        else:
+        elif in_pos:
             bars_in_trade += 1
             cur_gain_pct = (max(h, c) - entry_p) / entry_p
             cur_close_pct = (c - entry_p) / entry_p
@@ -235,18 +269,19 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
             # Check exit conditions
             if l <= sl_p:
                 loss_pct = (sl_p - entry_p) / entry_p
-                balance *= (1.0 + loss_pct)
+                balance *= (1.0 + (loss_pct * (kelly_cap * 4.0)))
                 total_trades += 1
                 in_pos = False
                 bars_in_trade = 0
+                cooldown_counter = cooldown_limit
             elif h >= tp_p:
                 win_pct = (max(tp_p, c) - entry_p) / entry_p
-                balance *= (1.0 + win_pct)
+                balance *= (1.0 + (win_pct * (kelly_cap * 4.0)))
                 wins += 1
                 total_trades += 1
                 in_pos = False
                 bars_in_trade = 0
-            elif (strategy_type == "rsi_sniper" and rsi_arr[i] >= rsi_sniper) or \
+            elif (strategy_type == "rsi_sniper" and rsi_arr[i] >= rsi_rev_exit) or \
                  (strategy_type == "ema_cross" and ema10_arr[i] < ema50_arr[i]) or \
                  (strategy_type == "supertrend_momentum" and st_dir_arr[i] == -1) or \
                  (strategy_type == "ichimoku_cloud" and c < kijun_arr[i]) or \
@@ -257,7 +292,7 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                  (bars_in_trade >= max_hold_bars) or \
                  (v < vol_sma_arr[i] * vol_exh_mult and cur_close_pct > 0):
                 win_pct = cur_close_pct
-                balance *= (1.0 + win_pct)
+                balance *= (1.0 + (win_pct * (kelly_cap * 4.0)))
                 if win_pct > 0:
                     wins += 1
                 total_trades += 1
@@ -576,7 +611,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
         storage_url = f"sqlite:///{opt_db_path}"
         
         study = optuna.create_study(
-            study_name="alpha_genome_21genes_v1",
+            study_name="alpha_genome_80genes_v1",
             storage=storage_url,
             load_if_exists=True,
             direction="maximize",
@@ -584,11 +619,11 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
         )
         
-        # Enqueue historical champion parameters into Optuna only if they match our rich 21-parameter schema!
+        # Enqueue historical champion parameters into Optuna only if they match our rich 80-parameter schema!
         enqueued_count = 0
         for champ in historical_champions:
             params = champ.get("parameters")
-            if params and isinstance(params, dict) and len(params) >= 15:
+            if params and isinstance(params, dict) and len(params) >= 70:
                 try:
                     study.enqueue_trial(params, skip_if_exists=True)
                     enqueued_count += 1
@@ -621,7 +656,68 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
                 "gear4_breakeven_trigger_pct": trial.suggest_float("gear4_breakeven_trigger_pct", 0.004, 0.012, step=0.001),
                 "gear4_breakeven_buffer_pct": trial.suggest_float("gear4_breakeven_buffer_pct", 0.0005, 0.003, step=0.0005),
                 "max_hold_bars": trial.suggest_int("max_hold_bars", 12, 72, step=6),
-                "vol_exhaustion_mult": trial.suggest_float("vol_exhaustion_mult", 0.3, 0.8, step=0.1)
+                "vol_exhaustion_mult": trial.suggest_float("vol_exhaustion_mult", 0.3, 0.8, step=0.1),
+                "macro_sma_fast_win": trial.suggest_int("macro_sma_fast_win", 30, 70, step=10),
+                "macro_sma_slow_win": trial.suggest_int("macro_sma_slow_win", 150, 250, step=25),
+                "sma200_buffer_pct": trial.suggest_float("sma200_buffer_pct", 0.985, 1.015, step=0.005),
+                "adx_slope_check": trial.suggest_categorical("adx_slope_check", [True, False]),
+                "volume_floor_mult": trial.suggest_float("volume_floor_mult", 0.5, 1.2, step=0.1),
+                "rsi_surge_ceiling": trial.suggest_float("rsi_surge_ceiling", 76.0, 90.0, step=2.0),
+                "rsi_hook_oversold": trial.suggest_float("rsi_hook_oversold", 26.0, 48.0, step=2.0),
+                "rsi_reversal_exit_thresh": trial.suggest_float("rsi_reversal_exit_thresh", 56.0, 74.0, step=2.0),
+                "bb_lower_buffer": trial.suggest_float("bb_lower_buffer", 0.99, 1.04, step=0.01),
+                "bb_upper_buffer": trial.suggest_float("bb_upper_buffer", 0.97, 1.01, step=0.01),
+                "ema_fast_win": trial.suggest_int("ema_fast_win", 5, 15, step=2),
+                "ema_slow_win": trial.suggest_int("ema_slow_win", 20, 60, step=5),
+                "macd_fast_win": trial.suggest_int("macd_fast_win", 8, 16, step=2),
+                "macd_slow_win": trial.suggest_int("macd_slow_win", 20, 32, step=2),
+                "macd_sig_win": trial.suggest_int("macd_sig_win", 5, 11, step=2),
+                "macd_cross_lookback": trial.suggest_int("macd_cross_lookback", 3, 15, step=2),
+                "mfi_bear_thresh": trial.suggest_float("mfi_bear_thresh", 70.0, 90.0, step=5.0),
+                "momentum_req_pos_hist": trial.suggest_categorical("momentum_req_pos_hist", [True, False]),
+                "supertrend_period": trial.suggest_int("supertrend_period", 7, 15, step=2),
+                "supertrend_mult": trial.suggest_float("supertrend_mult", 2.0, 4.5, step=0.5),
+                "ichi_cloud_buffer": trial.suggest_float("ichi_cloud_buffer", 0.996, 1.004, step=0.002),
+                "stoch_win": trial.suggest_int("stoch_win", 10, 20, step=2),
+                "keltner_win": trial.suggest_int("keltner_win", 14, 30, step=4),
+                "keltner_mult": trial.suggest_float("keltner_mult", 1.5, 3.0, step=0.5),
+                "donchian_win": trial.suggest_int("donchian_win", 15, 40, step=5),
+                "donchian_exit_win": trial.suggest_int("donchian_exit_win", 5, 20, step=5),
+                "cci_win": trial.suggest_int("cci_win", 14, 30, step=4),
+                "cci_extreme_exit": trial.suggest_float("cci_extreme_exit", 150.0, 250.0, step=25.0),
+                "williams_win": trial.suggest_int("williams_win", 10, 20, step=2),
+                "williams_r_exit": trial.suggest_float("williams_r_exit", -25.0, -5.0, step=5.0),
+                "giant_candle_atr_mult": trial.suggest_float("giant_candle_atr_mult", 1.5, 3.5, step=0.5),
+                "rejection_wick_ratio": trial.suggest_float("rejection_wick_ratio", 0.25, 0.55, step=0.05),
+                "vol_cap_rejection": trial.suggest_float("vol_cap_rejection", 3.0, 6.0, step=0.5),
+                "vol_cap_normal": trial.suggest_float("vol_cap_normal", 2.0, 3.5, step=0.5),
+                "body_min_atr_pct": trial.suggest_float("body_min_atr_pct", 0.1, 0.5, step=0.1),
+                "require_green_candle": trial.suggest_categorical("require_green_candle", [True, False]),
+                "high_low_spread_cap": trial.suggest_float("high_low_spread_cap", 3.0, 6.0, step=0.5),
+                "sl_hard_cap_pct": trial.suggest_float("sl_hard_cap_pct", 0.02, 0.06, step=0.01),
+                "tp_hard_cap_pct": trial.suggest_float("tp_hard_cap_pct", 0.05, 0.15, step=0.02),
+                "spot_step_trigger1": trial.suggest_float("spot_step_trigger1", 0.015, 0.03, step=0.005),
+                "spot_step_lock1": trial.suggest_float("spot_step_lock1", 0.005, 0.015, step=0.005),
+                "spot_step_trigger2": trial.suggest_float("spot_step_trigger2", 0.035, 0.055, step=0.01),
+                "spot_step_lock2": trial.suggest_float("spot_step_lock2", 0.02, 0.035, step=0.005),
+                "spot_step_trigger3": trial.suggest_float("spot_step_trigger3", 0.06, 0.09, step=0.01),
+                "spot_step_lock3": trial.suggest_float("spot_step_lock3", 0.045, 0.07, step=0.005),
+                "gear1_sniper_slope": trial.suggest_float("gear1_sniper_slope", 1.0, 2.5, step=0.5),
+                "gear1_sniper_max_rsi": trial.suggest_float("gear1_sniper_max_rsi", 80.0, 92.0, step=2.0),
+                "gear1_sniper_min_rsi": trial.suggest_float("gear1_sniper_min_rsi", 10.0, 22.0, step=3.0),
+                "gear2_moonshot_atr_mult": trial.suggest_float("gear2_moonshot_atr_mult", 1.5, 3.0, step=0.5),
+                "gear3_trailing_atr_mult": trial.suggest_float("gear3_trailing_atr_mult", 1.0, 2.0, step=0.2),
+                "mom_tp_roe_thresh": trial.suggest_float("mom_tp_roe_thresh", 0.025, 0.05, step=0.005),
+                "mom_tp_rsi_thresh": trial.suggest_float("mom_tp_rsi_thresh", 72.0, 84.0, step=2.0),
+                "mom_tp_drop_pct": trial.suggest_float("mom_tp_drop_pct", 0.0015, 0.0045, step=0.001),
+                "kelly_fraction_cap": trial.suggest_float("kelly_fraction_cap", 0.15, 0.40, step=0.05),
+                "max_pos_alloc_pct": trial.suggest_float("max_pos_alloc_pct", 0.10, 0.25, step=0.05),
+                "min_trade_notional": trial.suggest_float("min_trade_notional", 5.0, 15.0, step=2.5),
+                "cooldown_bars_after_sl": trial.suggest_int("cooldown_bars_after_sl", 0, 6, step=2),
+                "pyramid_scaling_mult": trial.suggest_float("pyramid_scaling_mult", 0.5, 1.5, step=0.2),
+                "trend_strength_min_adx": trial.suggest_float("trend_strength_min_adx", 10.0, 25.0, step=2.5),
+                "sideways_max_adx": trial.suggest_float("sideways_max_adx", 20.0, 35.0, step=2.5),
+                "macro_regime_filter": trial.suggest_categorical("macro_regime_filter", ["sma200_only", "sma200_and_adx", "none"])
             }
             
             # Step 1: 1M Horizon (Early Pruning Gate - cuts bottom 50% immediately!)

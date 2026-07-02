@@ -597,7 +597,7 @@ async function fetchLabProgress() {
                                 <span class="text-xs text-slate-400 font-mono">⏱️ Elapsed: ${timeStr}</span>
                             </div>
                             <h2 class="text-lg md:text-xl font-extrabold text-white uppercase tracking-wide mt-1">
-                                ${isRunning ? (isInfinite ? '⚡ INFINITE ALPHA EVOLUTION (Unlimited Mode)' : `🧬 EVOLVING ALPHA GENOME (21 Variables / 8 Systems)`) : `✅ ALPHA SYNTHESIS COMPLETED`}
+                                ${isRunning ? (isInfinite ? '⚡ INFINITE ALPHA EVOLUTION (Unlimited Mode)' : `🧬 EVOLVING ALPHA GENOME (80 Variables / 8 Systems)`) : `✅ ALPHA SYNTHESIS COMPLETED`}
                             </h2>
                         </div>
                     </div>

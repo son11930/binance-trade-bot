@@ -1528,7 +1528,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
             from optuna.storages import RDBStorage
             _optuna_storage = RDBStorage(
                 url=_pg_url,
-                engine_kwargs={"pool_size": N_CPU_WORKERS, "max_overflow": 2, "pool_timeout": 30}
+                engine_kwargs={"pool_size": 1, "max_overflow": 0, "pool_timeout": 30,
+                               "pool_recycle": 300, "pool_pre_ping": True}
             )
             logger.info("✅ Optuna storage: Aiven PostgreSQL (multi-worker safe, no SQLite lock)")
         else:

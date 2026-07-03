@@ -1142,6 +1142,53 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]]) -
         f"✅ Mega-Batch VRAM pack: {flat.nbytes/1e6:.1f} MB "
         f"({len(sym_list)} syms × {max(lengths)} bars × {N_FEATURES} feats) ready."
     )
+    # Immediately trigger kernel warmup/compile so it happens before the main loop
+    _warmup_mega_kernel()
+
+
+def _warmup_mega_kernel() -> None:
+    """
+    Trigger JIT compilation of _mega_backtest_kernel with a tiny 1-genome dummy batch.
+    Numba compiles lazily on first call — this forces it at startup with clear log feedback
+    so the user knows what's happening instead of a silent wait.
+    cache=True means this compilation is saved to disk and NEVER repeated on future runs.
+    """
+    if not GPU_AVAILABLE or not _GPU_FLAT_DATA:
+        return
+    from numba import cuda as nb_cuda
+
+    logger.info("⚙️  Compiling CUDA mega-kernel for RTX 3070... (one-time, ~5-15 min, then cached forever)")
+    logger.info("    CPU will run at ~12-17% during compile. GPU will spike to 80%+ once done.")
+    t0 = time.time()
+
+    n_g, n_s, n_h = 1, _GPU_FLAT_DATA["n_symbols"], _GPU_FLAT_DATA["n_horizons"]
+    total_threads  = n_g * n_s * n_h
+    # Dummy 1-genome param matrix
+    dummy_params = np.zeros((1, N_GENOME_PARAMS), dtype=np.float32)
+    dummy_params[0, 0] = 20.0   # adx_trend_thresh
+    dummy_params[0, 2] = 1.5    # sl_atr_mult
+    dummy_params[0, 3] = 2.5    # tp_rr_mult
+    dummy_params[0, 4] = 78.0   # gear1_rsi_sniper
+    d_params = nb_cuda.to_device(dummy_params)
+    d_out    = nb_cuda.device_array(total_threads * 4, dtype=np.float32)
+    stream   = nb_cuda.stream()
+    blocks   = max(1, (total_threads + CUDA_THREADS_PER_BLOCK - 1) // CUDA_THREADS_PER_BLOCK)
+    try:
+        _mega_backtest_kernel[blocks, CUDA_THREADS_PER_BLOCK, stream](
+            _GPU_FLAT_DATA["price_flat"],
+            _GPU_FLAT_DATA["sym_offsets"],
+            _GPU_FLAT_DATA["sym_lengths"],
+            _GPU_FLAT_DATA["horizon_bars"],
+            d_params, d_out, n_g, n_s, n_h
+        )
+        stream.synchronize()
+        elapsed = time.time() - t0
+        logger.info(f"✅ CUDA kernel compiled & cached in {elapsed:.1f}s — GPU ready! 🚀")
+        logger.info(f"    Future startups will skip compile and load cache instantly.")
+    except Exception as e:
+        logger.warning(f"Kernel warmup error (non-fatal): {e}")
+    finally:
+        del d_params, d_out
 
 
 # ──────────────────────────────────────────────────────────

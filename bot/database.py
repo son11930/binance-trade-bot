@@ -1,7 +1,7 @@
 import os
 import urllib.parse
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.sql import func
 import logging
@@ -212,7 +212,7 @@ class StrategyLeaderboard(Base):
     max_drawdown = Column(Float)
     total_trades_1y = Column(Integer)
     moonshots_1y = Column(Integer)
-    parameters_json = Column(String(2000))
+    parameters_json = Column(Text)  # TEXT (unlimited) — 80-param genome JSON > 2000 chars
     created_at = Column(DateTime(timezone=True), default=func.now())
 
 class LabProgressState(Base):

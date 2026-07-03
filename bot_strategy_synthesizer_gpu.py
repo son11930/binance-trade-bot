@@ -58,6 +58,7 @@ try:
     import numba
     GPU_AVAILABLE = cuda.is_available()
     _cuda_jit = cuda.jit
+    _cuda_jit_cached = cuda.jit(cache=True)  # cache=True → saves compiled PTX to disk, no recompile next run
     if GPU_AVAILABLE:
         gpu = cuda.get_current_device()
         print(f"[GPU] ✅ CUDA GPU detected: {gpu.name.decode('utf-8')} | CC {gpu.compute_capability}")
@@ -163,7 +164,7 @@ class StrategyLeaderboard(Base):
 # ──────────────────────────────────────────────────────────
 
 if GPU_AVAILABLE and _cuda_jit:
-    @_cuda_jit
+    @_cuda_jit_cached
     def _backtest_kernel(
         close_arr, high_arr, low_arr, open_arr, vol_arr,
         sma200_arr, sma50_arr, atr_arr, rsi_arr, adx_arr,
@@ -572,7 +573,7 @@ def _batch_gpu_backtest(
 # ──────────────────────────────────────────────────────────
 
 if GPU_AVAILABLE and _cuda_jit:
-    @_cuda_jit
+    @_cuda_jit_cached
     def _mega_backtest_kernel(
         price_flat,      # [total_bars, N_FEATURES=23] — flat VRAM price tensor
         sym_offsets,     # [n_symbols] — start bar index of each symbol

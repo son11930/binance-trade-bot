@@ -102,11 +102,12 @@ DASHBOARD_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "d
 N_CPU_WORKERS = min(multiprocessing.cpu_count(), 8)
 
 # GPU thread block size (tune for RTX 3070: 2560 CUDA cores)
-CUDA_THREADS_PER_BLOCK = 256
+CUDA_THREADS_PER_BLOCK = 128   # 128 tpb → more blocks → better SM occupancy on RTX 3070
 
 # ── Mega-Batch Kernel Constants ──────────────────────────────────────────────
-# Batch 256 genomes per kernel launch (256 × 20 syms × 4 horizons = 20,480 threads)
-GENOME_BATCH_SIZE = 256
+# RTX 3070: 46 SMs × 2048 threads/SM = 94,208 max concurrent threads
+# 1024 genomes × 20 syms × 4 horizons = 81,920 threads ÷ 128 tpb = 640 blocks → ~87% GPU load
+GENOME_BATCH_SIZE = 1024
 # Horizon bars for 1M, 3M, 6M, 1Y at 30-min candles (48 bars/day)
 HORIZON_BARS = [30 * 48, 90 * 48, 180 * 48, 365 * 48]  # [1440, 4320, 8640, 17520]
 # Feature column order for flat VRAM pack (must match _pack_symbols_to_flat_gpu)

@@ -1150,11 +1150,27 @@ _last_progress_write = 0.0
 _last_db_progress_write = 0.0
 _progress_lock = threading.Lock()  # M4 fix: thread-safe progress write globals
 
+_db_engine_singleton = None
+
 def _get_db_engine():
+    """Return a SQLAlchemy engine using NullPool so connections are closed immediately after use.
+    NullPool = no connection held in pool → Aiven connection slots freed instantly after each push.
+    Uses a singleton to avoid recreating the engine on every leaderboard push call.
+    """
+    global _db_engine_singleton
+    if _db_engine_singleton is not None:
+        return _db_engine_singleton
+    from sqlalchemy.pool import NullPool
     db_url = DATABASE_URL_FUTURES or DATABASE_URL_SPOT or "sqlite:///./trades_futures.db"
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
-    return create_engine(db_url, pool_pre_ping=True)
+    _db_engine_singleton = create_engine(
+        db_url,
+        poolclass=NullPool,   # ← close connection immediately after each use
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 10} if "postgresql" in db_url else {}
+    )
+    return _db_engine_singleton
 
 
 def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,

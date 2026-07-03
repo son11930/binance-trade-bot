@@ -1486,7 +1486,25 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
     logger.info(f"✅ {len(symbol_arrays)}/{len(SYMBOLS)} symbols loaded and ready!")
 
-    # PERF-C1: Pre-load ALL symbol data to GPU VRAM once (~33 MB, eliminates 160 MB/trial transfer)
+    # GPU Mega-Batch uses Ask-and-Tell single-threaded loop → SQLite is fast enough
+    # (PostgreSQL was only needed for n_jobs=8 parallel workers; we no longer use that mode)
+    # Keep Optuna trial history local to avoid Aiven connection limits and column overflow issues.
+    opt_db_path = os.path.join(DASHBOARD_DATA_DIR, "optuna_evolution_gpu.db")
+    _optuna_storage = f"sqlite:///{opt_db_path}"
+    logger.info(f"Optuna storage: SQLite (local, single-threaded Ask-and-Tell loop)")
+
+    import warnings
+    warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
+
+    study = optuna.create_study(
+        study_name="alpha_genome_80genes_gpu_v1",
+        storage=_optuna_storage,
+        load_if_exists=True,
+        direction="maximize",
+        sampler=TPESampler(seed=None, n_startup_trials=30, multivariate=False),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1)
+    )
+
     if GPU_AVAILABLE:
         preload_all_symbols_to_gpu(symbol_arrays)
         # Mega-Batch: also pack as single flat tensor for mega-kernel
@@ -1516,37 +1534,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         logger.error("Optuna not installed! pip install optuna")
         return []
 
-    # PERF-H1 fix: Use Aiven PostgreSQL for Optuna storage instead of SQLite.
-    # SQLite has file-level write locks — with n_jobs=8, all 8 workers compete and serialize,
-    # effectively reducing parallelism to n_jobs=1. PostgreSQL handles concurrent writes correctly.
-    # Reuse the same Aiven DB already used for the leaderboard (no extra cost).
-    try:
-        _pg_url = DATABASE_URL_FUTURES or DATABASE_URL_SPOT or ""
-        if _pg_url.startswith("postgres://"):
-            _pg_url = _pg_url.replace("postgres://", "postgresql://", 1)
-        if _pg_url.startswith("postgresql://"):
-            from optuna.storages import RDBStorage
-            _optuna_storage = RDBStorage(
-                url=_pg_url,
-                engine_kwargs={"pool_size": 1, "max_overflow": 0, "pool_timeout": 30,
-                               "pool_recycle": 300, "pool_pre_ping": True}
-            )
-            logger.info("✅ Optuna storage: Aiven PostgreSQL (multi-worker safe, no SQLite lock)")
-        else:
-            raise ValueError("No PostgreSQL URL")
-    except Exception as _pg_err:
-        logger.warning(f"PostgreSQL Optuna storage unavailable ({_pg_err}), falling back to SQLite.")
-        opt_db_path = os.path.join(DASHBOARD_DATA_DIR, "optuna_evolution_gpu.db")
-        _optuna_storage = f"sqlite:///{opt_db_path}"
 
-    study = optuna.create_study(
-        study_name="alpha_genome_80genes_gpu_v1",
-        storage=_optuna_storage,
-        load_if_exists=True,
-        direction="maximize",
-        sampler=TPESampler(seed=None, n_startup_trials=30, multivariate=True),  # multivariate=True for better 80-dim exploration
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1)
-    )
 
     # Enqueue historical champions
     enqueued = 0

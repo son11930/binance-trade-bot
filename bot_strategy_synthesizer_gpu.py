@@ -31,6 +31,7 @@ if hasattr(sys.stderr, 'reconfigure'):
     try: sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except Exception: pass
 import time
+import random
 import json
 import pickle
 import logging
@@ -1724,25 +1725,63 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 remaining = (n_trials - completed) if n_trials else GENOME_BATCH_SIZE
                 batch_size = min(GENOME_BATCH_SIZE, remaining)
 
-                # 1. Ask Optuna for batch_size trials
-                optuna_trials = [study.ask() for _ in range(batch_size)]
+                # 1. Ask Optuna TPE for n_tpe trials (32 trials = fast ~1 sec, prevents SQLite scaling overhead)
+                n_tpe = min(32, batch_size)
+                optuna_trials = [study.ask() for _ in range(n_tpe)]
                 genomes = [_build_genome_from_trial(t) for t in optuna_trials]
 
-                # 2. ONE kernel call: 256 genomes × 20 syms × 4 horizons
+                # 2. Generate remaining (batch_size - n_tpe) via Fast Evolutionary Genetic Mutation & Crossover (<0.01 sec)
+                n_mutants = batch_size - len(genomes)
+                if n_mutants > 0:
+                    elites = [res["parameters"] for res in leaderboard_map.values() if isinstance(res, dict) and "parameters" in res]
+                    if not elites:
+                        elites = [g for g in genomes]
+                    if not elites and historical_champions:
+                        elites = [c["parameters"] for c in historical_champions if isinstance(c, dict) and "parameters" in c]
+                    for m_idx in range(n_mutants):
+                        parent = random.choice(elites) if elites else genomes[0]
+                        mutant = parent.copy()
+                        for k, v in list(mutant.items()):
+                            if isinstance(v, float) and random.random() < 0.15:
+                                mutant[k] = round(v * random.uniform(0.85, 1.15), 5)
+                            elif isinstance(v, int) and not isinstance(v, bool) and random.random() < 0.15:
+                                mutant[k] = max(1, int(v * random.uniform(0.85, 1.15)))
+                            elif isinstance(v, bool) and random.random() < 0.05:
+                                mutant[k] = not v
+                        mutant["strategy_type"] = parent.get("strategy_type", "rsi_sniper")
+                        genomes.append(mutant)
+
+                # 3. ONE kernel call: evaluates ALL genomes simultaneously across 20 syms & 4 horizons (~0.07 sec!)
                 batch_results = _mega_batch_gpu_backtest(genomes)
 
-                # 3. Tell Optuna results + update leaderboard
+                # 4. Tell Optuna TPE results + update leaderboard
                 with lock:
-                    for t, genome, res in zip(optuna_trials, genomes, batch_results):
+                    # A) Process TPE trials
+                    for t, genome, res in zip(optuna_trials, genomes[:n_tpe], batch_results[:n_tpe]):
                         st_name = str(genome.get("strategy_type", "rsi")).upper()
                         res["name"] = f"[{st_name}] Evolved Alpha TPE #{t.number}"
                         res["parameters"] = genome
                         leaderboard_map[f"trial_{t.number}"] = res
                         study.tell(t, res["fitness_score"])
-                        is_new = res["fitness_score"] > best_so_far_score
-                        if is_new:
+                        if res["fitness_score"] > best_so_far_score:
                             best_so_far_score = res["fitness_score"]
                             best_so_far_name  = res["name"]
+
+                    # B) Process Evolutionary Mutant results
+                    for m_idx, (genome, res) in enumerate(zip(genomes[n_tpe:], batch_results[n_tpe:])):
+                        st_name = str(genome.get("strategy_type", "rsi")).upper()
+                        mut_id = completed + n_tpe + m_idx + 1
+                        res["name"] = f"[{st_name}] Evolved Alpha Mutant #{mut_id}"
+                        res["parameters"] = genome
+                        leaderboard_map[f"mutant_{mut_id}"] = res
+                        if res["fitness_score"] > best_so_far_score:
+                            best_so_far_score = res["fitness_score"]
+                            best_so_far_name  = res["name"]
+
+                    # Keep leaderboard_map bounded to top 50 to avoid memory growth
+                    if len(leaderboard_map) > 50:
+                        top_keys = sorted(leaderboard_map.keys(), key=lambda k: leaderboard_map[k].get("fitness_score", 0.0), reverse=True)[:50]
+                        leaderboard_map = {k: leaderboard_map[k] for k in top_keys}
 
                 completed += batch_size
                 batch_idx += 1

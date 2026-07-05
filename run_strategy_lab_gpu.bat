@@ -3,6 +3,11 @@ title AI Strategy Lab GPU - RTX 3070 Controller (Windows Launcher)
 cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
 
+REM ── CUDA PATH SETUP (ลง CUDA Toolkit ที่ E:\Cuda toolkit) ──
+set "CUDA_PATH=E:\Cuda toolkit"
+set "CUDA_HOME=E:\Cuda toolkit"
+set "PATH=%CUDA_PATH%\bin\x64;%CUDA_PATH%\bin;%PATH%"
+
 if "%~1"=="1" goto START_DEFAULT_AUTO
 if "%~1"=="stop" goto STOP_LAB
 if "%~1"=="2" goto CHECK_ARG2
@@ -179,7 +184,7 @@ pip install numba
 echo.
 echo [3/3] Installing CuPy (GPU NumPy) for CUDA 11.x...
 echo [i] If you have CUDA 12.x, change 'cupy-cuda11x' to 'cupy-cuda12x' below.
-pip install cupy-cuda11x
+pip install cupy-cuda12x
 echo.
 echo [+] GPU dependencies installation complete!
 echo [i] Restart and use option [8] to test GPU detection.

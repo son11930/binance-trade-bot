@@ -83,3 +83,11 @@ query_ai.py
 search_db.py
 search_miss.py
 run_full_engine_backtest.py
+
+# Lab & Debug Logs
+*.log
+*.cache
+strategy_leaderboard*
+lab_progress*
+gpu_lab.log
+dashboard/data/

@@ -1,3 +1,41 @@
+## [4.7.12] - 2026-07-06
+### Execute Modular Refactoring & Optimization of Web Dashboard (`dashboard/js/`)
+**English:**
+- **Refactored Frontend Monolith into 8 Specialized JS Modules (`dashboard/js/`)**: Decomposed the 779-line monolithic `dashboard/app.js` (~46 KB) into a structured package (`dashboard/js/`) comprising `config_utils.js`, `auth.js`, `websocket.js`, `bot_control.js`, `ui_status.js`, `ui_trades.js`, `ui_logs.js`, and `ui_lab.js`. Every module is strictly under the 800-line limit (ranging from 36 to 216 lines) with clear division of responsibilities (Authentication, Real-time WebSockets, UI Rendering, Control Loops).
+- **100% Backward Compatible Lightweight Coordinator**: Replaced `dashboard/app.js` with an ultra-lightweight ~10-line application controller and configured sequential `<script>` inclusion in `dashboard/index.html`. Eliminates CORS issues and complex bundler setups while preserving full browser compatibility.
+- **TDD Regression Suite & Subagent Verification**: Established automated test suite `tests/test_dashboard_refactor.py` confirming structural integrity, line count limits, and 100% presence of 10 essential global UI functions. Verified 0 regression across all 134 automated tests and audited via `code-reviewer` subagent.
+
+**Thai (ภาษาไทย):**
+- **แยกร่างไฟล์โค้ดหน้าเว็บขนาดใหญ่ออกเป็น 8 โมดูลเฉพาะทาง (`dashboard/js/`)**: ย้ายฟังก์ชันการทำงานจากไฟล์ใหญ่ `dashboard/app.js` (779 บรรทัด ขนาด ~46 KB) เข้าสู่โฟลเดอร์โมดูลย่อย `dashboard/js/` ประกอบด้วย `config_utils.js`, `auth.js`, `websocket.js`, `bot_control.js`, `ui_status.js`, `ui_trades.js`, `ui_logs.js` และ `ui_lab.js` โดยทุกไฟล์มีขนาดกะทัดรัด (ระหว่าง 36 ถึง 216 บรรทัด) ไม่เกิน 800 บรรทัดตามกฎของโครงการ พร้อมแยกหน้าที่กันอย่างชัดเจน ทั้งระบบล็อกอิน, WebSocket, การแสดงผลตารางเทรด และห้องแล็บ AI
+- **ตัวคุมการทำงานหลักขนาดเล็ก รองรับระบบเดิม 100%**: ปรับลดไฟล์ `dashboard/app.js` เดิมให้เหลือเพียงโค้ดสั่งเริ่มทำงานสั้นๆ (~10 บรรทัด) และโหลดสคริปต์ตามลำดับใน `index.html` ป้องกันปัญหา CORS และไม่ต้องพึ่งพาเครื่องมือ Build ซับซ้อน ทำให้ใช้งานบนเบราว์เซอร์และเซิร์ฟเวอร์เดิมได้ทันที
+- **ผ่านการตรวจสอบ TDD และ Subagent Review**: สร้างชุดทดสอบอัตโนมัติ `tests/test_dashboard_refactor.py` ตรวจสอบโครงสร้าง, ขนาดไฟล์, และฟังก์ชันสำคัญทั้ง 10 ตัว พร้อมรันชุดทดสอบรวม 134 รายการผ่าน 100% โดยไม่มีข้อผิดพลาด และได้รับการตรวจสอบยืนยันความปลอดภัยจากซับเอเจนต์ `code-reviewer` เรียบร้อยแล้ว
+
+## [4.7.11] - 2026-07-06
+### Execute Modular Refactoring of GPU Strategy Synthesizer (`lab_gpu/`)
+**English:**
+- **Refactored Monolith into 9 Focused Modules (`lab_gpu/`)**: Migrated all core components of `bot_strategy_synthesizer_gpu.py` (~2,056 lines) into a cohesive modular package (`lab_gpu/`) comprising `__init__.py`, `config.py`, `data_loader.py`, `gpu_kernel.py`, `cpu_kernel.py`, `fitness.py`, `evaluator.py`, `leaderboard_sync.py`, and `evolution_engine.py`. Every file strictly adheres to the project's <800 lines rule (averaging 150–320 lines) with clean separation of concerns.
+- **100% Backward Compatible Lightweight Wrapper**: Replaced the original `bot_strategy_synthesizer_gpu.py` with an ultra-lightweight (~35 lines) executable wrapper that delegates execution directly to `lab_gpu.run_gpu_synthesizer_lab`, preserving full CLI compatibility for `run_strategy_lab_gpu.bat` and PowerShell termination commands.
+- **Verified Zero Regression across 124 Unit Tests**: Executed comprehensive automated test suites (`pytest tests/ -v`), confirming 100% numerical parity (`rtol=1e-6`) across 4-Pillar Practical Fitness Framework scores, vectorized batch matrix aggregations, and genome flat packing, alongside live E2E GPU backtest execution.
+
+**Thai (ภาษาไทย):**
+- **แยกร่างไฟล์ใหญ่ออกเป็น 9 โมดูลเฉพาะทาง (`lab_gpu/`)**: ย้ายฟังก์ชันการทำงานทั้งหมดจากไฟล์ใหญ่ `bot_strategy_synthesizer_gpu.py` (~2,056 บรรทัด) เข้าสู่แพ็กเกจโมดูลย่อย `lab_gpu/` ประกอบด้วย `__init__.py`, `config.py`, `data_loader.py`, `gpu_kernel.py`, `cpu_kernel.py`, `fitness.py`, `evaluator.py`, `leaderboard_sync.py` และ `evolution_engine.py` โดยทุกไฟล์มีขนาดกะทัดรัด (เฉลี่ย 150–320 บรรทัด) ไม่เกิน 800 บรรทัดตามกฎของโครงการ
+- ** Wrapper น้ำหนักเบา รองรับการทำงานเดิม 100%**: แทนที่ไฟล์ `bot_strategy_synthesizer_gpu.py` เดิมด้วยไฟล์โค้ดสั้นๆ (~35 บรรทัด) ทำหน้าที่เป็นตัวกลางเชื่อมต่อและส่งคำสั่งไปยังแพ็กเกจ `lab_gpu` ทำให้สคริปต์ `run_strategy_lab_gpu.bat` และคำสั่งจัดการโปรเซสของ Windows สามารถทำงานต่อได้ทันทีโดยไม่ต้องแก้ไข
+- **ผ่านการทดสอบ Zero Regression 124 รายการ**: ทดสอบด้วยชุดทดสอบอัตโนมัติเต็มรูปแบบ (`pytest tests/ -v`) ยืนยันผลลัพธ์ทางคณิตศาสตร์และการคิดคะแนนกลยุทธ์ 4-Pillar ตรงกันแม่นยำทุกทศนิยม (`rtol=1e-6`) พร้อมทดสอบจำลองการเทรดด้วย GPU จริงได้อย่างสมบูรณ์แบบ
+
+## [4.7.10] - 2026-07-06
+### Formulate Meticulous Refactoring Architecture Plan for GPU Strategy Synthesizer (`strategy_lab/`)
+**English:**
+- **Modular Package Design (`strategy_lab/`)**: Formulated a comprehensive, production-ready architecture plan to break down the monolithic ~2,056-line `bot_strategy_synthesizer_gpu.py` into 9 focused modules (`__init__.py`, `config.py`, `data_loader.py`, `gpu_kernel.py`, `cpu_kernel.py`, `fitness.py`, `evaluator.py`, `leaderboard_sync.py`, `evolution_engine.py`), ensuring every module is well below the 800-line maximum limit (averaging 150-320 lines) with high cohesion and low coupling.
+- **Backward Compatibility Guarantee**: Designed an ultra-lightweight (~35 lines) executable wrapper for `bot_strategy_synthesizer_gpu.py` that preserves CLI argument parsing (`stop`, custom trial counts, infinite mode `0`) and redirects execution to `strategy_lab.evolution_engine.run_gpu_synthesizer_lab`, ensuring 100% seamless operation for `run_strategy_lab_gpu.bat` and PowerShell process management (`Win32_Process`).
+- **5-Step TDD Zero Regression Verification Protocol**: Established an automated regression testing workflow (`tests/test_gpu_lab_regression.py`) requiring exact numeric baseline snapshots (with `1e-6` floating-point tolerance) of CUDA kernel outputs, 4-Pillar Practical Fitness scores, and Optuna TPE genome parameter generation before and after modularization.
+- **Documentation & Plan Synchronization**: Updated `PROJECT_PLAN.md` (Phase 25) and generated persistent artifact `refactoring_architecture_plan.md` detailing the function-by-function mapping and step-by-step execution timeline.
+
+**Thai (ภาษาไทย):**
+- **วางสถาปัตยกรรมแยกร่างระบบค้นหากลยุทธ์ GPU (`strategy_lab/`)**: ออกแบบแผนการ Refactor โค้ดไฟล์ใหญ่อย่าง `bot_strategy_synthesizer_gpu.py` (~2,056 บรรทัด) ให้กระจายเป็นแพ็กเกจย่อย 9 โมดูล (`__init__.py`, `config.py`, `data_loader.py`, `gpu_kernel.py`, `cpu_kernel.py`, `fitness.py`, `evaluator.py`, `leaderboard_sync.py`, `evolution_engine.py`) โดยควบคุมขนาดทุกไฟล์ให้อยู่ระหว่าง 150-320 บรรทัด (ไม่เกินกรอบสูงสุด 800 บรรทัดตามกฎของโปรเจกต์) เพื่อประหยัด Token และเพิ่มความเป็นระเบียบ
+- **รักษาความเข้ากันได้ของระบบเดิม 100% (Backward Compatibility)**: ออกแบบไฟล์ `bot_strategy_synthesizer_gpu.py` เดิมให้เหลือเพียง Wrapper สั้นๆ (~35 บรรทัด) ทำหน้าที่รับค่าคำสั่งจากหน้าต่าง CMD/PowerShell (`stop`, จำนวนรอบ, หรือโหมดรันอนันต์ `0`) แล้วส่งต่อการทำงานไปยัง `strategy_lab` ทำให้สคริปต์ `run_strategy_lab_gpu.bat` และคำสั่งปิดบอทใน Windows ทำงานต่อได้ทันทีโดยไม่ต้องแก้ไขแม้แต่บรรทัดเดียว
+- **มาตรการทดสอบ TDD ป้องกันผลกระทบ 100% (Zero Regression Protocol)**: กำหนดแผนการทดสอบอัตโนมัติ (`tests/test_gpu_lab_regression.py`) โดยบันทึกภาพถ่ายตัวเลขผลลัพธ์จาก CUDA Kernel, คะแนน 4-Pillar Fitness, และตัวแปร Optuna TPE ของเดิมก่อนย้ายโค้ด เพื่อนำมาตรวจสอบเทียบเคียงหลังย้ายโค้ด ต้องตรงกันแม่นยำทุกทศนิยม (ค่าความคลาดเคลื่อนไม่เกิน 0.000001)
+- **อัปเดตแผนโครงการและสร้างรายงานฉบับสมบูรณ์**: บันทึกรายละเอียดขั้นตอนลงใน `PROJECT_PLAN.md` (Phase 25) พร้อมสร้างรายงานสถาปัตยกรรมฉบับเต็มในแฟ้มเก็บข้อมูลของ AI
+
 ## [4.7.9] - 2026-07-02
 ### Expand AI Strategy Genome to 80 Quantitative Parameters & 8 Strategy Architectures
 **English:**

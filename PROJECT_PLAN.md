@@ -215,5 +215,46 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   3. **Aiven DB Leaderboard Integration**: Pushes Top 10 discovered strategy blueprints to our existing Aiven MySQL/PostgreSQL/SQLite database into a lightweight `strategy_leaderboard` table (~5 KB size, zero live bot interference).
   4. **Interactive AI Strategy Lab UI (`dashboard/`)**: Adds an "🧬 AI Strategy Lab" tab to the web dashboard. Displays comparative Leaderboard Cards with 1M/3M/6M/1Y net profits, win rates, drawdowns, Strategy DNA code blocks, and a "📋 Copy AI Command" button for safe Human-in-the-Loop deployment.
   5. **Subagent Verification**: Upon completion, invoke parallel subagents (`code-reviewer`, `security-reviewer`, `performance-optimizer` / `trade-strategist`) to audit the implementation.
-- **Status**: In Progress.
+- **Status**: Completed.
+
+## Phase 25: Refactoring GPU Strategy Synthesizer into a Dedicated Modular Package (`strategy_lab/`)
+- **Goal**: Refactor our monolithic `bot_strategy_synthesizer_gpu.py` (~2,056 lines) into a clean, modular Python package inside a dedicated folder (`strategy_lab/`) to reduce file complexity (<800 lines per file, <50 lines per function), save token overhead, keep the workspace organized, and guarantee 100% zero regression of mathematical and trading invariants.
+- **Module Architecture (`strategy_lab/`)**:
+  - `strategy_lab/__init__.py` (~20 lines): Package entrypoint exposing `run_gpu_synthesizer_lab`.
+  - `strategy_lab/config.py` (~100 lines): Package constants (`N_CPU_WORKERS`, `CUDA_THREADS_PER_BLOCK`, `GENOME_BATCH_SIZE`, `HORIZON_BARS`, `FEATURE_ORDER`, `GENOME_PARAM_ORDER`, `STRAT_MAP`, `MACRO_MAP`), file paths (`CACHE_DIR`, `DASHBOARD_DATA_DIR`), and logger setup.
+  - `strategy_lab/data_loader.py` (~140 lines): Historical kline cache loading (`_load_and_cache_symbol`), NumPy array conversion (`_df_to_arrays`, `_build_symbol_arrays_for_cpu`), and GPU VRAM pre-loading/flat packing state (`preload_all_symbols_to_gpu`, `_pack_symbols_to_flat_gpu`, `_GPU_DEVICE_ARRAYS`, `_GPU_FLAT_DATA`).
+  - `strategy_lab/gpu_kernel.py` (~320 lines): CUDA/Numba/CuPy hardware detection (`GPU_AVAILABLE`, `CUPY_AVAILABLE`), Numba JIT device kernels (`_backtest_kernel`, `_mega_backtest_kernel`), and startup compilation warmup (`_warmup_mega_kernel`).
+  - `strategy_lab/cpu_kernel.py` (~130 lines): Pure Python/NumPy multi-core fallback simulation logic (`simulate_strategy_genome_cpu`, `_cpu_eval_from_arrays`).
+  - `strategy_lab/fitness.py` (~150 lines): The 4-Pillar Practical Fitness Framework grading (`_apply_four_pillar_fitness`), matrix aggregation (`_compute_fitness_from_matrix`), vectorized batch grading (`_vectorized_batch_compute_fitness`), and genome parameter packing (`_pack_genomes_to_flat`).
+  - `strategy_lab/evaluator.py` (~160 lines): Kernel orchestration and PCIe data transfer bridging (`_batch_gpu_backtest`, `_mega_batch_gpu_backtest`, `evaluate_genome_gpu`).
+  - `strategy_lab/leaderboard_sync.py` (~130 lines): SQLAlchemy models and DB connection pooling (`StrategyLeaderboard`, `_get_db_engine`), thread-safe progress logging (`save_lab_progress_gpu`), Aiven PostgreSQL Top 10 sync (`push_leaderboard_to_db_and_json_gpu`), and genome deduplication (`get_deduplicated_top10_gpu`).
+  - `strategy_lab/evolution_engine.py` (~320 lines): Optuna TPE study configuration (`InMemoryStorage`, `TPESampler`, `MedianPruner`), genome parameter space definition (`_build_genome_from_trial`), genetic mutation/crossover loop, and main execution orchestrator (`run_gpu_synthesizer_lab`).
+- **Backward Compatibility Guarantee**:
+  - Preserve `bot_strategy_synthesizer_gpu.py` in the root directory as an ultra-lightweight ~35-line executable wrapper that parses CLI arguments (`stop`, trial counts, infinite mode) and calls `run_gpu_synthesizer_lab()` from `strategy_lab`.
+  - Ensures zero modification required for `run_strategy_lab_gpu.bat`, PowerShell process monitoring (`Win32_Process`), or taskkill termination scripts.
+- **5-Step TDD & Zero Regression Verification Protocol**:
+  - **Step 1 (Baseline Snapshot)**: Create automated regression test suite (`tests/test_gpu_lab_regression.py`) BEFORE refactoring. Run against monolithic `bot_strategy_synthesizer_gpu.py` on fixed test genomes across all 4 horizons (1M, 3M, 6M, 1Y). Record exact floating-point outputs for PnL %, win rate, max drawdown, total trades, and 4-Pillar fitness score to 6 decimal places (`1e-6` tolerance).
+  - **Step 2 (Modular Implementation)**: Extract and move functions file-by-file into `strategy_lab/` adhering strictly to high cohesion and low coupling (no circular imports).
+  - **Step 3 (Automated Regression Verification)**: Point `tests/test_gpu_lab_regression.py` to `strategy_lab` modules. Run `pytest -v` and verify `np.testing.assert_allclose(..., rtol=1e-6)` passes with 100% zero deviation.
+  - **Step 4 (Integration & E2E Verification)**: Execute wrapper `python bot_strategy_synthesizer_gpu.py 2` and check that `gpu_lab.log`, `lab_progress.json`, `strategy_leaderboard.json`, and Aiven PostgreSQL DB sync execute cleanly without errors or memory leaks.
+- **Status**: Completed.
+
+## Phase 26: Modular Refactoring & Optimization of Web Dashboard (`dashboard/js/`)
+- **Goal**: Decompose the monolithic frontend script `dashboard/app.js` (~779 lines, ~46 KB) into a clean, modular JavaScript package inside `dashboard/js/` to improve code readability, maintainability, and token efficiency, strictly enforcing the project's `<800 lines max (200-400 lines typical)` rule and guaranteeing **100% Zero Regression** in UI interactivity, WebSocket auto-reconnection, AI Council rendering, and live Strategy Lab progress polling.
+- **Module Architecture (`dashboard/js/`)**:
+  - `dashboard/js/config_utils.js` (~50 lines): Global state/constants (`currentMarket`, `ws`, `token`, `isPaused`), HTML escaping (`escapeHTML`), and global error logging handler (`window.onerror`).
+  - `dashboard/js/auth.js` (~60 lines): Session authentication, login/logout workflows, and JWT token storage.
+  - `dashboard/js/websocket.js` (~100 lines): WebSocket lifecycle management, automatic reconnect loop, heartbeat pings, and message routing to UI renderers.
+  - `dashboard/js/bot_control.js` (~80 lines): Bot pause/resume controls (`fetchBotControl`, `togglePause`, `updatePauseUI`), market switching (`setMarket`), and app startup initialization (`startApp`).
+  - `dashboard/js/ui_status.js` (~120 lines): Rendering AI Council cards, Market Context banner, 4-Gear Trailing Stop status, and account balance indicators (`updateStatusUI`).
+  - `dashboard/js/ui_trades.js` (~130 lines): Rendering Spot and Futures trade tables, delta deduplication, PnL badge formatting, and trade history updates (`updateTradesUI`).
+  - `dashboard/js/ui_logs.js` (~80 lines): Rendering real-time system log terminal (`renderLogsUI`) and periodic performance stat summaries (`renderStatsUI`).
+  - `dashboard/js/ui_lab.js` (~200 lines): Rendering the AI Strategy Lab tab, live animated progress banner (`fetchLabProgress`), Top 10 leaderboard cards (`fetchLeaderboard`), and safe index-based Copy AI Command workflow (`copyAICommandFromIndex`).
+- **Backward Compatibility Guarantee**:
+  - Load modules sequentially via standard `<script src="js/...">` tags in `dashboard/index.html` (or maintain a lightweight `app.js` entrypoint) to ensure zero CORS issues and 100% compatibility across all browsers and server environments without requiring Webpack/Vite build tools.
+- **TDD & Zero Regression Verification Plan**:
+  - **Step 1 (Automated Regression Verification)**: Run full Python pytest suite (`pytest tests/ -v`) to ensure server static file serving and API endpoints remain unaffected.
+  - **Step 2 (Syntax & Linter Verification)**: Check JavaScript syntax across all new modules in `dashboard/js/` using Node/built-in validation to ensure zero runtime syntax errors.
+  - **Step 3 (E2E & Human-in-the-Loop Review)**: Verify tab switching between Live Trading and AI Strategy Lab, check WebSocket real-time updates, and confirm Leaderboard card rendering.
+- **Status**: Completed.
 

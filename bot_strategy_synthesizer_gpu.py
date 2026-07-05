@@ -1064,13 +1064,13 @@ def evaluate_genome_gpu(
         penalty_win = 0.0
 
     # ── 3. Trade Frequency Band & Overtrading Punishment ──
-    # Target: 120 to 600 trades/year across 20 symbols (~0.5 to 2.5 trades/sym/month)
-    if total_trades < 120:
-        score_trades = -500.0 * ((120.0 - total_trades) / 120.0)
-    elif total_trades <= 600:
-        score_trades = 50.0
+    # Target: 365 to 1460 trades/year across all 20 symbols combined (1 to 4 trades/day total)
+    if total_trades < 365:
+        score_trades = -500.0 * ((365.0 - total_trades) / 365.0)
+    elif total_trades <= 1460:
+        score_trades = 100.0
     else:
-        score_trades = -3.0 * (total_trades - 600.0)  # Severe overtrading fee punishment
+        score_trades = -2.0 * (total_trades - 1460.0)  # Overtrading fee punishment above ~4 trades/day
 
     # ── 4. Final Composite Practical Fitness Score ──
     win_score = win_rate * 3.0
@@ -1490,13 +1490,13 @@ def _compute_fitness_from_matrix(raw_gi: np.ndarray, h_names: List[str]) -> Dict
         penalty_win = 0.0
 
     # ── 3. Trade Frequency Band & Overtrading Punishment ──
-    # Target: 120 to 600 trades/year across 20 symbols (~0.5 to 2.5 trades/sym/month)
-    if total_trades < 120:
-        score_trades = -500.0 * ((120.0 - total_trades) / 120.0)
-    elif total_trades <= 600:
-        score_trades = 50.0
+    # Target: 365 to 1460 trades/year across all 20 symbols combined (1 to 4 trades/day total)
+    if total_trades < 365:
+        score_trades = -500.0 * ((365.0 - total_trades) / 365.0)
+    elif total_trades <= 1460:
+        score_trades = 100.0
     else:
-        score_trades = -3.0 * (total_trades - 600.0)  # Severe overtrading fee punishment
+        score_trades = -2.0 * (total_trades - 1460.0)  # Overtrading fee punishment above ~4 trades/day
 
     # ── 4. Final Composite Practical Fitness Score ──
     win_score = win_rate * 3.0

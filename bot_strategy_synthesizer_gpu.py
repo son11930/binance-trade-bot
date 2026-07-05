@@ -333,6 +333,8 @@ if GPU_AVAILABLE and _cuda_jit:
                 if l <= sl_p:
                     pnl_pct = (sl_p - entry_p) / entry_p
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
+                    if pnl_pct > 0.0:
+                        wins += 1
                     total_trades += 1
                     in_pos = False
                     bars_in_trade = 0
@@ -766,6 +768,8 @@ if GPU_AVAILABLE and _cuda_jit:
                 if l <= sl_p:
                     pnl_pct = (sl_p - entry_p) / entry_p
                     balance *= (1.0 + pnl_pct * kelly * 4.0)
+                    if pnl_pct > 0.0:
+                        wins += 1
                     total_trades += 1
                     in_pos = False; bars_in_trade = 0
                     cooldown_counter = cooldown_lim
@@ -905,6 +909,7 @@ def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Di
             exited = False; pnl = 0.0
             if l <= sl_p:
                 pnl = (sl_p - entry_p) / entry_p; balance *= 1 + pnl * kelly * 4
+                if pnl > 0: wins += 1
                 total_trades += 1; in_pos = False; bars_in_trade = 0; cooldown = cooldown_lim; exited = True
             elif h >= tp_p:
                 # H2 fix: exit at tp_p (limit order fill price), not close price.
@@ -1036,11 +1041,42 @@ def evaluate_genome_gpu(
     res["avg_trades_month"]= round(total_trades_1y / 12.0, 1)
     res["avg_trades_day"]  = round(total_trades_1y / 365.0, 1)
 
-    total_profit = res["net_profit_1y"] + res["net_profit_6m"] + res["net_profit_3m"] + res["net_profit_1m"]
-    all_horizon_bonus = 500.0 if all(res[f"net_profit_{h}"] > 0 for h in ["1y","6m","3m","1m"]) else 0.0
-    win_score     = res["win_rate_1y"] * 2.0
-    trade_score   = min(res["avg_trades_month"], 100.0) * 0.5
-    fitness = total_profit + all_horizon_bonus + win_score + trade_score - res["max_dd"] * 1.5
+    # ── 1. Real-World Fee & Slippage Drag (0.10% per trade round-trip) ──
+    FEE_PER_TRADE_PCT = 0.10
+    total_profit_live = 0.0
+    for h in ["1y", "6m", "3m", "1m"]:
+        raw_p = res.get(f"net_profit_{h}", 0.0)
+        t_count = total_trades_1y if h == "1y" else (total_trades_1y / 4.0 if h == "3m" else total_trades_1y / 12.0)
+        live_p = raw_p - (t_count * FEE_PER_TRADE_PCT)
+        total_profit_live += live_p
+
+    all_horizon_bonus = 500.0 if all(res.get(f"net_profit_{h}", 0.0) > 0 for h in ["1y","6m","3m","1m"]) else 0.0
+    win_rate = res["win_rate_1y"]
+    total_trades = res["total_trades_1y"]
+
+    # ── 2. Win Rate Hurdle & Sigmoidal Penalty (Target >= 38%) ──
+    WIN_TARGET = 38.0
+    if win_rate < 28.0 and total_trades > 0:
+        penalty_win = -9999.0  # Hard kill-switch for impractical win rates < 28%
+    elif win_rate < WIN_TARGET and total_trades > 0:
+        penalty_win = -1500.0 * ((WIN_TARGET - win_rate) / WIN_TARGET) ** 2
+    else:
+        penalty_win = 0.0
+
+    # ── 3. Trade Frequency Band & Overtrading Punishment ──
+    # Target: 120 to 600 trades/year across 20 symbols (~0.5 to 2.5 trades/sym/month)
+    if total_trades < 120:
+        score_trades = -500.0 * ((120.0 - total_trades) / 120.0)
+    elif total_trades <= 600:
+        score_trades = 50.0
+    else:
+        score_trades = -3.0 * (total_trades - 600.0)  # Severe overtrading fee punishment
+
+    # ── 4. Final Composite Practical Fitness Score ──
+    win_score = win_rate * 3.0
+    dd_penalty = res["max_dd"] * 2.5  # Increased from 1.5x to 2.5x
+
+    fitness = total_profit_live + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win
     res["fitness_score"] = round(fitness, 2)
     return res
 
@@ -1431,11 +1467,42 @@ def _compute_fitness_from_matrix(raw_gi: np.ndarray, h_names: List[str]) -> Dict
     res["avg_trades_month"] = round(total_trades_1y / 12.0, 1)
     res["avg_trades_day"]   = round(total_trades_1y / 365.0, 1)
 
-    total_profit    = sum(res.get(f"net_profit_{h}", 0.0) for h in h_names)
+    # ── 1. Real-World Fee & Slippage Drag (0.10% per trade round-trip) ──
+    FEE_PER_TRADE_PCT = 0.10
+    total_profit_live = 0.0
+    for h in h_names:
+        raw_p = res.get(f"net_profit_{h}", 0.0)
+        t_count = total_trades_1y if h == "1y" else (total_trades_1y / 4.0 if h == "3m" else total_trades_1y / 12.0)
+        live_p = raw_p - (t_count * FEE_PER_TRADE_PCT)
+        total_profit_live += live_p
+
     all_horizon_bonus = 500.0 if all(res.get(f"net_profit_{h}", 0.0) > 0 for h in h_names) else 0.0
-    win_score       = res["win_rate_1y"] * 2.0
-    trade_score     = min(res["avg_trades_month"], 100.0) * 0.5
-    fitness = total_profit + all_horizon_bonus + win_score + trade_score - res["max_dd"] * 1.5
+    win_rate = res["win_rate_1y"]
+    total_trades = res["total_trades_1y"]
+
+    # ── 2. Win Rate Hurdle & Sigmoidal Penalty (Target >= 38%) ──
+    WIN_TARGET = 38.0
+    if win_rate < 28.0 and total_trades > 0:
+        penalty_win = -9999.0  # Hard kill-switch for impractical win rates < 28%
+    elif win_rate < WIN_TARGET and total_trades > 0:
+        penalty_win = -1500.0 * ((WIN_TARGET - win_rate) / WIN_TARGET) ** 2
+    else:
+        penalty_win = 0.0
+
+    # ── 3. Trade Frequency Band & Overtrading Punishment ──
+    # Target: 120 to 600 trades/year across 20 symbols (~0.5 to 2.5 trades/sym/month)
+    if total_trades < 120:
+        score_trades = -500.0 * ((120.0 - total_trades) / 120.0)
+    elif total_trades <= 600:
+        score_trades = 50.0
+    else:
+        score_trades = -3.0 * (total_trades - 600.0)  # Severe overtrading fee punishment
+
+    # ── 4. Final Composite Practical Fitness Score ──
+    win_score = win_rate * 3.0
+    dd_penalty = res["max_dd"] * 2.5  # Increased from 1.5x to 2.5x
+
+    fitness = total_profit_live + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win
     res["fitness_score"] = round(fitness, 2)
     return res
 

@@ -32,6 +32,16 @@ if hasattr(sys.stderr, 'reconfigure'):
     except Exception: pass
 import time
 import random
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Fixed parameter.*")
+warnings.filterwarnings("ignore", message=".*out of range for distribution.*")
+warnings.filterwarnings("ignore", message=".*Grid size.*")
+try:
+    from numba.core.errors import NumbaPerformanceWarning
+    warnings.filterwarnings("ignore", category=NumbaPerformanceWarning)
+except Exception:
+    pass
 import json
 import pickle
 import logging

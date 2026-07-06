@@ -172,10 +172,17 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
             with open(lb_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             historical_champions = saved.get("strategies", [])
-            for idx, champ in enumerate(historical_champions):
-                if "parameters" in champ and "fitness_score" in champ:
-                    leaderboard_map[f"hist_{idx}"] = champ
-            logger.info(f"🧠 Loaded {len(leaderboard_map)} historical Alpha champions!")
+            valid_champs = [champ["parameters"] for champ in historical_champions if "parameters" in champ and isinstance(champ["parameters"], dict)]
+            if valid_champs:
+                logger.info(f"⚡ Re-evaluating {len(valid_champs)} historical champions against active Phase 31 profit hurdles...")
+                reeval_results = _mega_batch_gpu_backtest(valid_champs)
+                for idx, res in enumerate(reeval_results):
+                    if res.get("fitness_score", -9999) > 0.0:
+                        champ_copy = historical_champions[idx].copy()
+                        champ_copy["fitness_score"] = res["fitness_score"]
+                        champ_copy.update({k: res[k] for k in ["net_profit_1y", "net_profit_6m", "net_profit_3m", "net_profit_1m", "win_rate_1y", "max_dd_1y", "total_trades_1y"] if k in res})
+                        leaderboard_map[f"hist_{idx}"] = champ_copy
+                logger.info(f"🧠 {len(leaderboard_map)}/{len(valid_champs)} historical Alpha champions survived Phase 31 rules!")
         except Exception as e:
             logger.warning(f"Could not load historical leaderboard: {e}")
 

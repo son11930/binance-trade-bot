@@ -75,14 +75,16 @@ GENOME_PARAM_ORDER = [
     "cooldown_bars_after_sl", "kelly_fraction_cap", "giant_candle_atr_mult",
     "use_dual_trend",       # bool → 1.0/0.0
     "require_green_candle", # bool → 1.0/0.0
-    "strategy_type",        # str  → 0..7
+    "strategy_type",        # str  → 0..11
     "macro_regime_filter",  # str  → 0..2
     "trend_strength_min_adx",
 ]
 
 _STRAT_MAP_MB  = {"rsi_sniper": 0, "ema_cross": 1, "supertrend_momentum": 2,
                   "ichimoku_cloud": 3, "keltner_bounce": 4, "stoch_mfi_flow": 5,
-                  "williams_mean_rev": 6, "donchian_breakout": 7}
+                  "williams_mean_rev": 6, "donchian_breakout": 7,
+                  "macd_momentum_surge": 8, "bollinger_squeeze_explosion": 9,
+                  "parabolic_sar_vortex": 10, "fibonacci_golden_pullback": 11}
 _MACRO_MAP_MB  = {"sma200_only": 0, "sma200_and_adx": 1, "none": 2}
 
 BARSPERDAY = 48  # Named constant — 30m candles per day (24h × 2)

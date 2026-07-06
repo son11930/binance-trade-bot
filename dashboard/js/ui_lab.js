@@ -177,10 +177,17 @@ async function fetchLeaderboard() {
                         <span class="text-[11px] block ${strat.net_profit_1y >= 0 ? 'text-neonGreen text-glow-green' : 'text-neonRed'} font-mono font-bold">(${strat.net_profit_1y_dollar !== undefined ? (strat.net_profit_1y_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_1y_dollar) : '$' + (strat.net_profit_1y * 10).toFixed(2)})</span>
                     </div>
                 </div>
-                <div class="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4 text-xs bg-black/30 p-3 rounded-xl border border-slate-800/60">
+                <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4 text-xs bg-black/30 p-3 rounded-xl border border-slate-800/60">
                     <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Win Rate:</span> <span class="text-white font-extrabold text-sm">${strat.win_rate_1y}%</span></div>
                     <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Max Drawdown:</span> <span class="text-neonRed font-extrabold text-sm">-${strat.max_dd}%</span></div>
                     <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Trade Activity:</span> <span class="text-neonCyan font-extrabold text-sm">${strat.total_trades_1y} ไม้</span> <span class="text-[10px] text-slate-400 block">(~${strat.avg_trades_month || (strat.total_trades_1y/12).toFixed(1)} ไม้/เดือน | ~${strat.avg_trades_day || (strat.total_trades_1y/365).toFixed(1)} ไม้/วัน)</span></div>
+                    <div>
+                        <span class="text-slate-400 block text-[10px] uppercase font-bold">Avg Profit / Trade:</span>
+                        <span class="font-extrabold text-sm ${(strat.avg_profit_per_trade_dollar >= 1.00 || (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)) >= 1.00) ? 'text-neonGreen text-glow-green' : ((strat.avg_profit_per_trade_dollar >= 0.30 || (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)) >= 0.30) ? 'text-amber-400' : 'text-neonRed')}">
+                            ${strat.avg_profit_per_trade_dollar !== undefined ? (strat.avg_profit_per_trade_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.avg_profit_per_trade_dollar) : (strat.net_profit_1y_dollar ? '+$' + (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)).toFixed(2) : '$0.00')}
+                        </span>
+                        <span class="text-[10px] text-slate-400 block">(${strat.avg_profit_per_trade_pct !== undefined ? (strat.avg_profit_per_trade_pct >= 0 ? '+' : '') + strat.avg_profit_per_trade_pct : (strat.net_profit_1y ? (strat.net_profit_1y / Math.max(1, strat.total_trades_1y)).toFixed(3) : '0.000')}%)</span>
+                    </div>
                     <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Moonshots (>30%):</span> <span class="text-amber-400 font-extrabold text-sm">${strat.moonshots_1y} 🚀</span></div>
                 </div>
                 <div class="bg-black/40 rounded-xl p-3 border border-slate-800/80 font-mono text-xs text-slate-300">

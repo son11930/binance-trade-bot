@@ -26,7 +26,7 @@ def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Di
     trail_trig   = genome.get("gear3_trailing_trigger_pct", 0.012)
     trail_gap    = genome.get("gear3_trailing_gap_pct", 0.008)
     be_trig      = genome.get("gear4_breakeven_trigger_pct", 0.006)
-    be_buf       = genome.get("gear4_breakeven_buffer_pct", 0.001)
+    be_buf       = min(float(genome.get("gear4_breakeven_buffer_pct", 0.001)), 0.02)
     max_hold     = int(genome.get("max_hold_bars", 36))
     sma200_buf   = genome.get("sma200_buffer_pct", 0.995)
     vol_floor    = genome.get("volume_floor_mult", 0.7)
@@ -34,7 +34,7 @@ def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Di
     sl_cap       = genome.get("sl_hard_cap_pct", 0.04)
     tp_cap       = genome.get("tp_hard_cap_pct", 0.10)
     cooldown_lim = int(genome.get("cooldown_bars_after_sl", 2))
-    kelly        = genome.get("kelly_fraction_cap", 0.25)
+    kelly        = max(0.20, min(0.40, float(genome.get("kelly_fraction_cap", 0.25))))
     giant_mult   = genome.get("giant_candle_atr_mult", 2.0)
     req_green    = genome.get("require_green_candle", False)
     macro_regime = genome.get("macro_regime_filter", "sma200_only")
@@ -73,16 +73,20 @@ def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Di
                     trend_ok = True
                 not_blowoff = (h - l) <= atr * giant_mult
                 candle_ok = (c > o) if req_green else True
-                if trend_ok and not_blowoff and candle_ok and c <= bb_up_arr[i]:
+                if trend_ok and not_blowoff and candle_ok and (c <= bb_up_arr[i] or STRAT == "bollinger_squeeze_explosion"):
                     entry_ok = False
-                    if   STRAT == "rsi_sniper":          entry_ok = rsi_arr[i] < rsi_sniper or (v > vol_sma[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
-                    elif STRAT == "ema_cross":           entry_ok = ema10[i] > ema50[i] and ema10[i-1] <= ema50[i-1]
-                    elif STRAT == "supertrend_momentum": entry_ok = st_dir[i] == 1 and mfi_arr[i] > mfi_thresh
-                    elif STRAT == "ichimoku_cloud":      entry_ok = c > tenkan[i] and tenkan[i] > kijun[i] and cci_arr[i] > cci_thresh
-                    elif STRAT == "keltner_bounce":      entry_ok = l <= kelt_low[i] and c > kelt_low[i]
-                    elif STRAT == "stoch_mfi_flow":      entry_ok = stoch_k[i] < stoch_thresh and mfi_arr[i] > mfi_thresh
-                    elif STRAT == "williams_mean_rev":   entry_ok = wlr[i] < williams_thresh and rsi_arr[i] < rsi_sniper
-                    elif STRAT == "donchian_breakout":   entry_ok = c >= don_high[i-1] and adx_arr[i] > 25.0
+                    if   STRAT == "rsi_sniper":                  entry_ok = rsi_arr[i] < rsi_sniper or (v > vol_sma[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
+                    elif STRAT == "ema_cross":                   entry_ok = ema10[i] > ema50[i] and ema10[i-1] <= ema50[i-1]
+                    elif STRAT == "supertrend_momentum":         entry_ok = st_dir[i] == 1 and mfi_arr[i] > mfi_thresh
+                    elif STRAT == "ichimoku_cloud":              entry_ok = c > tenkan[i] and tenkan[i] > kijun[i] and cci_arr[i] > cci_thresh
+                    elif STRAT == "keltner_bounce":              entry_ok = l <= kelt_low[i] and c > kelt_low[i]
+                    elif STRAT == "stoch_mfi_flow":              entry_ok = stoch_k[i] < stoch_thresh and mfi_arr[i] > mfi_thresh
+                    elif STRAT == "williams_mean_rev":           entry_ok = wlr[i] < williams_thresh and rsi_arr[i] < rsi_sniper
+                    elif STRAT == "donchian_breakout":           entry_ok = c >= don_high[i-1] and adx_arr[i] > 25.0
+                    elif STRAT == "macd_momentum_surge":         entry_ok = (ema10[i] - ema50[i]) / c > 0.005 and ema10[i] > ema10[i-1] and v > vol_sma[i] * vol_mult
+                    elif STRAT == "bollinger_squeeze_explosion": entry_ok = c > bb_up_arr[i] and adx_arr[i] > adx_thresh and (atr / c) < 0.03
+                    elif STRAT == "parabolic_sar_vortex":        entry_ok = st_dir[i] == 1 and tenkan[i] > kijun[i] and mfi_arr[i] > mfi_thresh and rsi_arr[i] > 50.0
+                    elif STRAT == "fibonacci_golden_pullback":   entry_ok = c > sma200_arr[i] and don_high[i-1] > 0 and (don_high[i-1] - c) / don_high[i-1] >= 0.02 and (don_high[i-1] - c) / don_high[i-1] <= 0.08 and rsi_arr[i] < 45.0
                     if entry_ok:
                         in_pos = True; entry_p = c
                         sl_p = max(c - atr * sl_atr, c * (1 - sl_cap))
@@ -90,25 +94,27 @@ def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Di
                         bars_in_trade = 0
         elif in_pos:
             bars_in_trade += 1
-            cur_gain = (max(h, c) - entry_p) / entry_p
             cur_close = (c - entry_p) / entry_p
-            if cur_gain >= be_trig:  sl_p = max(sl_p, entry_p * (1 + be_buf))
-            if cur_gain >= trail_trig: sl_p = max(sl_p, c * (1 - trail_gap))
-            if cur_gain >= moonshot_trig: sl_p = max(sl_p, c * (1 - moonshot_gap))
             exited = False; pnl = 0.0
             if l <= sl_p:
-                pnl = (sl_p - entry_p) / entry_p; balance *= 1 + pnl * kelly * 4
+                pnl = ((sl_p - entry_p) / entry_p) - 0.0015; balance *= 1 + pnl * kelly * 4
                 if pnl > 0: wins += 1
                 total_trades += 1; in_pos = False; bars_in_trade = 0; cooldown = cooldown_lim; exited = True
             elif h >= tp_p:
-                pnl = (tp_p - entry_p) / entry_p; balance *= 1 + pnl * kelly * 4
-                wins += 1; total_trades += 1; in_pos = False; bars_in_trade = 0; exited = True
+                pnl = ((tp_p - entry_p) / entry_p) - 0.0015; balance *= 1 + pnl * kelly * 4
+                if pnl > 0: wins += 1
+                total_trades += 1; in_pos = False; bars_in_trade = 0; exited = True
             elif bars_in_trade >= max_hold:
-                pnl = cur_close; balance *= 1 + pnl * kelly * 4
+                pnl = cur_close - 0.0015; balance *= 1 + pnl * kelly * 4
                 if pnl > 0: wins += 1
                 total_trades += 1; in_pos = False; bars_in_trade = 0; exited = True
             if not exited:
+                cur_gain = (max(h, c) - entry_p) / entry_p
+                if cur_gain >= be_trig:  sl_p = max(sl_p, entry_p * (1 + be_buf))
+                if cur_gain >= trail_trig: sl_p = max(sl_p, c * (1 - trail_gap))
+                if cur_gain >= moonshot_trig: sl_p = max(sl_p, c * (1 - moonshot_gap))
                 sl_p = max(sl_p, c - atr * sl_atr)
+                sl_p = min(sl_p, c)  # ABSOLUTE SAFETY: Stop Loss can NEVER exceed current close price!
         if balance > peak_balance: peak_balance = balance
         dd = (peak_balance - balance) / peak_balance if peak_balance > 0 else 0
         if dd > max_dd: max_dd = dd

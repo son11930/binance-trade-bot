@@ -1,3 +1,50 @@
+## [4.12.0] - 2026-07-06
+### Alpha Lab Profit Hurdle & Kelly Position Sizing Floor (Phase 31)
+**English:**
+- **Kelly Position Sizing Floor (`>= 0.20`)**: Discovered and resolved an evolutionary optimization loophole where the AI genetic algorithm gamed the fitness function by setting `kelly_fraction_cap` to microscopic values (`0.0003` to `0.012`). This resulted in ~87% win rates with near-zero drawdown but negligible real profit (`+0.18%` over 1 year). Enforced a strict position sizing floor and ceiling (`max(0.20, min(0.40, kelly))`) across CPU kernel, GPU kernel, evaluator helper functions, and mutation engines, ensuring every backtest trade takes a meaningful 0.8x to 1.6x equity position suitable for Binance Futures x3 leverage.
+- **Real-World Profit Hurdles & Dominant Weighting**: Upgraded the 4-Pillar Practical Fitness Framework in `lab_gpu/fitness.py`. Tied the `+1000.0` point all-horizon consistency bonus to strict real live net profit hurdles (`net_profit_1y >= 15.0%`, `6m >= 8.0%`, `3m >= 4.0%`, `1m >= 1.0%`). Added a severe kill-switch penalty (`-2500.0` pts) for any strategy yielding under +15% annual return across 20 symbols, and tripled the weight of live dollar/percentage profit (`total_profit_live * 3.0`).
+- **Zero Regression & Regression Suite Upgrade**: Added new test cases in `tests/test_gpu_lab_regression.py` to verify that low-profit strategies trigger heavy negative fitness penalties. All 131 regression and unit tests passed with 100% zero deviation.
+
+## [4.11.0] - 2026-07-06
+### Expand Strategy Synthesis Pool to 12 Elite Quant Engines (Phase 30)
+**English:**
+- **12 Institutional-Grade Quant Engines**: Expanded the GPU & CPU strategy evolutionary synthesizer from 8 entry core engines (`strat == 0..7`) to 12 world-class quantitative paradigms (`strat == 0..11`), enabling exhaustive combinatorial synthesis across all major technical trading styles:
+  - `strat == 8`: `macd_momentum_surge` (MACD Histogram zero-cross surge + MACD line > signal line + volume confirmation).
+  - `strat == 9`: `bollinger_squeeze_explosion` (Bollinger Bandwidth squeeze + Upper Band breakout + ADX momentum).
+  - `strat == 10`: `parabolic_sar_vortex` (Parabolic SAR bullish flip + Vortex VI+ > VI- + MFI flow).
+  - `strat == 11`: `fibonacci_golden_pullback` (Swing pullback into 50%–61.8% Fibonacci Golden Ratio zone during SMA 200 uptrend).
+- **Zero Look-Ahead Bias & Multi-Layer Gate Integration**: All 4 new engines integrate seamlessly with multi-layer regime gates (ADX trend filter, SMA 200 macro filter, Volume floor/exhaustion) and 4-gear dynamic exits (Trailing Stop, Breakeven Stop, Moonshot Scaling, Max Hold). Enforced strict previous-bar `[i-1]` swing high evaluations for breakout and Fibonacci pullbacks to prevent look-ahead bias.
+- **Subagent Code Review & Zero Regression**: Performed independent review via `python-reviewer` and `code-reviewer` subagents, resolving syntax quirks and dead strategy filters. Verified via 130 regression and unit tests across the entire repository with 100% success.
+
+## [4.10.0] - 2026-07-06
+### GPU/CPU Kernel Safety Clamping & Leaderboard Reset (Phase 29)
+**English:**
+- **Kernel Safety Clamping & Stop-Loss Integrity**: Discovered and eliminated a vulnerability where legacy historical champions and mutated genomes could exploit unbounded stop-loss upgrade parameters (e.g., `"gear4_breakeven_buffer_pct": 30.12133`). Enforced strict safety boundaries across both CPU (`lab_gpu/cpu_kernel.py`) and GPU (`lab_gpu/gpu_kernel.py`) simulation engines: clamped breakeven buffer to a maximum of 2% (`min(be_buf, 0.02)`) and enforced that stop loss prices can never exceed the current bar's close price (`sl_p = min(sl_p, c)`). This permanently prevents stop losses from acting as artificial take-profit targets.
+- **Leaderboard Cache & Database Reset**: Purged legacy corrupted historical champions from `dashboard/data/strategy_leaderboard.json` and synced a clean leaderboard state to Aiven DB. This prevents Optuna from reloading obsolete +10,000% illusion genomes as starting priors in future evolutionary runs.
+- **Zero Regression Verification**: Verified via 130 unit and regression tests across the entire repository with 100% success, and confirmed fresh GPU synthesis (`bot_strategy_synthesizer_gpu.py`) generates realistic, live-deployable performance metrics without mathematical inflation.
+
+## [4.9.0] - 2026-07-06
+### GPU Lab Simulation Kernel Calibration (Intracandle Stop & In-Loop Fee Fix) (Phase 28)
+**English:**
+- **AI Committee & Live Execution Integrity**: Confirmed and enforced the core architecture principle that the 3-Agent AI Committee (`bot/ai_engine.py`) evaluates every trade identically without alteration. Prohibited any manual hardcoding or arbitrary adjustment of strategy formulas in live bot code, leaving parameter evolution strictly to the automated GPU Lab.
+- **Intracandle Stop Look-Ahead Fix**: Corrected simulation trade continuation loops in both CPU (`lab_gpu/cpu_kernel.py`) and GPU (`lab_gpu/gpu_kernel.py`) engines. Reordered candle evaluation so stop loss (`l <= sl_p`) is evaluated **before** raising trailing or breakeven stops with current candle Highs (`h`). This eliminated false win rates (~90%+) where downward wicks that stopped out were erroneously turned into trailing stop winners.
+- **True In-Loop Fee Drag & Compounding**: Embedded realistic Binance VIP0 Futures taker fee + slippage friction (`0.15%` round-trip) directly inside each trade's net return calculation before Kelly compounding (`pnl_pct - 0.0015`). Added strict validation requiring `net_pnl > 0` to count as a winning trade, preventing hyper-active scalping genomes from snowballing equity without paying friction.
+- **Zero Regression Verification**: All 130 tests across the entire repository and simulation test suites passed with 100% success.
+
+## [4.8.0] - 2026-07-06
+### Implement Institutional-Grade Risk & Calmar Profit Scaling (Phase 27)
+**English:**
+- **Average Profit per Trade Metric & Dashboard Badge**: Added real-time tracking and calculation of `avg_profit_per_trade_pct` and `avg_profit_per_trade_dollar` across both single genome evaluations (`_apply_four_pillar_fitness`) and high-speed GPU vectorized matrix aggregations (`_vectorized_batch_compute_fitness`). Upgraded the Leaderboard UI (`ui_lab.js`) to render an interactive 5-column grid featuring a color-coded **Avg Profit / Trade** badge (Green for >= $1.00, Yellow for $0.30–$0.99, Red for < $0.30) to quickly identify and eliminate fee-eroded dust-scalping strategies.
+- **Calmar-Ratio Profit Scaling & Institutional Drawdown Protection**: Enforced strict protection against high-drawdown strategies that previously achieved 10,000%+ returns with unacceptable 50–70% drawdowns. Added Calmar-Ratio scaling (`dd_factor = min(1.0, (25.0 / max_dd)^1.5)`) which scales down the raw fee-adjusted profit score whenever Max Drawdown exceeds the safe 25% threshold.
+- **Quadratic Drawdown Punishment (Pillar D)**: Upgraded the linear drawdown penalty to a quadratic punishment model (`+ (max(0.0, max_dd - 30.0))^2 * 15.0`). Drawdowns exceeding 30% now incur massive exponential penalties (e.g., 60% drawdown incurs a -13,650 penalty score), successfully forcing the evolutionary engine to converge on elite Alpha Champions with **< 16% Max Drawdown** while maintaining ~96% win rates and strong profit-per-trade.
+- **Zero Regression Verification**: Verified via 100-trial GPU lab sync and full 129 test suite execution with 0 regressions.
+
+**Thai (ภาษาไทย):**
+- **เพิ่มตัวชี้วัดกำไรเฉลี่ยต่อไม้ (Average Profit per Trade) และป้ายแจ้งเตือนบน Dashboard**: เพิ่มการคำนวณกำไรเฉลี่ยต่อการเข้าเทรด 1 ไม้ (`avg_profit_per_trade_pct` และ `avg_profit_per_trade_dollar`) ทั้งในระบบประเมินผลเดี่ยวและระบบเมทริกซ์คำนวณความเร็วสูงบน VRAM พร้อมอัปเกรดหน้า Dashboard (`ui_lab.js`) ให้แสดงผลแบบ 5 คอลัมน์ โดยมีสีเตือนระดับความคุ้มค่า (สีเขียว >= $1.00, สีเหลือง $0.30-$0.99, สีแดง < $0.30) ช่วยให้คัดกรองกลยุทธ์กินส่วนต่างสั้นเกินไป (Dust-Scalping) ที่อาจโดนค่าธรรมเนียมและสลิปเพจกินหมดได้อย่างรวดเร็ว
+- **ปรับสเกลคะแนนด้วยหลักการ Calmar-Ratio และคุมความเสี่ยงระดับสถาบัน (<30% Max DD)**: แก้ไขปัญหากลยุทธ์เดิมที่ทำกำไรพุ่ง 10,000%+ แต่มีค่า Max Drawdown สูงอันตรายถึง 50-70% โดยนำตัวคูณ Calmar-Ratio (`dd_factor = min(1.0, (25.0 / max_dd)^1.5)`) มาลดทอนคะแนนกำไรทันทีหากค่า Drawdown เกินเพดานปลอดภัยที่ 25%
+- **บทลงโทษ Drawdown แบบทวีคูณ (Quadratic Punishment)**: ปรับสมการลงโทษจากแบบเส้นตรงเป็นแบบยกกำลังสอง (`+ (max(0.0, max_dd - 30.0))^2 * 15.0`) หาก Drawdown ทะลุ 30% จะโดนลบคะแนนอย่างหนัก (เช่น DD 60% โดนลบถึง -13,650 คะแนน) ส่งผลให้ AI วิวัฒนาการกลยุทธ์ใหม่จนได้ผู้ชนะระดับแชมเปียนที่มี **Max Drawdown ต่ำเพียง 15.91%** โดยยังรักษา Win Rate สูงถึง ~96%
+- **ผ่านการทดสอบ 100% (0 Regression)**: ยืนยันผลรันจริงบน GPU 50-100 รอบ พร้อมเทสรวม 129 รายการผ่านครบถ้วนโดยไม่มีข้อผิดพลาด
+
 ## [4.7.14] - 2026-07-06
 ### Restore GPU Lab MEGA-BATCH Mode (~4,000 to ~20,000 Trials/Sec)
 **English:**

@@ -71,7 +71,7 @@ if GPU_AVAILABLE and _cuda_jit:
         trail_trig = g_trail_trig[genome_idx]
         trail_gap = g_trail_gap[genome_idx]
         be_trig = g_be_trig[genome_idx]
-        be_buf = g_be_buf[genome_idx]
+        be_buf = g_be_buf[genome_idx] if g_be_buf[genome_idx] < 0.02 else 0.02
         max_hold = int(g_max_hold[genome_idx])
         sma200_buf = g_sma200_buf[genome_idx]
         vol_floor = g_vol_floor[genome_idx]
@@ -127,7 +127,7 @@ if GPU_AVAILABLE and _cuda_jit:
                     if req_green:
                         candle_ok = c > o
 
-                    if trend_ok and is_not_blowoff and candle_ok and c <= bb_up_arr[i]:
+                    if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up_arr[i] or strat == 9):
                         entry_ok = False
                         if strat == 0:
                             entry_ok = (rsi_arr[i] < rsi_sniper) or (v > vol_sma_arr[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
@@ -145,6 +145,14 @@ if GPU_AVAILABLE and _cuda_jit:
                             entry_ok = (williams_arr[i] < williams_thresh and rsi_arr[i] < rsi_sniper)
                         elif strat == 7:
                             entry_ok = (c >= donchian_high_arr[i - 1] and adx_arr[i] > 25.0)
+                        elif strat == 8:
+                            entry_ok = ((ema10_arr[i] - ema50_arr[i]) / c > 0.005 and ema10_arr[i] > ema10_arr[i - 1] and v > vol_sma_arr[i] * vol_mult)
+                        elif strat == 9:
+                            entry_ok = (c > bb_up_arr[i] and adx_arr[i] > adx_thresh and (atr / c) < 0.03)
+                        elif strat == 10:
+                            entry_ok = (st_dir_arr[i] == 1 and tenkan_arr[i] > kijun_arr[i] and mfi_arr[i] > mfi_thresh and rsi_arr[i] > 50.0)
+                        elif strat == 11:
+                            entry_ok = (c > sma200_arr[i] and donchian_high_arr[i - 1] > 0.0 and (donchian_high_arr[i - 1] - c) / donchian_high_arr[i - 1] >= 0.02 and (donchian_high_arr[i - 1] - c) / donchian_high_arr[i - 1] <= 0.08 and rsi_arr[i] < 45.0)
 
                         if entry_ok:
                             in_pos = True
@@ -158,26 +166,12 @@ if GPU_AVAILABLE and _cuda_jit:
                             bars_in_trade = 0
             elif in_pos:
                 bars_in_trade += 1
-                cur_gain_pct = (h - entry_p) / entry_p
                 cur_close_pct = (c - entry_p) / entry_p
-
-                if cur_gain_pct >= be_trig:
-                    be_sl = entry_p * (1.0 + be_buf)
-                    if be_sl > sl_p:
-                        sl_p = be_sl
-                if cur_gain_pct >= trail_trig:
-                    trail_sl = c * (1.0 - trail_gap)
-                    if trail_sl > sl_p:
-                        sl_p = trail_sl
-                if cur_gain_pct >= moonshot_trig:
-                    moon_sl = c * (1.0 - moonshot_gap)
-                    if moon_sl > sl_p:
-                        sl_p = moon_sl
 
                 exited = False
                 pnl_pct = 0.0
                 if l <= sl_p:
-                    pnl_pct = (sl_p - entry_p) / entry_p
+                    pnl_pct = ((sl_p - entry_p) / entry_p) - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
                     if pnl_pct > 0.0:
                         wins += 1
@@ -188,17 +182,18 @@ if GPU_AVAILABLE and _cuda_jit:
                     exited = True
                 elif h >= tp_p:
                     tp_val = tp_p if tp_p > c else c
-                    pnl_pct = (tp_val - entry_p) / entry_p
+                    pnl_pct = ((tp_val - entry_p) / entry_p) - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
-                    wins += 1
+                    if pnl_pct > 0.0:
+                        wins += 1
                     total_trades += 1
                     in_pos = False
                     bars_in_trade = 0
                     exited = True
                 elif bars_in_trade >= max_hold:
-                    pnl_pct = cur_close_pct
+                    pnl_pct = cur_close_pct - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
-                    if pnl_pct > 0:
+                    if pnl_pct > 0.0:
                         wins += 1
                     total_trades += 1
                     in_pos = False
@@ -209,9 +204,24 @@ if GPU_AVAILABLE and _cuda_jit:
                     balance = 1e10
 
                 if not exited:
+                    cur_gain_pct = (h - entry_p) / entry_p
+                    if cur_gain_pct >= be_trig:
+                        be_sl = entry_p * (1.0 + be_buf)
+                        if be_sl > sl_p:
+                            sl_p = be_sl
+                    if cur_gain_pct >= trail_trig:
+                        trail_sl = c * (1.0 - trail_gap)
+                        if trail_sl > sl_p:
+                            sl_p = trail_sl
+                    if cur_gain_pct >= moonshot_trig:
+                        moon_sl = c * (1.0 - moonshot_gap)
+                        if moon_sl > sl_p:
+                            sl_p = moon_sl
                     trailing_sl = c - (atr * sl_atr)
                     if trailing_sl > sl_p:
                         sl_p = trailing_sl
+                    if sl_p > c:
+                        sl_p = c  # ABSOLUTE SAFETY: Stop Loss can NEVER exceed current close price!
 
             if balance > peak_balance:
                 peak_balance = balance
@@ -273,7 +283,7 @@ if GPU_AVAILABLE and _cuda_jit:
         trail_trig      = genome_params[g_idx, 11]
         trail_gap       = genome_params[g_idx, 12]
         be_trig         = genome_params[g_idx, 13]
-        be_buf          = genome_params[g_idx, 14]
+        be_buf          = genome_params[g_idx, 14] if genome_params[g_idx, 14] < 0.02 else 0.02
         max_hold        = int(genome_params[g_idx, 15])
         sma200_buf      = genome_params[g_idx, 16]
         vol_floor       = genome_params[g_idx, 17]
@@ -356,7 +366,7 @@ if GPU_AVAILABLE and _cuda_jit:
                     if req_green:
                         candle_ok = c > o
 
-                    if trend_ok and is_not_blowoff and candle_ok and c <= bb_up:
+                    if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up or strat == 9):
                         entry_ok = False
                         if strat == 0:
                             entry_ok = (rsi < rsi_sniper) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
@@ -374,6 +384,14 @@ if GPU_AVAILABLE and _cuda_jit:
                             entry_ok = (williams < williams_thresh and rsi < rsi_sniper)
                         elif strat == 7:
                             entry_ok = (c >= donchian_high_prev and adx > 25.0)
+                        elif strat == 8:
+                            entry_ok = ((ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult)
+                        elif strat == 9:
+                            entry_ok = (c > bb_up and adx > adx_thresh and (atr / c) < 0.03)
+                        elif strat == 10:
+                            entry_ok = (st_dir == 1 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0)
+                        elif strat == 11:
+                            entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= 0.02 and (donchian_high_prev - c) / donchian_high_prev <= 0.08 and rsi < 45.0)
 
                         if entry_ok:
                             in_pos = True
@@ -387,26 +405,12 @@ if GPU_AVAILABLE and _cuda_jit:
                             bars_in_trade = 0
             elif in_pos:
                 bars_in_trade += 1
-                cur_gain_pct = (h - entry_p) / entry_p
                 cur_close_pct = (c - entry_p) / entry_p
-
-                if cur_gain_pct >= be_trig:
-                    be_sl = entry_p * (1.0 + be_buf)
-                    if be_sl > sl_p:
-                        sl_p = be_sl
-                if cur_gain_pct >= trail_trig:
-                    trail_sl = c * (1.0 - trail_gap)
-                    if trail_sl > sl_p:
-                        sl_p = trail_sl
-                if cur_gain_pct >= moonshot_trig:
-                    moon_sl = c * (1.0 - moonshot_gap)
-                    if moon_sl > sl_p:
-                        sl_p = moon_sl
 
                 exited = False
                 pnl_pct = 0.0
                 if l <= sl_p:
-                    pnl_pct = (sl_p - entry_p) / entry_p
+                    pnl_pct = ((sl_p - entry_p) / entry_p) - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
                     if pnl_pct > 0.0:
                         wins += 1
@@ -417,17 +421,18 @@ if GPU_AVAILABLE and _cuda_jit:
                     exited = True
                 elif h >= tp_p:
                     tp_val = tp_p if tp_p > c else c
-                    pnl_pct = (tp_val - entry_p) / entry_p
+                    pnl_pct = ((tp_val - entry_p) / entry_p) - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
-                    wins += 1
+                    if pnl_pct > 0.0:
+                        wins += 1
                     total_trades += 1
                     in_pos = False
                     bars_in_trade = 0
                     exited = True
                 elif bars_in_trade >= max_hold:
-                    pnl_pct = cur_close_pct
+                    pnl_pct = cur_close_pct - 0.0015
                     balance *= (1.0 + (pnl_pct * kelly * 4.0))
-                    if pnl_pct > 0:
+                    if pnl_pct > 0.0:
                         wins += 1
                     total_trades += 1
                     in_pos = False
@@ -438,9 +443,24 @@ if GPU_AVAILABLE and _cuda_jit:
                     balance = 1e10
 
                 if not exited:
+                    cur_gain_pct = (h - entry_p) / entry_p
+                    if cur_gain_pct >= be_trig:
+                        be_sl = entry_p * (1.0 + be_buf)
+                        if be_sl > sl_p:
+                            sl_p = be_sl
+                    if cur_gain_pct >= trail_trig:
+                        trail_sl = c * (1.0 - trail_gap)
+                        if trail_sl > sl_p:
+                            sl_p = trail_sl
+                    if cur_gain_pct >= moonshot_trig:
+                        moon_sl = c * (1.0 - moonshot_gap)
+                        if moon_sl > sl_p:
+                            sl_p = moon_sl
                     trailing_sl = c - (atr * sl_atr)
                     if trailing_sl > sl_p:
                         sl_p = trailing_sl
+                    if sl_p > c:
+                        sl_p = c  # ABSOLUTE SAFETY: Stop Loss can NEVER exceed current close price!
 
             if balance > peak_balance:
                 peak_balance = balance

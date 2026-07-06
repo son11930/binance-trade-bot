@@ -274,6 +274,70 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
 - **Verification Plan**:
   - Update unit regression tests (`tests/test_gpu_lab_regression.py`) with the new mathematical formulas.
   - Run benchmark test (`python bot_strategy_synthesizer_gpu.py 100`) to confirm evolved Top 10 Alpha Blueprints exhibit significantly lower Max Drawdowns (< 30%) and high Average Profit per Trade.
-- **Status**: Planned (Pending User Review & Approval).
+- **Status**: Completed.
+
+## Phase 28: GPU Lab Simulation Kernel Calibration (Intracandle Stop & In-Loop Fee Fix)
+- **Objective**: Honor the user's core architecture principles: (1) **The 3-Agent AI Committee evaluates EVERY trade exactly as before without modification**, and (2) **We do NOT randomly adjust or hardcode trading strategy formulas manually**—the GPU Lab exists specifically to evolve and discover optimal parameters automatically! Eliminate the mathematical illusion in backtested win rates (~90%+) and returns (>10,000%) by correcting two critical simulation bugs inside `lab_gpu/gpu_kernel.py` and `cpu_kernel.py`. Once the lab's simulation engine is 100% mathematically realistic, Optuna will automatically evolve blueprints that are genuinely profitable under live 3x leverage without false assumptions.
+- **Key Algorithmic Upgrades in Lab Kernel (`lab_gpu/gpu_kernel.py` & `cpu_kernel.py`)**:
+  1. **Intracandle Stop Look-Ahead Fix**:
+     - In the simulation continuation loop, reorder the evaluation sequence: check if candle Low (`l`) hits the existing stop loss (`sl_p`) **before** upgrading the stop loss using the current bar's High (`h`) or Close (`c`).
+     - Previously, checking High first allowed the simulator to raise stop losses to breakeven/trailing before checking Low, artificially turning losing trades into trailing-stop winners and inflating backtest win rates to 90%+.
+  2. **True In-Loop Fee Drag & Compounding**:
+     - Deduct realistic Binance VIP0 Futures taker fee + slippage friction (`0.15%` round-trip) directly inside each trade's net return calculation before applying Kelly exponential compounding (`balance *= (1.0 + (pnl_pct_net * kelly * 4.0))`).
+     - Previously, omitting fee deduction from inside the compounding loop allowed hyper-active scalping genomes to snowball equity exponentially without paying friction, fooling Optuna into ranking high-fee genomes as champions.
+- **Verification Plan**:
+  - Update unit regression suite (`tests/test_gpu_lab_regression.py`) to verify in-loop fee drag and correct stop-loss evaluation order.
+  - Run GPU lab synthesis (`python bot_strategy_synthesizer_gpu.py 50`) to confirm that evolved Top 10 Alpha Blueprints reflect realistic, live-deployable win rates and ROI without mathematical inflation.
+- **Status**: Completed.
+
+---
+
+### Phase 29: GPU/CPU Kernel Safety Clamping & Leaderboard Reset
+- **Objective**: Prevent historical or mutated genomes from exploiting unbounded stop-loss upgrade parameters (such as `"gear4_breakeven_buffer_pct": 30.12133`), which previously set stop loss prices above entry by 3,000%+ ($93,000 on a $3,000 asset) and produced artificial 10,000%+ returns on the dashboard.
+- **Key Algorithmic Upgrades**:
+  1. **Kernel Safety Clamping**:
+     - In `lab_gpu/cpu_kernel.py` and `lab_gpu/gpu_kernel.py` (`_backtest_kernel` and `_mega_backtest_kernel`), enforce strict safety limits when setting or upgrading stop loss prices: clamp `be_buf = min(be_buf, 0.02)` (maximum 2% breakeven buffer above entry) and enforce `sl_p = min(sl_p, c)` (or `if sl_p > c: sl_p = c`), ensuring a stop loss can never exceed the current market price.
+  2. **Leaderboard & Database Cache Reset**:
+     - Clear legacy corrupted historical champions from `dashboard/data/strategy_leaderboard.json` and sync a fresh leaderboard state to Aiven DB so Optuna does not re-enqueue obsolete +10,000% illusion genomes.
+- **Verification Plan**:
+  - Run regression test suite (`python -m pytest tests/test_gpu_lab_regression.py -v`).
+  - Run full repository test suite (`python -m pytest tests/ -v`).
+  - Run GPU lab synthesis (`python bot_strategy_synthesizer_gpu.py 50`) starting from a clean slate to verify realistic, live-deployable performance numbers on the dashboard.
+- **Status**: Completed.
+
+---
+
+### Phase 30: Expand Strategy Synthesis Pool to 12 Elite Quant Engines
+- **Objective**: Expand the GPU strategy evolutionary synthesizer from 8 entry core engines (`strat == 0..7`) to 12 institutional-grade quantitative engines (`strat == 0..11`), enabling exhaustive combinatorial synthesis across all major technical trading paradigms.
+- **Key Algorithmic Upgrades**:
+  1. **Add 4 New Institutional Trading Engines**:
+     - `strat == 8`: `macd_momentum_surge` (MACD Histogram zero-cross surge + MACD line > signal line + volume confirmation).
+     - `strat == 9`: `bollinger_squeeze_explosion` (Bollinger Bandwidth squeeze + Upper Band breakout + ADX momentum).
+     - `strat == 10`: `parabolic_sar_vortex` (Parabolic SAR bullish flip + Vortex VI+ > VI- + MFI flow).
+     - `strat == 11`: `fibonacci_golden_pullback` (Swing pullback into 50%–61.8% Fibonacci Golden Ratio zone during SMA 200 uptrend).
+  2. **Data & Indicator Pipeline Integration**:
+     - Update `bot/bot_strategy_synthesizer.py` (`calculate_all_indicators`) and `lab_gpu/data_loader.py` to compute and supply required arrays (MACD histogram, Bollinger upper/bandwidth, SAR, Vortex VI+/VI-, Fibonacci 20-bar swing levels) to VRAM float32 matrices.
+  3. **Kernel Evolution & Strategy Synthesis**:
+     - Extend `_backtest_kernel`, `_mega_backtest_kernel`, and `cpu_kernel.py` to evaluate strategies 0 through 11, combining them with multi-layer regime filters and 4-gear dynamic exits.
+- **Verification Plan**:
+  - Verify indicator array computation and matrix packing.
+  - Run regression test suite (`python -m pytest tests/test_gpu_lab_regression.py -v`).
+  - Run full repository test suite (`python -m pytest tests/ -v`).
+- **Status**: Completed.
+
+---
+
+### Phase 31: Alpha Lab Profit Hurdle & Kelly Position Sizing Floor
+- **Objective**: Eradicate an evolutionary optimization loophole where the genetic algorithm games win rate (~87%) and consistency bonuses by setting microscopic `kelly_fraction_cap` values (`0.0003` to `0.012`), yielding negligible real profit (`+0.18%` over 1 year). Enforce institutional position sizing floors and strict live profit hurdles.
+- **Key Algorithmic Upgrades**:
+  1. **Kelly Position Sizing Floor (`>= 0.20`)**:
+     - Clamp `kelly_fraction_cap` between `0.20` and `0.40` across CPU kernel (`lab_gpu/cpu_kernel.py`), GPU kernel helper functions (`lab_gpu/evaluator.py`), and evolutionary mutation operators (`lab_gpu/evolution_engine.py`). Ensures every trade allocates 0.8x to 1.6x equity, maximizing returns under Binance Futures x3 leverage.
+  2. **Real-World Profit Hurdles & Dominant Weighting**:
+     - Upgrade `lab_gpu/fitness.py` (`_apply_four_pillar_fitness` and `_vectorized_batch_compute_fitness`). Tie the `+1000.0` point all-horizon consistency bonus to strict net profit hurdles (`net_profit_1y >= 15.0%`, `6m >= 8.0%`, `3m >= 4.0%`, `1m >= 1.0%`).
+     - Introduce a severe kill-switch penalty (`-2500.0` pts) for any strategy yielding under +15% annual return across 20 symbols, and triple the weight of live net profit (`total_profit_live * 3.0`).
+- **Verification Plan**:
+  - Add regression test cases for low-profit penalties in `tests/test_gpu_lab_regression.py`.
+  - Verify 100% test suite pass rate (`python -m pytest tests/test_gpu_lab_regression.py -v`).
+- **Status**: Completed.
 
 

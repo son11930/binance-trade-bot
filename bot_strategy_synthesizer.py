@@ -226,7 +226,7 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                 is_not_blowoff = (h - l) <= (atr * giant_mult)
                 candle_color_ok = (c > o) if req_green else True
                 
-                if trend_ok and is_not_blowoff and candle_color_ok and c <= bb_up_arr[i] * bb_up_buf:
+                if trend_ok and is_not_blowoff and candle_color_ok and (c <= bb_up_arr[i] * bb_up_buf or strategy_type == "bollinger_squeeze_explosion"):
                     entry_ok = False
                     if strategy_type == "rsi_sniper":
                         entry_ok = (rsi_arr[i] < rsi_sniper) or (v > vol_sma_arr[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
@@ -244,6 +244,14 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                         entry_ok = (williams_arr[i] < williams_thresh and rsi_arr[i] < rsi_sniper)
                     elif strategy_type == "donchian_breakout":
                         entry_ok = (c >= donchian_high_arr[i - 1] and adx_arr[i] > 25.0)
+                    elif strategy_type == "macd_momentum_surge":
+                        entry_ok = ((ema10_arr[i] - ema50_arr[i]) / c > 0.005 and ema10_arr[i] > ema10_arr[i - 1] and v > vol_sma_arr[i] * vol_mult)
+                    elif strategy_type == "bollinger_squeeze_explosion":
+                        entry_ok = (c > bb_up_arr[i] and adx_arr[i] > adx_thresh and (atr / c) < 0.03)
+                    elif strategy_type == "parabolic_sar_vortex":
+                        entry_ok = (st_dir_arr[i] == 1 and tenkan_arr[i] > kijun_arr[i] and mfi_arr[i] > mfi_thresh and rsi_arr[i] > 50.0)
+                    elif strategy_type == "fibonacci_golden_pullback":
+                        entry_ok = (c > sma200_arr[i] and donchian_high_arr[i - 1] > 0.0 and (donchian_high_arr[i - 1] - c) / donchian_high_arr[i - 1] >= 0.02 and (donchian_high_arr[i - 1] - c) / donchian_high_arr[i - 1] <= 0.08 and rsi_arr[i] < 45.0)
                         
                     if entry_ok:
                         in_pos = True
@@ -289,6 +297,10 @@ def simulate_strategy_genome(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[s
                  (strategy_type == "stoch_mfi_flow" and stoch_k_arr[i] >= stoch_k_thresh) or \
                  (strategy_type == "williams_mean_rev" and williams_arr[i] >= -20.0) or \
                  (strategy_type == "donchian_breakout" and c < sma50_arr[i]) or \
+                 (strategy_type == "macd_momentum_surge" and ema10_arr[i] < ema50_arr[i]) or \
+                 (strategy_type == "bollinger_squeeze_explosion" and c < sma50_arr[i]) or \
+                 (strategy_type == "parabolic_sar_vortex" and st_dir_arr[i] == -1) or \
+                 (strategy_type == "fibonacci_golden_pullback" and rsi_arr[i] >= rsi_rev_exit) or \
                  (bars_in_trade >= max_hold_bars) or \
                  (v < vol_sma_arr[i] * vol_exh_mult and cur_close_pct > 0):
                 win_pct = cur_close_pct
@@ -638,7 +650,7 @@ def run_synthesizer_lab(n_trials: int = 30) -> List[Dict[str, Any]]:
             nonlocal best_so_far_score, best_so_far_name
             cur_session_step = max(1, (trial.number - session_start_trial_id) + 1)
             genome = {
-                "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce", "stoch_mfi_flow", "williams_mean_rev", "donchian_breakout"]),
+                "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichimoku_cloud", "keltner_bounce", "stoch_mfi_flow", "williams_mean_rev", "donchian_breakout", "macd_momentum_surge", "bollinger_squeeze_explosion", "parabolic_sar_vortex", "fibonacci_golden_pullback"]),
                 "adx_trend_thresh": trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
                 "use_dual_trend": trial.suggest_categorical("use_dual_trend", [True, False]),
                 "vol_surge_mult": trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),

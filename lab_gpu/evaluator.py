@@ -59,6 +59,8 @@ def _batch_gpu_backtest(
     original_order = [p[1] for p in sorted_pairs]
 
     def g(key, default=0.0):
+        if key == "kelly_fraction_cap":
+            return np.array([max(0.20, min(0.40, float(gn.get(key, default)))) for gn in genome_batch_sorted], dtype=np.float32)
         return np.array([float(gn.get(key, default)) for gn in genome_batch_sorted], dtype=np.float32)
 
     is_device = _use_preloaded or hasattr(df_arrays["close"], "copy_to_host")

@@ -26,7 +26,7 @@ except ImportError:
 
 def _build_genome_from_trial(trial) -> Dict[str, Any]:
     return {
-        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper","ema_cross","supertrend_momentum","ichimoku_cloud","keltner_bounce","stoch_mfi_flow","williams_mean_rev","donchian_breakout"]),
+        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper","ema_cross","supertrend_momentum","ichimoku_cloud","keltner_bounce","stoch_mfi_flow","williams_mean_rev","donchian_breakout","macd_momentum_surge","bollinger_squeeze_explosion","parabolic_sar_vortex","fibonacci_golden_pullback"]),
         "adx_trend_thresh":   trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
         "use_dual_trend":     trial.suggest_categorical("use_dual_trend", [True, False]),
         "vol_surge_mult":     trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),
@@ -232,7 +232,15 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                         mutant = parent.copy()
                         for k in float_keys:
                             if random.random() < 0.15:
-                                mutant[k] = round(parent[k] * random.uniform(0.85, 1.15), 5)
+                                val = parent[k] * random.uniform(0.85, 1.15)
+                                if k == "kelly_fraction_cap":
+                                    val = max(0.20, min(0.40, val))
+                                elif "thresh" in k or "rsi" in k or "stoch" in k or "mfi" in k:
+                                    if "williams" in k or "cci" in k:
+                                        val = max(-300.0, min(300.0, val))
+                                    else:
+                                        val = max(5.0, min(95.0, val))
+                                mutant[k] = round(val, 5)
                         for k in int_keys:
                             if random.random() < 0.15:
                                 mutant[k] = max(1, int(parent[k] * random.uniform(0.85, 1.15)))

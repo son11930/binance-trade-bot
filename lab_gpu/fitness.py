@@ -12,8 +12,19 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
     
     total_trades_1y = res.get("total_trades_1y", 0)
     win_rate = res.get("win_rate_1y", 0.0)
+    max_dd = res.get("max_dd", 0.0)
     
-    # ── 1. Real-World Fee & Slippage Drag (0.10% per trade round-trip) ──
+    # ── 0. Average Profit per Trade Metric ──
+    net_p_1y = res.get("net_profit_1y", 0.0)
+    net_p_1y_dollar = res.get("net_profit_1y_dollar", 0.0)
+    if total_trades_1y > 0:
+        res["avg_profit_per_trade_pct"] = round(net_p_1y / total_trades_1y, 3)
+        res["avg_profit_per_trade_dollar"] = round(net_p_1y_dollar / total_trades_1y, 2)
+    else:
+        res["avg_profit_per_trade_pct"] = 0.0
+        res["avg_profit_per_trade_dollar"] = 0.0
+
+    # ── 1. Real-World Fee & Slippage Drag (0.10% per trade round-trip) & Calmar Profit Scaling ──
     total_profit_live = 0.0
     for h in h_names:
         raw_p = res.get(f"net_profit_{h}", 0.0)
@@ -21,8 +32,12 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
         live_p = raw_p - (t_count * FEE_PER_TRADE_PCT)
         total_profit_live += live_p
 
-    total_profit_live = min(total_profit_live, 40000.0)
-    all_horizon_bonus = 500.0 if all(res.get(f"net_profit_{h}", 0.0) > 0 for h in h_names) else 0.0
+    # Calmar-Ratio Profit Scaling: Slash profit score if Max Drawdown exceeds 25% safe threshold
+    dd_factor = min(1.0, (25.0 / max(1.0, max_dd)) ** 1.5)
+    total_profit_live = min(total_profit_live, 40000.0) * dd_factor
+    all_horizon_bonus = 1000.0 if (res.get("net_profit_1y", 0.0) >= 15.0 and res.get("net_profit_6m", 0.0) >= 8.0 and res.get("net_profit_3m", 0.0) >= 4.0 and res.get("net_profit_1m", 0.0) >= 1.0) else 0.0
+    penalty_profit = -2500.0 if (res.get("net_profit_1y", 0.0) < 15.0 and total_trades_1y > 0) else 0.0
+    profit_score = total_profit_live * 3.0
 
     # ── 2. Win Rate Hurdle & Sigmoidal Penalty (Target >= 38%) ──
     WIN_TARGET = 38.0
@@ -44,10 +59,10 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
     else:
         score_trades = 100.0 - 2.0 * (total_trades_1y - 2500.0)
 
-    # ── 4. Final Composite Practical Fitness Score ──
+    # ── 4. Final Composite Practical Fitness Score (Quadratic Drawdown Punishment) ──
     win_score = win_rate * 3.0
-    dd_penalty = res.get("max_dd", 0.0) * 2.5
-    res["fitness_score"] = round(total_profit_live + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win, 2)
+    dd_penalty = (max_dd * 2.5) + (max(0.0, max_dd - 30.0) ** 2 * 15.0)
+    res["fitness_score"] = round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit, 2)
     return res
 
 def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
@@ -144,15 +159,20 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
     max_dd_1y = np.max(raw[:, :, 3, 2], axis=1)
     moonshots_1y = np.sum(raw[:, :, 3, 0] > 30.0, axis=1)
 
-    # ── Pillar A: Fee & Slippage Drag ──
+    # ── Pillar A: Fee & Slippage Drag & Calmar Profit Scaling ──
     FEE = 0.10
     live_p_1y = avg_p_1y - (total_trades_1y / 1.0 * FEE)
     live_p_6m = avg_p_6m - (total_trades_1y / 2.0 * FEE)
     live_p_3m = avg_p_3m - (total_trades_1y / 4.0 * FEE)
     live_p_1m = avg_p_1m - (total_trades_1y / 12.0 * FEE)
     total_profit_live = live_p_1y + live_p_6m + live_p_3m + live_p_1m
-    total_profit_live = np.minimum(total_profit_live, 40000.0)
-    all_horizon_bonus = np.where((avg_p_1y > 0) & (avg_p_6m > 0) & (avg_p_3m > 0) & (avg_p_1m > 0), 500.0, 0.0)
+
+    # Calmar-Ratio Profit Scaling: Slash profit score if Max Drawdown exceeds 25% safe threshold
+    dd_factor = np.minimum(1.0, (25.0 / np.maximum(1.0, max_dd_1y)) ** 1.5)
+    total_profit_live = np.minimum(total_profit_live, 40000.0) * dd_factor
+    all_horizon_bonus = np.where((avg_p_1y >= 15.0) & (avg_p_6m >= 8.0) & (avg_p_3m >= 4.0) & (avg_p_1m >= 1.0), 1000.0, 0.0)
+    penalty_profit = np.where((avg_p_1y < 15.0) & (total_trades_1y > 0), -2500.0, 0.0)
+    profit_score = total_profit_live * 3.0
 
     # ── Pillar B: Win Rate Hurdle ──
     WIN_TARGET = 38.0
@@ -173,17 +193,23 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
     score_trades[sweet_mask] = 100.0
     score_trades[over_mask] = 100.0 - 2.0 * (total_trades_1y[over_mask] - 2500.0)
 
-    # ── Pillar D: Final Composite Practical Fitness Score ──
+    # ── Pillar D: Final Composite Practical Fitness Score (Quadratic Drawdown Punishment) ──
     win_score = win_rate_1y * 3.0
-    dd_penalty = max_dd_1y * 2.5
-    fitness_arr = np.round(total_profit_live + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win, 2)
+    dd_penalty = (max_dd_1y * 2.5) + (np.maximum(0.0, max_dd_1y - 30.0) ** 2 * 15.0)
+    fitness_arr = np.round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit, 2)
 
     results = []
     for gi in range(n_g):
         t = int(total_trades_1y[gi])
+        np_1y = float(avg_p_1y[gi])
+        np_1y_dollar = np_1y * 10.0
+        avg_trade_pct = round(np_1y / t, 3) if t > 0 else 0.0
+        avg_trade_dollar = round(np_1y_dollar / t, 2) if t > 0 else 0.0
         results.append({
-            "net_profit_1y": round(float(avg_p_1y[gi]), 2),
-            "net_profit_1y_dollar": round(float(avg_p_1y[gi]) * 10.0, 2),
+            "net_profit_1y": round(np_1y, 2),
+            "net_profit_1y_dollar": round(np_1y_dollar, 2),
+            "avg_profit_per_trade_pct": avg_trade_pct,
+            "avg_profit_per_trade_dollar": avg_trade_dollar,
             "net_profit_6m": round(float(avg_p_6m[gi]), 2),
             "net_profit_6m_dollar": round(float(avg_p_6m[gi]) * 10.0, 2),
             "net_profit_3m": round(float(avg_p_3m[gi]), 2),

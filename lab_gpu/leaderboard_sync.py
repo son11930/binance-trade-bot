@@ -154,4 +154,11 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
         item["rank"] = idx
         raw = item.get("name", "").split(": ")[-1]
         item["name"] = f"🏆 #{idx} ALPHA GENOME: {raw}" if idx == 1 else f"#{idx} BLUEPRINT: {raw}"
+        t = item.get("total_trades_1y", 0)
+        np_1y = item.get("net_profit_1y", 0.0)
+        np_1y_dollar = item.get("net_profit_1y_dollar", np_1y * 10.0)
+        if "avg_profit_per_trade_pct" not in item:
+            item["avg_profit_per_trade_pct"] = round(np_1y / t, 3) if t > 0 else 0.0
+        if "avg_profit_per_trade_dollar" not in item:
+            item["avg_profit_per_trade_dollar"] = round(np_1y_dollar / t, 2) if t > 0 else 0.0
     return unique

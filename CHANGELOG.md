@@ -1,3 +1,15 @@
+## [4.7.13] - 2026-07-06
+### Fix 1000x GPU Lab Slowdown & Numba CUDA Deallocation Log Spam
+**English:**
+- **Silenced Numba CUDA Allocator Debug Spam**: Root-cause diagnosed and fixed severe console flooding where Numba's memory driver (`numba.cuda.cudadrv.driver`) logged `dealloc: cuMemFree_v2` thousands of times per second due to root logger inheritance, causing synchronous Windows PowerShell console I/O blocking and up to 1000x slowdowns. Added explicit warning-level filters for all Numba, CuPy, and Optuna internal loggers.
+- **VRAM Array Reuse Optimization**: Modified `evaluate_genome_gpu` and `_batch_gpu_backtest` to automatically detect and reuse pre-loaded device arrays from `_GPU_DEVICE_ARRAYS` instead of re-uploading host numpy arrays over the PCIe bus and allocating/deallocating 56 CUDA device arrays per evaluation.
+- **Git Hygiene Verification**: Confirmed via strict `.gitignore` rules and working tree audits that no database files (`.db`), JSON leaderboards, cache files, or log artifacts (`gpu_lab.log`) were staged or committed.
+
+**Thai (ภาษาไทย):**
+- **แก้ปัญหาโค้ด Lab รันช้าลง 1,000 เท่า และข้อความ Log ค้างเต็มหน้าจอ**: ตรวจพบสาเหตุหลักเกิดจากระบบจัดการหน่วยความจำของ Numba CUDA (`numba.cuda.cudadrv.driver`) พ่นข้อความ `dealloc: cuMemFree_v2` ออกมาระหว่างล้างแรมการ์ดจอหลายพันครั้งต่อวินาที ทำให้หน้าต่าง Command/PowerShell ค้างและดึงความเร็วระบบตกลงกว่า 1,000 เท่า ทำการตั้งค่าปิด Log กวนใจของ Numba, CuPy และ Optuna ให้แสดงเฉพาะข้อความเตือนที่สำคัญเท่านั้น
+- **อัปเกรดระบบใช้ซ้ำข้อมูลบนแรมการ์ดจอ (VRAM Reuse)**: ปรับปรุงฟังก์ชัน `evaluate_genome_gpu` และ `_batch_gpu_backtest` ให้ตรวจสอบและเรียกใช้ข้อมูลราคาที่โหลดค้างไว้บน VRAM การ์ดจอ (`_GPU_DEVICE_ARRAYS`) มาคำนวณซ้ำได้ทันที ลดการส่งข้อมูลผ่านท่อ PCIe และลดภาระการจอง/คืนเมมโมรี่การ์ดจอกว่า 56 ชุดต่อรอบการคำนวณ 1 จีโนม
+- **ตรวจสอบความสะอาดของ Git Repository**: ตรวจสอบระบบ Git มั่นใจ 100% ว่าไม่มีไฟล์ข้อมูลการทดลอง เช่น ฐานข้อมูล `.db`, ไฟล์รายงาน `.json`, โฟลเดอร์แคช หรือไฟล์ล็อก `gpu_lab.log` หลุดติดขึ้นไปบน Git ตามคำสั่งอย่างเคร่งครัด
+
 ## [4.7.12] - 2026-07-06
 ### Execute Modular Refactoring & Optimization of Web Dashboard (`dashboard/js/`)
 **English:**

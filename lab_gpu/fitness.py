@@ -24,19 +24,17 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
         res["avg_profit_per_trade_pct"] = 0.0
         res["avg_profit_per_trade_dollar"] = 0.0
 
-    # ── 1. Real-World Fee & Slippage Drag (0.10% per trade round-trip) & Calmar Profit Scaling ──
+    # ── 1. Real-World Fee & Slippage Drag (Already deducted in simulation kernels: 0.15% round-trip per trade) & Calmar Profit Scaling ──
     total_profit_live = 0.0
     for h in h_names:
         raw_p = res.get(f"net_profit_{h}", 0.0)
-        t_count = total_trades_1y / horizon_divisors.get(h, 1.0)
-        live_p = raw_p - (t_count * FEE_PER_TRADE_PCT)
-        total_profit_live += live_p
+        total_profit_live += raw_p
 
     # Calmar-Ratio Profit Scaling: Slash profit score if Max Drawdown exceeds 25% safe threshold
     dd_factor = min(1.0, (25.0 / max(1.0, max_dd)) ** 1.5)
     total_profit_live = min(total_profit_live, 40000.0) * dd_factor
-    all_horizon_bonus = 1000.0 if (res.get("net_profit_1y", 0.0) >= 15.0 and res.get("net_profit_6m", 0.0) >= 8.0 and res.get("net_profit_3m", 0.0) >= 4.0 and res.get("net_profit_1m", 0.0) >= 1.0) else 0.0
-    penalty_profit = -2500.0 if (res.get("net_profit_1y", 0.0) < 15.0 and total_trades_1y > 0) else 0.0
+    all_horizon_bonus = 1000.0 if (res.get("net_profit_1y", 0.0) >= 3.0 and res.get("net_profit_6m", 0.0) >= 1.5 and res.get("net_profit_3m", 0.0) >= 0.7 and res.get("net_profit_1m", 0.0) >= 0.2) else 0.0
+    penalty_profit = -2500.0 if (res.get("net_profit_1y", 0.0) <= 0.0 and total_trades_1y > 0) else 0.0
     profit_score = total_profit_live * 3.0
 
     # ── 2. Win Rate Hurdle & Sigmoidal Penalty (Target >= 38%) ──
@@ -82,6 +80,8 @@ def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
                 mat[gi, pi] = float(_STRAT_MAP_MB.get(gn.get("strategy_type", "rsi_sniper"), 0))
             elif p_name == "macro_regime_filter":
                 mat[gi, pi] = float(_MACRO_MAP_MB.get(gn.get("macro_regime_filter", "sma200_only"), 0))
+            elif p_name == "kelly_fraction_cap":
+                mat[gi, pi] = max(0.20, min(0.40, float(gn.get(p_name, 0.25))))
             else:
                 mat[gi, pi] = float(gn.get(p_name, 0.0))
     return mat
@@ -159,19 +159,18 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
     max_dd_1y = np.max(raw[:, :, 3, 2], axis=1)
     moonshots_1y = np.sum(raw[:, :, 3, 0] > 30.0, axis=1)
 
-    # ── Pillar A: Fee & Slippage Drag & Calmar Profit Scaling ──
-    FEE = 0.10
-    live_p_1y = avg_p_1y - (total_trades_1y / 1.0 * FEE)
-    live_p_6m = avg_p_6m - (total_trades_1y / 2.0 * FEE)
-    live_p_3m = avg_p_3m - (total_trades_1y / 4.0 * FEE)
-    live_p_1m = avg_p_1m - (total_trades_1y / 12.0 * FEE)
+    # ── Pillar A: Fee & Slippage Drag (Already deducted in simulation kernels: 0.15% round-trip per trade) & Calmar Profit Scaling ──
+    live_p_1y = avg_p_1y
+    live_p_6m = avg_p_6m
+    live_p_3m = avg_p_3m
+    live_p_1m = avg_p_1m
     total_profit_live = live_p_1y + live_p_6m + live_p_3m + live_p_1m
 
     # Calmar-Ratio Profit Scaling: Slash profit score if Max Drawdown exceeds 25% safe threshold
     dd_factor = np.minimum(1.0, (25.0 / np.maximum(1.0, max_dd_1y)) ** 1.5)
     total_profit_live = np.minimum(total_profit_live, 40000.0) * dd_factor
-    all_horizon_bonus = np.where((avg_p_1y >= 15.0) & (avg_p_6m >= 8.0) & (avg_p_3m >= 4.0) & (avg_p_1m >= 1.0), 1000.0, 0.0)
-    penalty_profit = np.where((avg_p_1y < 15.0) & (total_trades_1y > 0), -2500.0, 0.0)
+    all_horizon_bonus = np.where((avg_p_1y >= 3.0) & (avg_p_6m >= 1.5) & (avg_p_3m >= 0.7) & (avg_p_1m >= 0.2), 1000.0, 0.0)
+    penalty_profit = np.where((avg_p_1y <= 0.0) & (total_trades_1y > 0), -2500.0, 0.0)
     profit_score = total_profit_live * 3.0
 
     # ── Pillar B: Win Rate Hurdle ──

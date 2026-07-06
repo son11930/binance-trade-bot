@@ -30,6 +30,10 @@ from bot.config import SYMBOLS, DATABASE_URL_FUTURES, DATABASE_URL_SPOT
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [GPU-LAB] %(message)s")
 logger = logging.getLogger("GPUSynthesizer")
 
+# Silence noisy third-party libraries (especially Numba CUDA allocator dealloc logs)
+for _noisy in ["numba", "numba.cuda", "numba.cuda.cudadrv", "numba.cuda.cudadrv.driver", "numba.core", "cupy", "optuna", "matplotlib", "urllib3", "asyncio"]:
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ──────────────────────────────────────────────────────────
 #  Constants & Paths
 # ──────────────────────────────────────────────────────────

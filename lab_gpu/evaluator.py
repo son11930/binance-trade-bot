@@ -7,7 +7,7 @@ from typing import Dict, List, Any
 from .config import logger, CUDA_THREADS_PER_BLOCK, _STRAT_MAP_MB, _MACRO_MAP_MB
 from .gpu_kernel import GPU_AVAILABLE, _backtest_kernel, _mega_backtest_kernel
 from .cpu_kernel import simulate_strategy_genome_cpu
-from .data_loader import _GPU_FLAT_DATA, _build_symbol_arrays_for_cpu
+from .data_loader import _GPU_FLAT_DATA, _GPU_DEVICE_ARRAYS, _build_symbol_arrays_for_cpu
 from .fitness import _pack_genomes_to_flat, _vectorized_batch_compute_fitness, _apply_four_pillar_fitness
 
 def _cpu_eval_from_arrays(arrays: Dict[str, np.ndarray], genome: Dict[str, Any], bars: int) -> Dict[str, float]:
@@ -61,7 +61,8 @@ def _batch_gpu_backtest(
     def g(key, default=0.0):
         return np.array([float(gn.get(key, default)) for gn in genome_batch_sorted], dtype=np.float32)
 
-    if _use_preloaded and GPU_AVAILABLE:
+    is_device = _use_preloaded or hasattr(df_arrays["close"], "copy_to_host")
+    if is_device and GPU_AVAILABLE:
         preloaded = df_arrays
         bars = min(n_bars, int(preloaded["close"].shape[0]))
         d_ca  = preloaded["close"][-bars:]
@@ -226,7 +227,9 @@ def evaluate_genome_gpu(
             if n_available < bars:
                 continue
             if GPU_AVAILABLE:
-                stats_list = _batch_gpu_backtest(arrays, [genome], bars)
+                arrs_to_use = _GPU_DEVICE_ARRAYS.get(sym, arrays) if _GPU_DEVICE_ARRAYS else arrays
+                use_pre = (arrs_to_use is not arrays) or hasattr(arrs_to_use["close"], "copy_to_host")
+                stats_list = _batch_gpu_backtest(arrs_to_use, [genome], bars, _use_preloaded=use_pre)
                 stats = stats_list[0]
             else:
                 stats = _cpu_eval_from_arrays(arrays, genome, bars)

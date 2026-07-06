@@ -258,3 +258,22 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - **Step 3 (E2E & Human-in-the-Loop Review)**: Verify tab switching between Live Trading and AI Strategy Lab, check WebSocket real-time updates, and confirm Leaderboard card rendering.
 - **Status**: Completed.
 
+## Phase 27: Calmar-Ratio & Quadratic Drawdown Fitness Upgrade + Average Profit per Trade Metric
+- **Objective**: Address critical real-world trading viability concerns where existing alpha strategies saturate at the +10,000% profit ceiling while exhibiting unacceptably high Max Drawdowns (50%–70%). Enhance the **Four Pillar Fitness Framework** to penalize high drawdown exponentially, reward capital preservation (Calmar Ratio), and introduce a transparent **Average Profit per Trade** (`avg_profit_per_trade`) metric to filter out dust-scalping strategies vulnerable to live fee/slippage drag.
+- **Key Algorithmic Upgrades**:
+  1. **Average Profit per Trade Metric**:
+     - Compute `avg_profit_per_trade_pct = net_profit_1y / total_trades_1y` and `avg_profit_per_trade_dollar = net_profit_1y_dollar / total_trades_1y` across all backtest evaluators (`lab_gpu/fitness.py`, `lab_gpu/evaluator.py`, `lab_gpu/cpu_kernel.py`).
+     - Expose these metrics in `strategy_leaderboard.json` and render a dedicated badge in the Web Dashboard (`dashboard/js/ui_lab.js`) so traders can immediately identify strategies with robust trade-level margins (> $1.00 or > 0.5% net per trade).
+  2. **Calmar-Weighted Profit Scaling (Risk-Adjusted Return)**:
+     - Replace linear profit summation with a Calmar-ratio decay curve for strategies exceeding a safe drawdown threshold (`SAFE_DD = 25.0%`).
+     - If `max_dd_1y > 25.0%`, apply a profit scaling multiplier: `dd_factor = min(1.0, (25.0 / max_dd_1y) ** 1.5)`. This naturally slashes the profit score of high-drawdown strategies (e.g. a 70% drawdown slashes the profit score by ~80%), eliminating profit saturation.
+  3. **Quadratic Drawdown Penalty (Institutional Risk Hurdle)**:
+     - Upgraded from a mild linear penalty (`max_dd * 2.5`) to an exponential quadratic penalty when Max Drawdown exceeds 30.0%:
+       `dd_penalty = (max_dd * 2.5) + ((max_dd - 30.0) ** 2 * 15.0)` for `max_dd > 30.0%`.
+     - A strategy exhibiting 60% Max Drawdown will incur a ~13,650-point penalty, ensuring Optuna aggressively prunes risky genomes and evolves stable, institutional-grade strategies with Max Drawdown < 25%–30%.
+- **Verification Plan**:
+  - Update unit regression tests (`tests/test_gpu_lab_regression.py`) with the new mathematical formulas.
+  - Run benchmark test (`python bot_strategy_synthesizer_gpu.py 100`) to confirm evolved Top 10 Alpha Blueprints exhibit significantly lower Max Drawdowns (< 30%) and high Average Profit per Trade.
+- **Status**: Planned (Pending User Review & Approval).
+
+

@@ -243,16 +243,17 @@ if GPU_AVAILABLE and _cuda_jit:
         rem = tid // n_horizons
         s_idx = rem % n_symbols
         g_idx = rem // n_symbols
+        base = tid * 4
 
         sym_start = sym_offsets[s_idx]
         sym_len   = sym_lengths[s_idx]
         h_bars    = horizon_bars[h_idx]
 
         if h_bars > sym_len:
-            out_results[tid, 0] = 0.0
-            out_results[tid, 1] = 0.0
-            out_results[tid, 2] = 0.0
-            out_results[tid, 3] = 0.0
+            out_results[base + 0] = 0.0
+            out_results[base + 1] = 0.0
+            out_results[base + 2] = 0.0
+            out_results[base + 3] = 0.0
             return
 
         start_bar = sym_start + (sym_len - h_bars)
@@ -302,10 +303,10 @@ if GPU_AVAILABLE and _cuda_jit:
 
         first_sim_bar = start_bar + 200
         if first_sim_bar >= end_bar:
-            out_results[tid, 0] = 0.0
-            out_results[tid, 1] = 0.0
-            out_results[tid, 2] = 0.0
-            out_results[tid, 3] = 0.0
+            out_results[base + 0] = 0.0
+            out_results[base + 1] = 0.0
+            out_results[base + 2] = 0.0
+            out_results[base + 3] = 0.0
             return
 
         for i in range(first_sim_bar, end_bar):
@@ -452,10 +453,10 @@ if GPU_AVAILABLE and _cuda_jit:
         if net_profit > 10000.0:
             net_profit = 10000.0
         win_rate = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
-        out_results[tid, 0] = net_profit
-        out_results[tid, 1] = win_rate
-        out_results[tid, 2] = max_dd * 100.0
-        out_results[tid, 3] = total_trades
+        out_results[base + 0] = net_profit
+        out_results[base + 1] = win_rate
+        out_results[base + 2] = max_dd * 100.0
+        out_results[base + 3] = total_trades
 else:
     def _backtest_kernel(*args, **kwargs):
         pass

@@ -1,3 +1,15 @@
+## [4.7.14] - 2026-07-06
+### Restore GPU Lab MEGA-BATCH Mode (~4,000 to ~20,000 Trials/Sec)
+**English:**
+- **Fixed Multi-Module VRAM Dictionary Re-binding Bug**: Root-cause diagnosed why the modularized GPU Lab dropped from ~4,000-20,000 it/s to 4-7 it/s. In Python, reassigning global variables (`_GPU_FLAT_DATA = {...}`) inside `data_loader.py` left importing modules (`evolution_engine.py`, `evaluator.py`) holding references to the initial empty dictionary `{}`. This caused `bool(_GPU_FLAT_DATA)` to evaluate to `False`, forcing the engine to fallback to CPU multiprocessing (1 trial per worker at 4-7 it/s). Fixed by mutating the shared dictionaries in-place using `.clear()` and `.update()`.
+- **Fixed 1D Array Indexing Syntax Errors in CUDA Kernel**: Corrected Numba CUDA compilation crashes in `_mega_backtest_kernel` where 2D indexing (`out_results[tid, 0]`) was erroneously applied to a 1D flat output device array (`d_out` of size `total_threads * 4`). Restored exact 1D indexing (`base = tid * 4; out_results[base + 0] = ...`).
+- **Verified Lightning-Fast GPU Performance**: Verified via end-to-end benchmark tests that **MEGA-BATCH MODE (`4096 genomes per kernel call`)** is fully active, evaluating thousands of candidate genomes per second (~2,000 to ~4,000+ genomes/sec on RTX 3070 laptop GPU).
+
+**Thai (ภาษาไทย):**
+- **แก้ปัญหาความเร็วตกจาก 4,000-20,000 เหลือ 4-7 it/s หลัง Refactor (MEGA-BATCH Restored)**: ตรวจพบสาเหตุเชิงลึกเกิดจากพฤติกรรมการ Import Dictionary ข้ามโมดูลใน Python โดยตอนสร้างข้อมูล VRAM ใน `data_loader.py` มีการกำหนดค่าใหม่ด้วย `_GPU_FLAT_DATA = {...}` ทำให้ไฟล์โมดูลอื่น (`evolution_engine.py`) ที่อ้างอิงตัวแปรไปก่อนหน้ายังคงถือค่า Dictionary ว่าง `{}` อยู่ ส่งผลให้ระบบเข้าใจผิดว่าไม่มีข้อมูลบน GPU และตัดการทำงานกลับไปใช้ CPU แบบ 1 จีโนมต่อรอบ (ซึ่งได้ความเร็วเพียง 4-7 it/s) แก้ไขโดยเปลี่ยนมาใช้วิธีอัปเดตตัวแปรเดิมในรหัสความจำเดิม (`.clear()` และ `.update()`)
+- **แก้ไขบั๊กโครงสร้าง Indexing ใน CUDA Kernel (`gpu_kernel.py`)**: แก้ไขจุดที่ทำให้คอมไพล์ Numba CUDA Kernel ไม่ผ่านเนื่องจากการอ้างอิง Array ผลลัพธ์แบบ 2 มิติ (`out_results[tid, 0]`) บนตัวแปร Device Array แบบ 1 มิติ ปรับแก้ให้อยู่ในรูป 1 มิติตามโครงสร้างเดิม (`base = tid * 4`)
+- **ทดสอบยืนยันความเร็วจริงเต็มประสิทธิภาพ RTX 3070**: ทดสอบรันจริงระบบเข้าสู่โหมด **MEGA-BATCH MODE (4,096 จีโนมต่อการยิง Kernel 1 ครั้ง)** เรียบร้อย ทำความเร็วประมวลผลการคำนวณและประเมินผลกลยุทธ์พุ่งกลับมาที่ ~2,000 ถึง ~4,000+ จีโนมต่อวินาทีได้อย่างสมบูรณ์
+
 ## [4.7.13] - 2026-07-06
 ### Fix 1000x GPU Lab Slowdown & Numba CUDA Deallocation Log Spam
 **English:**

@@ -83,7 +83,7 @@ def preload_all_symbols_to_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], 
     if not gpu_available:
         return
     from numba import cuda as nb_cuda
-    _GPU_DEVICE_ARRAYS = {}
+    _GPU_DEVICE_ARRAYS.clear()
     total_bytes = 0
     for sym, arrays in symbol_arrays.items():
         _GPU_DEVICE_ARRAYS[sym] = {key: nb_cuda.to_device(arr) for key, arr in arrays.items()}
@@ -97,7 +97,7 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], g
     """
     global _GPU_FLAT_DATA
     if not gpu_available:
-        _GPU_FLAT_DATA = {}
+        _GPU_FLAT_DATA.clear()
         return
     from numba import cuda as nb_cuda
 
@@ -117,7 +117,8 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], g
             if feat in arr:
                 flat[start:end, fi] = arr[feat]
 
-    _GPU_FLAT_DATA = {
+    _GPU_FLAT_DATA.clear()
+    _GPU_FLAT_DATA.update({
         "price_flat":   nb_cuda.to_device(flat),
         "sym_offsets":  nb_cuda.to_device(offsets),
         "sym_lengths":  nb_cuda.to_device(np.array(lengths, dtype=np.int32)),
@@ -125,7 +126,7 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], g
         "sym_list":     sym_list,
         "n_symbols":    len(sym_list),
         "n_horizons":   len(HORIZON_BARS),
-    }
+    })
     logger.info(
         f"✅ Mega-Batch VRAM pack: {flat.nbytes/1e6:.1f} MB "
         f"({len(sym_list)} syms × {max(lengths)} bars × {N_FEATURES} feats) ready."

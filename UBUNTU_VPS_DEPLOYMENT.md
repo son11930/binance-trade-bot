@@ -121,6 +121,10 @@ To ensure the bot runs in the background and restarts automatically if the serve
     Restart=always
     RestartSec=10
 
+    # Rate-limit log output to prevent disk exhaustion during websocket drops
+    LogRateLimitIntervalSec=30s
+    LogRateLimitBurst=100
+
     # Environment variables (Optional, can rely on .env file)
     # Environment=PYTHONUNBUFFERED=1
 
@@ -164,6 +168,52 @@ To view the live logs of the bot:
 sudo journalctl -u binance-bot.service -f
 ```
 Press `Ctrl+C` to exit the log view.
+
+---
+
+## Step 8: Log Flood Protection & Quota Configuration (journald & logrotate)
+
+To guarantee that system logs (`/var/log/journal/` and `/var/log/syslog`) never consume excessive disk space or cause `ENOSPC` (Disk 100% Full) errors, configure OS-level quotas:
+
+### 1. Configure systemd Journal Quota (`journald.conf`)
+Open `/etc/systemd/journald.conf` and set maximum storage limits:
+```bash
+sudo nano /etc/systemd/journald.conf
+```
+Add or uncomment the following under `[Journal]`:
+```ini
+[Journal]
+Storage=persistent
+SystemMaxUse=500M
+SystemMaxFileSize=100M
+SystemMaxFiles=5
+RateLimitIntervalSec=30s
+RateLimitBurst=1000
+```
+Then reclaim existing disk space and restart the journal daemon:
+```bash
+sudo journalctl --vacuum-size=500M
+sudo systemctl restart systemd-journald
+```
+
+### 2. Configure Logrotate Policy (`/etc/logrotate.d/binance-bot`)
+Create a dedicated logrotate policy so `/var/log/syslog` and app logs are compressed and rotated before filling the disk:
+```bash
+sudo nano /etc/logrotate.d/binance-bot
+```
+Paste the following configuration:
+```
+/var/log/syslog /root/binance-trade-bot/*.log /home/*/binance-trade-bot/*.log {
+    daily
+    rotate 7
+    size 50M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+```
 
 ---
 

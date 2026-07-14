@@ -1,3 +1,11 @@
+## [4.13.0] - 2026-07-14
+### VPS Log Flood & Disk Exhaustion Defense (Phase 32)
+**English:**
+- **Python Throttled & Duplicate Logging Filter**: Implemented `ThrottledLogFilter` (`bot/utils/log_filter.py`) attached to root and sub-loggers (`binance.streams`, `binance.websockets`). Suppresses high-frequency identical error messages (`Read loop has been closed`) within a 60-second window while accumulating counts and emitting clean periodic summaries (`[Log Filter] Suppressed X duplicate log entries`), preventing console/syslog flooding during websocket drops.
+- **WebSocket Graceful Reconnect & Health Monitor**: Added `last_message_time` heartbeat tracking across Spot and Futures streams in `WebSocketManager`. Replaced static check in `bot/main.py` with an intelligent health check loop monitoring stream activity (`>45s` silence or dead socket) and executing exponential backoff reconnections (`min(60, 5 * (2 ** attempt))`) with clean `twm.stop()` / restart rather than immediate process crashes (`os.execv`).
+- **Linux Systemd, Journald, & Logrotate Quotas**: Updated `UBUNTU_VPS_DEPLOYMENT.md` with OS-level defense-in-depth quotas: systemd rate limits (`LogRateLimitIntervalSec=30s`, `LogRateLimitBurst=100`), persistent journal limits (`SystemMaxUse=500M` via `/etc/systemd/journald.conf`), and daily logrotate profiles (`/etc/logrotate.d/binance-bot` with 50M max size and 7 rotations) to permanently protect VPS disk space (`/dev/sda1`).
+- **Zero Regression Verification**: Created comprehensive unit tests in `tests/test_log_filter.py` and `tests/test_websocket_manager_health.py`. All 135 unit and regression tests passed with 100% success.
+
 ## [4.12.0] - 2026-07-06
 ### Alpha Lab Profit Hurdle & Kelly Position Sizing Floor (Phase 31)
 **English:**

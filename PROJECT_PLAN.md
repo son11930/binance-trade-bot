@@ -340,4 +340,28 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Verify 100% test suite pass rate (`python -m pytest tests/test_gpu_lab_regression.py -v`).
 - **Status**: Completed.
 
+---
+
+### Phase 32: VPS Log Flood & Disk Exhaustion Defense (Python Throttling, WebSocket Backoff, Linux Quotas)
+- **Objective**: Prevent the critical disk exhaustion failure (`~100 MB / 4 mins` filling up the 29 GB Ubuntu VPS disk) caused by infinite `python-binance` websocket `Read loop has been closed` errors when websocket streams drop. Establish a defense-in-depth architecture across three distinct layers: (1) Python application log throttling, (2) WebSocket health monitoring with exponential backoff, and (3) Linux systemd/journald/logrotate rate limiting and disk quotas.
+- **Key Architecture & Technical Upgrades**:
+  1. **Python Throttled & Duplicate Logging Filter (`bot/utils/log_filter.py` & `setup_logging()`)**:
+     - Implement `ThrottledLogFilter`, a `logging.Filter` attached to root and sub-loggers (`binance.streams`, `binance.websockets`).
+     - Tracks message hashes/patterns (`Read loop has been closed`, `Error receiving message`) and suppresses repeated duplicates occurring within a 60-second window (`interval=60.0`).
+     - Emits a periodic summary `[Suppressed X duplicate log entries in the last 60s for: '...']` when the suppression window resets, ensuring complete visibility without disk flooding.
+  2. **WebSocket Graceful Reconnect & Health Monitor (`bot/websocket_manager.py` & `bot/main.py`)**:
+     - Add `last_message_time` heartbeat timestamp to `WebSocketManager` (`spot` and `futures`) updated on every `24hrTicker` and `kline` frame received.
+     - Replace static `twm.is_alive()` check in `bot/main.py` with an intelligent health check loop assessing both thread vitality and stream activity (`time.time() - max_last_message_time > 30s`).
+     - When stream silence (`>30s`) or read loop errors occur, invoke clean reconnect sequence with exponential backoff (`backoff_delay = min(60, 5 * (2 ** attempt))`, starting at 5s up to 60s max) using safe `twm.stop()` and re-initialization rather than immediate hard restart (`os.execv`).
+  3. **Linux Systemd, Journald, & Logrotate Quotas (`UBUNTU_VPS_DEPLOYMENT.md` & Live Server Configuration)**:
+     - **Systemd Rate Limit**: Add `LogRateLimitIntervalSec=30s` and `LogRateLimitBurst=100` to `/etc/systemd/system/binance-bot.service` (`[Service]` block) to drop service output exceeding 100 lines/30 seconds.
+     - **Journald Disk Quota**: Configure `/etc/systemd/journald.conf` with `SystemMaxUse=500M`, `SystemMaxFileSize=100M`, `SystemMaxFiles=5`, `RateLimitIntervalSec=30s`, `RateLimitBurst=1000`. Run `sudo journalctl --vacuum-size=500M` to reclaim disk space immediately.
+     - **Logrotate Policy**: Create `/etc/logrotate.d/binance-bot` for `/var/log/syslog` and application logs enforcing daily rotation, `size 50M`, `rotate 7`, `compress`, and `missingok`.
+- **Verification Plan**:
+  - Run unit tests to verify `ThrottledLogFilter` suppresses duplicate strings and emits count summaries after window expiration (`pytest tests/test_log_filter.py -v`).
+  - Verify WebSocket reconnect logic cleanly handles mock disconnection exceptions with exponential backoff.
+  - Inspect remote VPS logs (`journalctl -u binance-bot.service -n 50`) and storage quotas (`df -h`, `journalctl --disk-usage`) via SSH/paramiko before and after applying configurations.
+- **Status**: Completed.
+
+
 

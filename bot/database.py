@@ -102,13 +102,28 @@ def setup_logging():
         handler = logging.StreamHandler()
         root_logger.addHandler(handler)
         
+    from bot.utils.log_filter import ThrottledLogFilter
+    throttled_filter = ThrottledLogFilter(interval=60.0)
+    
     for handler in root_logger.handlers:
         handler.setFormatter(formatter)
+        if not any(isinstance(f, ThrottledLogFilter) for f in handler.filters):
+            handler.addFilter(throttled_filter)
         
     for name, logger_obj in logging.root.manager.loggerDict.items():
         if isinstance(logger_obj, logging.Logger):
             for handler in logger_obj.handlers:
                 handler.setFormatter(formatter)
+                if not any(isinstance(f, ThrottledLogFilter) for f in handler.filters):
+                    handler.addFilter(throttled_filter)
+            if name in ("binance.streams", "binance.websockets", "websockets", "websockets.client", "urllib3"):
+                if not any(isinstance(f, ThrottledLogFilter) for f in logger_obj.filters):
+                    logger_obj.addFilter(throttled_filter)
+                    
+    for ws_logger_name in ("binance.streams", "binance.websockets", "websockets", "websockets.client", "urllib3"):
+        logger = logging.getLogger(ws_logger_name)
+        if not any(isinstance(f, ThrottledLogFilter) for f in logger.filters):
+            logger.addFilter(throttled_filter)
 
 def get_engine(db_url: str):
     if db_url and db_url.startswith("postgres://"):

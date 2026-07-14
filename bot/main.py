@@ -164,14 +164,47 @@ def main():
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
     
+    reconnect_attempt = 0
+    reconnect_time = 0.0
     while True:
         time.sleep(2)
         
-        if not twm.is_alive():
-            log_msg("ERROR", "CRITICAL: ThreadedWebsocketManager has died. Restarting bot in 15 seconds...")
-            import os
-            time.sleep(15)
-            os.execv(sys.executable, ['python'] + sys.argv)
+        time_since_last_msg = time.time() - min(ws_manager_spot.last_message_time, ws_manager_futures.last_message_time)
+        if reconnect_time > 0 and time.time() - reconnect_time < 45.0 and time_since_last_msg > 45.0:
+            pass
+        elif not twm.is_alive() or time_since_last_msg > 45.0:
+            reconnect_attempt += 1
+            backoff_delay = min(60, 5 * (2 ** min(reconnect_attempt, 5)))
+            log_msg("WARNING", f"WebSocket stream unhealthy (alive={twm.is_alive()}, silence={time_since_last_msg:.1f}s). Reconnecting in {backoff_delay}s (Attempt {reconnect_attempt})...")
+            
+            try:
+                twm.stop()
+            except Exception:
+                pass
+            
+            time.sleep(backoff_delay)
+            
+            try:
+                from binance import ThreadedWebsocketManager
+                import bot.binance_client as bc
+                twm = ThreadedWebsocketManager()
+                bc.twm = twm
+                twm.start()
+                twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
+                if hasattr(twm, 'start_futures_multiplex_socket'):
+                    twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
+                reconnect_time = time.time()
+                log_msg("INFO", "WebSocket re-connected cleanly.")
+            except Exception as e:
+                log_msg("ERROR", f"Failed to re-initialize WebSocket: {e}")
+                if reconnect_attempt >= 6:
+                    log_msg("ERROR", "CRITICAL: Multiple reconnect attempts failed. Restarting bot process...")
+                    import os
+                    os.execv(sys.executable, ['python'] + sys.argv)
+        else:
+            if reconnect_attempt > 0 and min(ws_manager_spot.last_message_time, ws_manager_futures.last_message_time) > reconnect_time and time_since_last_msg < 15.0:
+                reconnect_attempt = 0
+                reconnect_time = 0.0
 
         try:
             update_bot_state(state_manager_spot, "Monitoring Spot markets...", symbol="All", market_type='spot')

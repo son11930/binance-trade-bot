@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime, timezone
 import json
+import time
 import traceback
 from typing import Dict
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,7 @@ class WebSocketManager:
     def __init__(self, state_manager: StateManager, market_type: str = 'spot'):
         self.state_manager = state_manager
         self.market_type = market_type
+        self.last_message_time = time.time()
 
     def process_ticker_message(self, msg: Dict):
         try:
@@ -50,6 +52,7 @@ class WebSocketManager:
                 msg = msg['data']
                 
             if msg.get('e') == '24hrTicker':
+                self.last_message_time = time.time()
                 sym = msg['s']
                 self.state_manager.update_state(sym, last_price=float(msg['c']))
         except Exception as e:
@@ -92,6 +95,7 @@ class WebSocketManager:
             if msg.get('e') != 'kline':
                 return
                 
+            self.last_message_time = time.time()
             k = msg['k']
             symbol = msg.get('s', k.get('s'))
             current_price = float(k['c'])

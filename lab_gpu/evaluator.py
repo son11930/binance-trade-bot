@@ -6,7 +6,7 @@ from typing import Dict, List, Any
 
 from .config import logger, CUDA_THREADS_PER_BLOCK, _STRAT_MAP_MB, _MACRO_MAP_MB
 from .gpu_kernel import GPU_AVAILABLE, _backtest_kernel, _mega_backtest_kernel
-from .cpu_kernel import simulate_strategy_genome_cpu
+from .cpu_kernel import _cpu_mega_batch_fallback
 from .data_loader import _GPU_FLAT_DATA, _GPU_DEVICE_ARRAYS, _build_symbol_arrays_for_cpu
 from .fitness import _pack_genomes_to_flat, _vectorized_batch_compute_fitness, _apply_four_pillar_fitness
 
@@ -216,65 +216,23 @@ def evaluate_genome_gpu(
     genome: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Evaluate a genome across 4 time horizons on GPU (or CPU fallback) across all symbols."""
-    horizons = {"1m": 30 * 48, "3m": 90 * 48, "6m": 180 * 48, "1y": 365 * 48}
-    res: Dict[str, Any] = {}
-    total_trades_1y = 0; win_rate_1y = 0.0; max_dd_all = 0.0; moonshots = 0
-
-    for h_name, bars in horizons.items():
-        h_profits: List[float] = []
-        h_trades_list: List[int] = []
-        h_wins_list: List[float] = []
-        for sym, arrays in symbol_arrays.items():
-            n_available = arrays["close"].shape[0]
-            if n_available < bars:
-                continue
-            if GPU_AVAILABLE:
-                arrs_to_use = _GPU_DEVICE_ARRAYS.get(sym, arrays) if _GPU_DEVICE_ARRAYS else arrays
-                use_pre = (arrs_to_use is not arrays) or hasattr(arrs_to_use["close"], "copy_to_host")
-                stats_list = _batch_gpu_backtest(arrs_to_use, [genome], bars, _use_preloaded=use_pre)
-                stats = stats_list[0]
-            else:
-                stats = _cpu_eval_from_arrays(arrays, genome, bars)
-            h_profits.append(stats["net_profit_pct"])
-            if h_name == "1y":
-                h_trades_list.append(stats["trades"])
-                h_wins_list.append(stats["win_rate"] * stats["trades"] / 100.0)
-                if stats["max_dd"] > max_dd_all:
-                    max_dd_all = stats["max_dd"]
-                if stats["net_profit_pct"] > 30.0:
-                    moonshots += 1
-        avg = float(np.mean(h_profits)) if h_profits else 0.0
-        res[f"net_profit_{h_name}"]        = round(avg, 2)
-        res[f"net_profit_{h_name}_dollar"] = round(avg * 10.0, 2)
-        if h_name == "1y":
-            total_trades_1y = sum(h_trades_list)
-            total_wins      = sum(h_wins_list)
-            win_rate_1y     = round((total_wins / total_trades_1y * 100.0), 2) if total_trades_1y > 0 else 0.0
-
-    res["win_rate_1y"]    = win_rate_1y
-    res["max_dd"]         = round(max_dd_all, 2)
-    res["total_trades_1y"]= total_trades_1y
-    res["moonshots_1y"]   = moonshots
-    res["avg_trades_month"]= round(total_trades_1y / 12.0, 1)
-    res["avg_trades_day"]  = round(total_trades_1y / 365.0, 1)
-
-    return _apply_four_pillar_fitness(res, ["1y", "6m", "3m", "1m"])
+    return _mega_batch_gpu_backtest([genome])[0]
 
 def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Single mega-kernel call: evaluates genome_batch across ALL symbols × ALL horizons simultaneously."""
     if not GPU_AVAILABLE or not _GPU_FLAT_DATA:
-        return [evaluate_genome_gpu(_build_symbol_arrays_for_cpu(), g) for g in genome_batch]
+        return _cpu_mega_batch_fallback(genome_batch)
 
     from numba import cuda as nb_cuda
 
     n_g  = len(genome_batch)
     n_s  = _GPU_FLAT_DATA["n_symbols"]
     n_h  = _GPU_FLAT_DATA["n_horizons"]
-    total_threads = n_g * n_s * n_h
+    total_threads = n_g * n_h
 
     genome_mat      = _pack_genomes_to_flat(genome_batch)
     d_genome_params = nb_cuda.to_device(genome_mat)
-    d_out           = nb_cuda.device_array(total_threads * 4, dtype=np.float32)
+    d_out           = nb_cuda.device_array(total_threads * 16, dtype=np.float32)
     stream          = nb_cuda.stream()
 
     try:
@@ -286,7 +244,7 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[st
             _GPU_FLAT_DATA["horizon_bars"],
             d_genome_params,
             d_out,
-            n_g, n_s, n_h
+            n_g, n_s, n_h, _GPU_FLAT_DATA["min_len"]
         )
         try:
             stream.synchronize()
@@ -300,9 +258,9 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[st
         raw = np.nan_to_num(
             d_out.copy_to_host(stream=stream),
             nan=0.0, posinf=0.0, neginf=0.0
-        ).reshape(n_g, n_s, n_h, 4)
+        ).reshape(n_g, n_h, 16)
     finally:
         del d_genome_params, d_out
 
     h_names = ["1m", "3m", "6m", "1y"]
-    return _vectorized_batch_compute_fitness(raw, n_g, n_s)
+    return _vectorized_batch_compute_fitness(raw, n_g)

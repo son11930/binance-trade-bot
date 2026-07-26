@@ -41,6 +41,9 @@ class StateManager:
         self._liquidations: Dict[str, dict] = {}
         self._order_book_walls: Dict[str, dict] = {}
         self._fear_greed_index: str = "Neutral (50)"
+        self._daily_realized_pnl: float = 0.0
+        self._daily_trades_count: int = 0
+        self._last_reset_date = datetime.now(timezone.utc).date()
         self._state_file = f"bot_internal_state_{market_type}.json"
         self._load_state()
 
@@ -60,6 +63,12 @@ class StateManager:
                             valid_keys = {f.name for f in fields(self._states[sym])}
                             filtered_data = {k: v for k, v in s_data.items() if k in valid_keys}
                             self._states[sym] = replace(self._states[sym], **filtered_data)
+                        elif sym == "__global__":
+                            self._daily_realized_pnl = s_data.get("daily_realized_pnl", 0.0)
+                            self._daily_trades_count = s_data.get("daily_trades_count", 0)
+                            if s_data.get("last_reset_date"):
+                                self._last_reset_date = datetime.fromisoformat(s_data["last_reset_date"]).date()
+                self._reset_daily_limits_if_needed()
                 log_msg("INFO", f"Successfully loaded internal {self.market_type} state.")
             except Exception as e:
                 log_msg("ERROR", f"Failed to load internal state: {e}")
@@ -76,6 +85,11 @@ class StateManager:
                 if s_dict.get("ai_hold_cooldown_until"):
                     s_dict["ai_hold_cooldown_until"] = s_dict["ai_hold_cooldown_until"].isoformat()
                 data[sym] = s_dict
+            data["__global__"] = {
+                "daily_realized_pnl": self._daily_realized_pnl,
+                "daily_trades_count": self._daily_trades_count,
+                "last_reset_date": self._last_reset_date.isoformat()
+            }
             tmp_file = f"{self._state_file}.tmp"
             with open(tmp_file, "w") as f:
                 json.dump(data, f)
@@ -114,6 +128,37 @@ class StateManager:
     def add_to_balance(self, amount: float):
         with self._lock:
             self._live_usdt_balance += amount
+
+    def _reset_daily_limits_if_needed(self):
+        current_date = datetime.now(timezone.utc).date()
+        if self._last_reset_date < current_date:
+            self._daily_realized_pnl = 0.0
+            self._daily_trades_count = 0
+            self._last_reset_date = current_date
+
+    @property
+    def daily_realized_pnl(self) -> float:
+        with self._lock:
+            self._reset_daily_limits_if_needed()
+            return self._daily_realized_pnl
+
+    def add_daily_realized_pnl(self, amount: float):
+        with self._lock:
+            self._reset_daily_limits_if_needed()
+            self._daily_realized_pnl += amount
+            self._save_state()
+
+    @property
+    def daily_trades_count(self) -> int:
+        with self._lock:
+            self._reset_daily_limits_if_needed()
+            return self._daily_trades_count
+
+    def increment_daily_trades(self):
+        with self._lock:
+            self._reset_daily_limits_if_needed()
+            self._daily_trades_count += 1
+            self._save_state()
 
     @property
     def latest_news(self) -> str:

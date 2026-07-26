@@ -571,6 +571,75 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
         
     return {"status": "ok", "message": f"Successfully updated Top {len(strategies[:10])} strategies"}
 
+class PromoteRequest(BaseModel):
+    rank: int
+    stage: str
+
+@app.post("/api/strategy/promote")
+def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
+    if req.stage not in ["PAPER", "LIVE"]:
+        raise HTTPException(status_code=400, detail="Stage must be PAPER or LIVE")
+        
+    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="Leaderboard not found")
+        
+    try:
+        import json
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            strategies = data.get("strategies", [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading leaderboard: {e}")
+        
+    target_strat = next((s for s in strategies if s.get("rank") == req.rank), None)
+    if not target_strat:
+        raise HTTPException(status_code=404, detail=f"Strategy with rank {req.rank} not found")
+        
+    manifest_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_manifest.json")
+    
+    manifest_data = {"active_strategy": {}, "history": []}
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+        except Exception:
+            pass
+            
+    if manifest_data.get("active_strategy", {}).get("name"):
+        manifest_data["history"].append(manifest_data["active_strategy"])
+        manifest_data["history"] = manifest_data["history"][-10:]
+        
+    new_strategy = {
+        "version": "1.0.0",
+        "id": f"strat_{req.rank}_{int(time.time())}",
+        "name": target_strat.get("name", "Unknown"),
+        "stage": req.stage,
+        "promoted_at": datetime.now(timezone.utc).isoformat(),
+        "promoted_by": USER,
+        "parameters": target_strat.get("parameters", {})
+    }
+    manifest_data["active_strategy"] = new_strategy
+    
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest_data, f, indent=2)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write manifest: {e}")
+        
+    return {"status": "success", "message": f"Successfully promoted {new_strategy['name']} to {req.stage}", "data": new_strategy}
+
+@app.get("/api/strategy/deployment")
+def get_strategy_deployment(auth: bool = Depends(verify_jwt)):
+    manifest_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_manifest.json")
+    if os.path.exists(manifest_path):
+        try:
+            import json
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            return {"active_strategy": None, "error": str(e)}
+    return {"active_strategy": None}
 
 
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://45.136.254.62")

@@ -499,6 +499,32 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
         log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
+def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float) -> bool:
+    """Place a STOP_MARKET reduce-only (closePosition=True) order immediately after entry."""
+    if PAPER_TRADING:
+        log_msg("INFO", f"[FUTURES PAPER] Native Stop Loss placed at {sl_price} for {positionSide} {symbol}")
+        return True
+        
+    close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
+    
+    try:
+        # Cancel old stops first just in case
+        futures_cancel_all_orders(symbol)
+        
+        client.futures_create_order(
+            symbol=symbol,
+            side=close_side,
+            positionSide=positionSide,
+            type='STOP_MARKET',
+            stopPrice=str(round(sl_price, 4)),
+            closePosition=True
+        )
+        log_msg("INFO", f"✅ Native STOP_MARKET placed at {sl_price} for {symbol}", market_type='futures')
+        return True
+    except Exception as e:
+        log_msg("ERROR", f"❌ Failed to place Native STOP_MARKET for {symbol}: {sanitize_error(e)}", market_type='futures')
+        return False
+
 
 def futures_get_position(symbol: str, positionSide: str = None) -> dict | None:
     """Fetch position details for a specific futures symbol."""

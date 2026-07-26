@@ -13,7 +13,7 @@ from typing import Dict, List, Any
 from .config import logger, SYMBOLS, N_CPU_WORKERS, GENOME_BATCH_SIZE, DASHBOARD_DATA_DIR
 from .gpu_kernel import GPU_AVAILABLE
 from .data_loader import _load_and_cache_symbol, _df_to_arrays, preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA
-from .evaluator import _mega_batch_gpu_backtest, _cpu_eval_from_arrays, evaluate_genome_gpu
+from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu
 from .leaderboard_sync import save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu, get_deduplicated_top10_gpu
 
 try:
@@ -312,20 +312,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                     cur_step = max(1, (trial.number - session_start_id) + 1)
                     genome = _build_genome_from_trial(trial)
 
-                    p_1m_list = []
-                    for sym, arrays in symbol_arrays.items():
-                        bars = 30 * 48
-                        if arrays["close"].shape[0] < bars: continue
-                        stats = _cpu_eval_from_arrays(arrays, genome, bars)
-                        p_1m_list.append(stats["net_profit_pct"])
-                    p_1m = float(np.mean(p_1m_list)) if p_1m_list else 0.0
-                    trial.report(p_1m, step=1)
-                    if trial.should_prune():
-                        elapsed = int(time.time() - start_time)
-                        save_lab_progress_gpu("running", cur_step, n_trials or 0,
-                                              best_so_far_score, best_so_far_name, elapsed,
-                                              total_db_trials=trial.number + 1)
-                        raise optuna.TrialPruned()
+                    # Pruning disabled for shared portfolio
 
                     full_res = evaluate_genome_gpu(symbol_arrays, genome)
                     st_name = str(genome.get("strategy_type", "rsi")).upper()

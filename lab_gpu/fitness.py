@@ -87,84 +87,61 @@ def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
     return mat
 
 def _compute_fitness_from_matrix(raw_gi: np.ndarray, h_names: List[str]) -> Dict[str, Any]:
-    """
-    Aggregate one genome's raw GPU output matrix into a fitness dict.
-    raw_gi shape: [n_symbols, n_horizons, 4]  (4 = profit, winrate, maxdd, trades)
-    """
-    n_s, n_h, _ = raw_gi.shape
-    res: Dict[str, Any] = {}
-    total_trades_1y = 0
-    win_rate_1y     = 0.0
-    max_dd_all      = 0.0
-    moonshots       = 0
+    """Legacy individual compute removed as we fully rely on _vectorized_batch_compute_fitness"""
+    pass
 
-    for hi, h_name in enumerate(h_names):
-        profits = []
-        for si in range(n_s):
-            profit = float(raw_gi[si, hi, 0])
-            if raw_gi[si, hi, 3] == 0.0 and raw_gi[si, hi, 0] == 0.0:
-                continue
-            profits.append(profit)
-            if h_name == "1y":
-                trades = int(raw_gi[si, hi, 3])
-                wins   = int(round(raw_gi[si, hi, 1] * trades / 100.0)) if trades > 0 else 0
-                dd     = float(raw_gi[si, hi, 2])
-                total_trades_1y += trades
-                if dd > max_dd_all:
-                    max_dd_all = dd
-                if profit > 30.0:
-                    moonshots += 1
-
-        avg = float(np.mean(profits)) if profits else 0.0
-        res[f"net_profit_{h_name}"]        = round(avg, 2)
-        res[f"net_profit_{h_name}_dollar"] = round(avg * 10.0, 2)
-
-        if h_name == "1y" and total_trades_1y > 0:
-            total_wins = 0
-            for si in range(n_s):
-                t = int(raw_gi[si, hi, 3])
-                if t > 0:
-                    total_wins += int(round(raw_gi[si, hi, 1] * t / 100.0))
-            win_rate_1y = (total_wins / total_trades_1y * 100.0) if total_trades_1y > 0 else 0.0
-
-    res["win_rate_1y"]      = round(win_rate_1y, 2)
-    res["max_dd"]           = round(max_dd_all, 2)
-    res["total_trades_1y"]  = total_trades_1y
-    res["moonshots_1y"]     = moonshots
-    res["avg_trades_month"] = round(total_trades_1y / 12.0, 1)
-    res["avg_trades_day"]   = round(total_trades_1y / 365.0, 1)
-
-    return _apply_four_pillar_fitness(res, h_names)
-
-def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> List[Dict[str, Any]]:
+def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[str, Any]]:
     """
     Ultra-fast vectorized NumPy calculation of 4-Pillar Practical Fitness across ALL genomes in a batch.
-    Replaces the slow 4096x Python loop over _compute_fitness_from_matrix (1000x CPU speedup).
+    Replaces the slow 4096x Python loop.
+    raw shape is [n_g, n_h, 4]
     """
-    avg_p = []
-    for hi in range(4):
-        p_mat = raw[:, :, hi, 0]
-        t_mat = raw[:, :, hi, 3]
-        valid_mask = (t_mat > 0.0) | (p_mat != 0.0)
-        valid_counts = np.sum(valid_mask, axis=1)
-        sum_p = np.sum(np.where(valid_mask, p_mat, 0.0), axis=1)
-        avg_p.append(np.where(valid_counts > 0, sum_p / valid_counts, 0.0))
+    is_p_1m = raw[:, 0, 0]
+    is_p_3m = raw[:, 1, 0]
+    is_p_6m = raw[:, 2, 0]
+    is_p_1y = raw[:, 3, 0]
+    
+    oos_p_1m = raw[:, 0, 8]
+    oos_p_3m = raw[:, 1, 8]
+    oos_p_6m = raw[:, 2, 8]
+    oos_p_1y = raw[:, 3, 8]
 
-    avg_p_1m, avg_p_3m, avg_p_6m, avg_p_1y = avg_p[0], avg_p[1], avg_p[2], avg_p[3]
+    avg_p_1m = is_p_1m + oos_p_1m
+    avg_p_3m = is_p_3m + oos_p_3m
+    avg_p_6m = is_p_6m + oos_p_6m
+    avg_p_1y = is_p_1y + oos_p_1y
 
-    total_trades_1y = np.sum(raw[:, :, 3, 3], axis=1)
-    wins_mat = np.round(raw[:, :, 3, 1] * raw[:, :, 3, 3] / 100.0)
-    total_wins_1y = np.sum(wins_mat, axis=1)
-    win_rate_1y = np.where(total_trades_1y > 0, (total_wins_1y / total_trades_1y) * 100.0, 0.0)
-    max_dd_1y = np.max(raw[:, :, 3, 2], axis=1)
-    moonshots_1y = np.sum(raw[:, :, 3, 0] > 30.0, axis=1)
+    is_trades_1y = raw[:, 3, 3]
+    oos_trades_1y = raw[:, 3, 11]
+    total_trades_1y = is_trades_1y + oos_trades_1y
 
-    # ── Pillar A: Fee & Slippage Drag (Already deducted in simulation kernels: 0.15% round-trip per trade) & Calmar Profit Scaling ──
-    live_p_1y = avg_p_1y
-    live_p_6m = avg_p_6m
-    live_p_3m = avg_p_3m
-    live_p_1m = avg_p_1m
-    total_profit_live = live_p_1y + live_p_6m + live_p_3m + live_p_1m
+    is_win_rate_1y = raw[:, 3, 1]
+    oos_win_rate_1y = raw[:, 3, 9]
+    win_rate_1y = np.where(total_trades_1y > 0, 
+                           (is_win_rate_1y * is_trades_1y + oos_win_rate_1y * oos_trades_1y) / np.maximum(1.0, total_trades_1y),
+                           0.0)
+
+    is_max_dd_1y = raw[:, 3, 2]
+    oos_max_dd_1y = raw[:, 3, 10]
+    max_dd_1y = np.maximum(is_max_dd_1y, oos_max_dd_1y)
+    
+    is_gross_profit_1y = raw[:, 3, 4]
+    oos_gross_profit_1y = raw[:, 3, 12]
+    is_gross_loss_1y = raw[:, 3, 5]
+    oos_gross_loss_1y = raw[:, 3, 13]
+    is_max_streak_1y = raw[:, 3, 6]
+    oos_max_streak_1y = raw[:, 3, 14]
+    
+    total_gross_profit_1y = is_gross_profit_1y + oos_gross_profit_1y
+    total_gross_loss_1y = is_gross_loss_1y + oos_gross_loss_1y
+    pf_1y = np.where(total_gross_loss_1y > 0.0, total_gross_profit_1y / total_gross_loss_1y, np.where(total_gross_profit_1y > 0.0, 99.0, 0.0))
+    oos_pf_1y = np.where(oos_gross_loss_1y > 0.0, oos_gross_profit_1y / oos_gross_loss_1y, np.where(oos_gross_profit_1y > 0.0, 99.0, 0.0))
+    oos_expectancy = np.where(oos_trades_1y > 0, (oos_gross_profit_1y - oos_gross_loss_1y) / oos_trades_1y, 0.0)
+    
+    moonshots_1y = np.where(avg_p_1y > 30.0, 1, 0)
+
+    # ── Pillar A: Fee & Slippage Drag & Calmar Profit Scaling ──
+    total_profit_live = avg_p_1y + avg_p_6m + avg_p_3m + avg_p_1m
 
     # Calmar-Ratio Profit Scaling: Slash profit score if Max Drawdown exceeds 25% safe threshold
     dd_factor = np.minimum(1.0, (25.0 / np.maximum(1.0, max_dd_1y)) ** 1.5)
@@ -195,7 +172,33 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
     # ── Pillar D: Final Composite Practical Fitness Score (Quadratic Drawdown Punishment) ──
     win_score = win_rate_1y * 3.0
     dd_penalty = (max_dd_1y * 2.5) + (np.maximum(0.0, max_dd_1y - 30.0) ** 2 * 15.0)
-    fitness_arr = np.round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit, 2)
+    
+    # ── Pillar E: Walk-Forward Validation (WFA) Penalty ──
+    is_ann_p = is_p_1y / 0.7
+    oos_ann_p = oos_p_1y / 0.3
+    wfa_ratio = np.where(is_ann_p > 0.0, oos_ann_p / is_ann_p, 0.0)
+    
+    wfa_penalty = np.where(
+        (is_ann_p > 10.0) & (wfa_ratio < 0.5),
+        -5000.0 * (0.5 - wfa_ratio),
+        0.0
+    )
+    wfa_penalty = np.where(
+        (is_ann_p > 10.0) & (oos_ann_p < 0.0),
+        -10000.0,
+        wfa_penalty
+    )
+
+    # ── Pillar F: Phase 4 Hard Gates (PF, Expectancy, OOS Max DD) ──
+    hard_gate_penalty = np.zeros(n_g, dtype=np.float32)
+    # Hard Gate 1: OOS PF < 1.10
+    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_pf_1y < 1.10), -10000.0, hard_gate_penalty)
+    # Hard Gate 2: OOS Expectancy < 0
+    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_expectancy < 0.0), -10000.0, hard_gate_penalty)
+    # Hard Gate 3: OOS Max DD > 15%
+    hard_gate_penalty = np.where(oos_max_dd_1y > 15.0, -10000.0, hard_gate_penalty)
+
+    fitness_arr = np.round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit + wfa_penalty + hard_gate_penalty, 2)
 
     results = []
     for gi in range(n_g):
@@ -207,6 +210,8 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
         results.append({
             "net_profit_1y": round(np_1y, 2),
             "net_profit_1y_dollar": round(np_1y_dollar, 2),
+            "is_profit_1y": round(float(is_p_1y[gi]), 2),
+            "oos_profit_1y": round(float(oos_p_1y[gi]), 2),
             "avg_profit_per_trade_pct": avg_trade_pct,
             "avg_profit_per_trade_dollar": avg_trade_dollar,
             "net_profit_6m": round(float(avg_p_6m[gi]), 2),
@@ -221,6 +226,9 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int, n_s: int) -> Li
             "moonshots_1y": int(moonshots_1y[gi]),
             "avg_trades_month": round(t / 12.0, 1),
             "avg_trades_day": round(t / 365.0, 1),
+            "profit_factor": round(float(pf_1y[gi]), 2),
+            "oos_profit_factor": round(float(oos_pf_1y[gi]), 2),
+            "oos_expectancy": round(float(oos_expectancy[gi]), 3),
             "fitness_score": float(fitness_arr[gi])
         })
     return results

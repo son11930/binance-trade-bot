@@ -10,7 +10,6 @@ from lab_gpu import (
     _vectorized_batch_compute_fitness,
     _pack_genomes_to_flat,
     _df_to_arrays,
-    _build_symbol_arrays_for_cpu,
     _GPU_FLAT_DATA,
     _GPU_DEVICE_ARRAYS,
     save_lab_progress_gpu,

@@ -363,5 +363,29 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Inspect remote VPS logs (`journalctl -u binance-bot.service -n 50`) and storage quotas (`df -h`, `journalctl --disk-usage`) via SSH/paramiko before and after applying configurations.
 - **Status**: Completed.
 
+---
 
+### Phase 33: Strategy Robustness, Live Risk Controls, and Risk-First Dashboard
+
+- **Objective**: วางแผนยกระดับ GPU strategy synthesizer ให้ค้นหา candidate ที่มีผลกำไรสุทธิและความสม่ำเสมอแบบ out-of-sample โดยมีความถี่รวมทั้งพอร์ต 1–10 trades/day พร้อมสร้าง promotion gate ก่อนนำกลยุทธ์ไปใช้จริง ปรับ hard risk/execution controls ของ live bot และปรับ Web Dashboard ให้แสดง equity, drawdown, exposure, cost และ data freshness ตามความจริง
+- **Primary Engine Boundary**: `bot_strategy_synthesizer_gpu.py` และ `lab_gpu/` เป็นระบบหลักที่ใช้งานจริง ส่วน `bot_strategy_synthesizer.py` เป็น legacy CPU ที่เลิกใช้งานแล้ว จึงไม่ใช่ implementation หรือ parity target ของ Phase 33
+- **Critical Planning Findings**:
+  1. Search space มีประมาณ 80 genes แต่ GPU mega-kernel ใช้จริง 29 genes ทำให้ leaderboard ปัจจุบันเกิด duplicate phenotype และยังไม่พร้อมใช้เป็นหลักฐานสำหรับ live deployment
+  2. ผล 1M/3M/6M/1Y มาจาก nested windows ที่ซ้อนกันและยังไม่มี untouched OOS/walk-forward validation
+  3. Live position sizing ยังอิง allocation 10–40% จาก AI โดยไม่ผูกกับ stop distance และยังขาด portfolio/daily drawdown circuit breakers
+  4. Protective stop ของ Futures อยู่ใน local process แม้มี exchange-native TP/SL helper อยู่แล้ว จึงต้องออกแบบ fail-closed protection และ fill reconciliation ก่อนเพิ่ม risk
+  5. Dashboard ยังมี metric/status ที่อาจทำให้เข้าใจผิด เช่น hard-coded live state, stale lab progress และ PnL% ที่ไม่ใช่ portfolio return
+- **Canonical Detailed Plan**: ดู `plam.md` สำหรับ capability contract, KPI gates, phased backlog, TDD/verification matrix, rollout/rollback criteria และ open decisions
+- **Scope Boundary**: ระยะนี้เป็น planning/documentation และได้ดำเนินการตั้งค่า Baseline ใน Phase 0 แล้ว
+- **Confirmed KPI / Risk Budget (2026-07-27)**:
+  1. **Trade Counting**: นับแยกตาม engine (Spot และ Futures)
+  2. **Risk Budget**: 20% max portfolio drawdown
+  3. **Hedge vs One-way**: เลือก Mode ที่กำไรมากที่สุดตามข้อมูลจริง (Default: Hedge Mode สำหรับ Futures เพื่อลด conflict ทาง State หากมี Signal สวนทาง, หรือตาม backtest ที่ให้ PnL สูงสุด)
+  4. **Cost Assumptions**: ตามจริงทั้งหมด (Maker 0.02%, Taker 0.05%, historical funding & slippage)
+  5. **Data Availability**: ใช้ฐานข้อมูลเดิมวิเคราะห์ baseline 
+  6. **Promotion Pipeline**: ลงเทรดจริง ไม่มี paper trading
+  7. **Symbol Universe**: คงเดิมที่ 20 เหรียญ
+  8. **Capital Allocation**: แยก Spot และ Futures อย่างชัดเจน
+  9. **Approvals**: ทำด้วยมือโดยระบบผู้ใช้เพียงคนเดียว ไม่มีระบบ Auto-promote
+- **Status**: **Phase 0 Baseline Frozen**. Moving to Phase 1 (GPU Main-Path Truth and Fallback/Production Conformance).
 

@@ -169,14 +169,8 @@ class WebSocketManager:
                                 self.state_manager.update_state(symbol, active_strategy="NONE")
                         _execution_pool.submit(_execute_futures_rm)
                     
-            # 2. Strategy evaluation on candle close
-            if is_closed:
-                if self.market_type == 'futures':
-                    from .signal_evaluator import evaluate_futures_strategy_for_symbol
-                    _execution_pool.submit(evaluate_futures_strategy_for_symbol, self.state_manager, symbol, df.copy(), current_price)
-                else:
-                    from .signal_evaluator import evaluate_strategy_for_symbol
-                    _execution_pool.submit(evaluate_strategy_for_symbol, self.state_manager, symbol, df.copy(), current_price)
+            # 2. Strategy evaluation on candle close is now handled by the Central Trading Loop in main.py
+            # Websocket only handles buffer updates and real-time risk management (Stop Loss / Take Profit)
         except Exception as e:
             import traceback
             log_msg("ERROR", f"Unhandled exception in process_kline_message: {e}\n{traceback.format_exc()}", market_type=self.market_type)

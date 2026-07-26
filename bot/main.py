@@ -107,6 +107,31 @@ def main():
     threading.Thread(target=opportunity_tracker_loop, daemon=True).start()
     threading.Thread(target=global_memory_loop, daemon=True).start()
     
+    def central_trading_loop():
+        import time
+        from datetime import datetime
+        from .signal_evaluator import evaluate_all_spot_strategies_single_pass, evaluate_all_futures_strategies_single_pass
+        
+        log_msg("INFO", "Central Trading Clock started. Evaluates at xx:00:02 and xx:30:02")
+        while True:
+            now = datetime.now()
+            if now.minute in (0, 30) and now.second == 2:
+                log_msg("INFO", f"⏰ Central Clock Triggered at {now.strftime('%H:%M:%S')}. Running Single-Pass evaluations...")
+                
+                from .config import SYMBOLS
+                
+                # Run evaluations in separate threads so we don't block the clock
+                threading.Thread(target=evaluate_all_futures_strategies_single_pass, args=(state_manager_futures, SYMBOLS), daemon=True).start()
+                threading.Thread(target=evaluate_all_spot_strategies_single_pass, args=(state_manager_spot, SYMBOLS), daemon=True).start()
+                
+                # Sleep for 2 seconds to avoid triggering multiple times within the same second
+                time.sleep(2)
+            else:
+                # Sleep 0.5s to be precise and not miss the 2nd second mark
+                time.sleep(0.5)
+
+    threading.Thread(target=central_trading_loop, daemon=True).start()
+    
     # Initialize WebSocket Managers
     ws_manager_spot = WebSocketManager(state_manager_spot, market_type='spot')
     ws_manager_futures = WebSocketManager(state_manager_futures, market_type='futures')

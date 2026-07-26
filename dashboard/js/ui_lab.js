@@ -151,9 +151,14 @@ async function fetchLeaderboard() {
                             <h3 class="text-lg font-extrabold text-white tracking-wide">${escapeHTML(strat.name || 'Blueprint')}</h3>
                         </div>
                     </div>
-                    <button onclick="copyAICommandFromIndex(${idx})" class="px-4 py-2 rounded-xl bg-gradient-to-r from-neonCyan/20 to-blue-500/20 text-neonCyan font-bold text-xs uppercase tracking-widest border border-neonCyan/40 hover:bg-neonCyan/30 transition-all shadow-[0_0_10px_rgba(0,240,255,0.2)] flex items-center gap-2">
-                        <span>📋</span> Copy AI Command
-                    </button>
+                    <div class="flex gap-2">
+                        <button onclick="deployStrategy(${strat.rank}, 'PAPER')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500/20 to-blue-400/10 text-blue-400 font-bold text-[10px] uppercase tracking-widest border border-blue-500/40 hover:bg-blue-500/30 transition-all shadow-[0_0_10px_rgba(59,130,246,0.2)] flex items-center gap-2">
+                            <span>🧪</span> Paper Trade
+                        </button>
+                        <button onclick="deployStrategy(${strat.rank}, 'LIVE')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/10 text-red-400 font-bold text-[10px] uppercase tracking-widest border border-red-500/40 hover:bg-red-500/30 transition-all shadow-[0_0_10px_rgba(239,68,68,0.2)] flex items-center gap-2">
+                            <span>🔥</span> Live Trade
+                        </button>
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
                     <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
@@ -206,13 +211,6 @@ async function fetchLeaderboard() {
     }
 }
 
-function copyAICommandFromIndex(idx) {
-    if (!window.currentLeaderboardStrategies || !window.currentLeaderboardStrategies[idx]) return;
-    const strat = window.currentLeaderboardStrategies[idx];
-    const paramStr = JSON.stringify(strat.parameters || {}, null, 2);
-    copyAICommand(strat.rank, strat.name || `Blueprint #${strat.rank}`, paramStr);
-}
-
 function copyAICommand(rank, name, paramStr) {
     const cmd = `Antigravity อัปเกรดระบบเทรดใน bot/strategy.py ให้ใช้กลยุทธ์ Blueprint #${rank} (${name}) ตามที่ห้องแล็บค้นพบเลย!\nพารามิเตอร์ DNA:\n${paramStr}`;
     navigator.clipboard.writeText(cmd).then(() => {
@@ -221,3 +219,27 @@ function copyAICommand(rank, name, paramStr) {
         prompt("Copy this AI Command:", cmd);
     });
 }
+
+window.deployStrategy = async function(rank, stage) {
+    if (!confirm(`Are you sure you want to deploy Strategy Rank #${rank} to ${stage} TRADE?`)) return;
+    try {
+        const response = await fetch(`/api/strategy/promote`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('dashboard_token')}`
+            },
+            body: JSON.stringify({ rank, stage })
+        });
+        const result = await response.json();
+        if (response.ok) {
+            showToast(`Strategy successfully deployed to ${stage}!`, "success");
+        } else {
+            showToast(result.detail || result.message || "Failed to deploy strategy", "error");
+        }
+    } catch (e) {
+        console.error(e);
+        showToast("Error communicating with server", "error");
+    }
+}
+

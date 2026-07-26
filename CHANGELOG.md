@@ -1,3 +1,42 @@
+## [2.1.2] - 2026-07-27 (Phase 2: Data Quality & Walk-Forward Validation)
+### Changed
+- **Walk-Forward In-Sample & Out-Of-Sample Splitting**: The `gpu_kernel.py` and `cpu_kernel.py` time-loops are now strictly split into 70% IS and 30% OOS.
+- **WFA State Reset**: To simulate true real-world conditions, all positions and portfolio balances are strictly reset at the IS/OOS barrier.
+- **WFA Penalization System**: Heavily penalized Optuna fitness scoring in `fitness.py` if the WFA Efficiency Ratio is below 50% or if the strategy completely blows up during the OOS test window. Overfitting is severely punished.
+- **Kernel Parity Verification**: Successfully ran and captured output metrics ensuring zero reshaping or Numba compilation errors.
+
+## [2.1.1] - 2026-07-27 (Phase 1: Portfolio Engine Upgrade & Live Alignment)
+### Changed
+- **Massive GPU Kernel Rewrite**: Refactored `lab_gpu/gpu_kernel.py` from independent symbol evaluation to a fully synchronized Shared Portfolio Time-Loop. 
+- **CPU Kernel Parity**: Completely rewrote `lab_gpu/cpu_kernel.py` to match the exact shared portfolio layout as the GPU.
+- **Fixed Fractional Sizing**: Kelly criteria is now applied on total portfolio equity across all concurrent symbols (Max 10).
+- **Realistic Gap & Fill**: Slippage, maker/taker fees (0.02% / 0.05%), and adverse SL gap opening fills have been rigorously enforced in the backtest engines.
+- **Evaluator Rewrite**: Deprecated `_cpu_eval_from_arrays` loop; routed all evaluations through the unified `_mega_batch_gpu_backtest`.
+- **Data Alignment**: Enforced implicit right-alignment time-sync across all 20 assets in `lab_gpu/data_loader.py`.
+- **Cleanup**: Deleted legacy `bot_strategy_synthesizer.py`.
+
+## [2.1.0] - 2026-07-26 (Phase 0: Baseline Freeze)
+- Created data_contract.md to define metric boundaries and operational policies.
+- Created scripts/export_baseline.py to query SQLite databases and generate baseline metrics.
+- Generated reports/baseline_report.json.
+- Updated PROJECT_PLAN.md to confirm KPI and Risk Budgets.
+
+## [2026-07-27] - Phase 0 Baseline Frozen
+- Created data_contract.md to define metric boundaries and operational policies.
+- Created scripts/export_baseline.py to query SQLite databases and generate baseline metrics.
+- Generated reports/baseline_report.json.
+- Updated PROJECT_PLAN.md to confirm KPI and Risk Budgets.
+
+## [Unreleased] - 2026-07-26
+
+### Planning
+
+- Added `plam.md`, a planning-only capability and phased roadmap for improving the GPU strategy synthesizer, live trading risk/execution controls, strategy promotion gates, and the Web Dashboard.
+- Documented current blockers including the 80-gene/29-active-gene mismatch, duplicate leaderboard behavior, overlapping validation horizons, missing CPU/GPU/production parity, and incomplete live portfolio risk controls.
+- Added proposed out-of-sample, walk-forward, robustness, paper/canary, rollback, UI correctness, TDD, and verification criteria without changing trading or UI implementation.
+- Clarified that `bot_strategy_synthesizer_gpu.py`/`lab_gpu/` is the primary Strategy Lab, while `bot_strategy_synthesizer.py` is a retired legacy CPU implementation and is not a parity target.
+- Registered Phase 33 in `PROJECT_PLAN.md` as planned and awaiting KPI/risk-budget confirmation.
+
 ## [4.13.0] - 2026-07-14
 ### VPS Log Flood & Disk Exhaustion Defense (Phase 32)
 **English:**

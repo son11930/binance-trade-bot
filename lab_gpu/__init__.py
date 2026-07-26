@@ -12,7 +12,7 @@ from .data_loader import (
     preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA,
     _GPU_DEVICE_ARRAYS
 )
-from .cpu_kernel import simulate_strategy_genome_cpu
+from .cpu_kernel import _cpu_mega_batch_fallback
 from .fitness import (
     _apply_four_pillar_fitness, _pack_genomes_to_flat,
     _compute_fitness_from_matrix, _vectorized_batch_compute_fitness
@@ -29,7 +29,7 @@ from .evolution_engine import run_gpu_synthesizer_lab
 __all__ = [
     "run_gpu_synthesizer_lab",
     "evaluate_genome_gpu",
-    "simulate_strategy_genome_cpu",
+    "_cpu_mega_batch_fallback",
     "_apply_four_pillar_fitness",
     "_vectorized_batch_compute_fitness",
     "_pack_genomes_to_flat",

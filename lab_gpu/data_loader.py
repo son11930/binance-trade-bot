@@ -96,37 +96,50 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], g
     Also stores sym_offsets, sym_lengths, and horizon_bars on device.
     """
     global _GPU_FLAT_DATA
-    if not gpu_available:
-        _GPU_FLAT_DATA.clear()
-        return
-    from numba import cuda as nb_cuda
-
+    
     sym_list = list(symbol_arrays.keys())
     lengths  = [symbol_arrays[s]["close"].shape[0] for s in sym_list]
-    offsets  = np.zeros(len(sym_list), dtype=np.int32)
-    for i in range(1, len(sym_list)):
-        offsets[i] = offsets[i - 1] + lengths[i - 1]
-    total_bars = int(offsets[-1]) + lengths[-1] if sym_list else 0
+    
+    # Time-align symbols
+    min_len = min(lengths) if lengths else 0
+    total_bars = len(sym_list) * min_len if sym_list else 0
+    offsets = np.arange(len(sym_list), dtype=np.int32) * min_len
 
     flat = np.zeros((total_bars, N_FEATURES), dtype=np.float32)
     for i, sym in enumerate(sym_list):
         start = int(offsets[i])
-        end   = start + lengths[i]
+        end   = start + min_len
         arr   = symbol_arrays[sym]
         for fi, feat in enumerate(FEATURE_ORDER):
             if feat in arr:
-                flat[start:end, fi] = arr[feat]
+                # Take the last min_len elements to implicitly align ends
+                flat[start:end, fi] = arr[feat][-min_len:]
 
     _GPU_FLAT_DATA.clear()
-    _GPU_FLAT_DATA.update({
-        "price_flat":   nb_cuda.to_device(flat),
-        "sym_offsets":  nb_cuda.to_device(offsets),
-        "sym_lengths":  nb_cuda.to_device(np.array(lengths, dtype=np.int32)),
-        "horizon_bars": nb_cuda.to_device(np.array(HORIZON_BARS, dtype=np.int32)),
-        "sym_list":     sym_list,
-        "n_symbols":    len(sym_list),
-        "n_horizons":   len(HORIZON_BARS),
-    })
+    
+    if gpu_available:
+        from numba import cuda as nb_cuda
+        _GPU_FLAT_DATA.update({
+            "price_flat":   nb_cuda.to_device(flat),
+            "sym_offsets":  nb_cuda.to_device(offsets),
+            "sym_lengths":  nb_cuda.to_device(np.array(lengths, dtype=np.int32)),
+            "horizon_bars": nb_cuda.to_device(np.array(HORIZON_BARS, dtype=np.int32)),
+            "sym_list":     sym_list,
+            "n_symbols":    len(sym_list),
+            "n_horizons":   len(HORIZON_BARS),
+            "min_len":      min_len
+        })
+    else:
+        _GPU_FLAT_DATA.update({
+            "price_flat":   flat,
+            "sym_offsets":  offsets,
+            "sym_lengths":  np.array(lengths, dtype=np.int32),
+            "horizon_bars": np.array(HORIZON_BARS, dtype=np.int32),
+            "sym_list":     sym_list,
+            "n_symbols":    len(sym_list),
+            "n_horizons":   len(HORIZON_BARS),
+            "min_len":      min_len
+        })
     logger.info(
         f"✅ Mega-Batch VRAM pack: {flat.nbytes/1e6:.1f} MB "
         f"({len(sym_list)} syms × {max(lengths)} bars × {N_FEATURES} feats) ready."

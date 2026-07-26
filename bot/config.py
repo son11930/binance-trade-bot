@@ -17,6 +17,12 @@ MAX_CONCURRENT_TRADES = int(os.getenv("MAX_CONCURRENT_TRADES", "5"))
 STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.5"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://127.0.0.1:8000/api/internal/broadcast")
 
+# Risk Management Settings (Phase 5)
+MAX_RISK_PER_TRADE_PCT = float(os.getenv("MAX_RISK_PER_TRADE_PCT", "0.02"))
+MAX_PORTFOLIO_HEAT_PCT = float(os.getenv("MAX_PORTFOLIO_HEAT_PCT", "0.10"))
+MAX_DAILY_LOSS_PCT = float(os.getenv("MAX_DAILY_LOSS_PCT", "0.10"))
+MAX_DAILY_TRADES = int(os.getenv("MAX_DAILY_TRADES", "15"))
+
 DATABASE_URL_SPOT = os.getenv("DATABASE_URL_SPOT", os.getenv("DATABASE_URL", "sqlite:///./trades_spot.db"))
 DATABASE_URL_FUTURES = os.getenv("DATABASE_URL_FUTURES", os.getenv("DATABASE_URL", "sqlite:///./trades_futures.db"))
 

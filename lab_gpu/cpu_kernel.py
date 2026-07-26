@@ -1,125 +1,307 @@
 """
-cpu_kernel.py — Pure Python/NumPy multi-worker simulation fallback.
+cpu_kernel.py — Pure Python/NumPy multi-worker simulation fallback mapping perfectly to the GPU kernel layout.
 """
-import pandas as pd
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, List, Any
+from .config import _STRAT_MAP_MB, _MACRO_MAP_MB, N_GENOME_PARAMS
+from .fitness import _pack_genomes_to_flat
 
-def simulate_strategy_genome_cpu(df: pd.DataFrame, genome: Dict[str, Any]) -> Dict[str, float]:
-    """CPU fallback for simulate_strategy_genome (re-uses CPU logic from original synthesizer)."""
-    if len(df) < 200:
-        return {"net_profit_pct": 0.0, "win_rate": 0.0, "max_dd": 0.0, "trades": 0}
+def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from .data_loader import _GPU_FLAT_DATA
+    if not _GPU_FLAT_DATA:
+        return []
+        
+    n_genomes = len(genome_batch)
+    n_symbols = _GPU_FLAT_DATA["n_symbols"]
+    n_horizons = _GPU_FLAT_DATA["n_horizons"]
+    
+    price_flat = _GPU_FLAT_DATA["price_flat"]
+    sym_offsets = _GPU_FLAT_DATA["sym_offsets"]
+    horizon_bars = _GPU_FLAT_DATA["horizon_bars"]
+    min_len = _GPU_FLAT_DATA["min_len"]
+    
+    genome_params = _pack_genomes_to_flat(genome_batch)
+    out_results = np.zeros((n_genomes, n_horizons, 16), dtype=np.float32)
+    
+    for g_idx in range(n_genomes):
+        for h_idx in range(n_horizons):
+            h_bars = horizon_bars[h_idx]
+            
+            if h_bars > min_len:
+                out_results[g_idx, h_idx, :] = 0.0
+                continue
+                
+            start_bar = min_len - h_bars
+            end_bar = min_len
+            first_sim_bar = start_bar + 200
+            
+            if first_sim_bar >= end_bar:
+                out_results[g_idx, h_idx, :] = 0.0
+                continue
+                
+            total_trading_bars = end_bar - first_sim_bar
+            is_end_bar = first_sim_bar + int(total_trading_bars * 0.7)
 
-    STRAT = genome.get("strategy_type", "rsi_sniper")
-    adx_thresh   = genome.get("adx_trend_thresh", 20.0)
-    use_dual     = genome.get("use_dual_trend", True)
-    vol_mult     = genome.get("vol_surge_mult", 1.2)
-    sl_atr       = genome.get("sl_atr_mult", 1.5)
-    tp_rr        = genome.get("tp_rr_mult", 2.5)
-    rsi_sniper   = genome.get("gear1_rsi_sniper", 78.0)
-    mfi_thresh   = genome.get("mfi_bull_thresh", 40.0)
-    cci_thresh   = genome.get("cci_trend_thresh", 0.0)
-    williams_thresh = genome.get("williams_r_thresh", -80.0)
-    stoch_thresh = genome.get("stoch_k_thresh", 80.0)
-    moonshot_trig= genome.get("gear2_moonshot_trigger_pct", 0.02)
-    moonshot_gap = genome.get("gear2_moonshot_gap_pct", 0.005)
-    trail_trig   = genome.get("gear3_trailing_trigger_pct", 0.012)
-    trail_gap    = genome.get("gear3_trailing_gap_pct", 0.008)
-    be_trig      = genome.get("gear4_breakeven_trigger_pct", 0.006)
-    be_buf       = min(float(genome.get("gear4_breakeven_buffer_pct", 0.001)), 0.02)
-    max_hold     = int(genome.get("max_hold_bars", 36))
-    sma200_buf   = genome.get("sma200_buffer_pct", 0.995)
-    vol_floor    = genome.get("volume_floor_mult", 0.7)
-    rsi_surge_ceil = genome.get("rsi_surge_ceiling", 82.0)
-    sl_cap       = genome.get("sl_hard_cap_pct", 0.04)
-    tp_cap       = genome.get("tp_hard_cap_pct", 0.10)
-    cooldown_lim = int(genome.get("cooldown_bars_after_sl", 2))
-    kelly        = max(0.20, min(0.40, float(genome.get("kelly_fraction_cap", 0.25))))
-    giant_mult   = genome.get("giant_candle_atr_mult", 2.0)
-    req_green    = genome.get("require_green_candle", False)
-    macro_regime = genome.get("macro_regime_filter", "sma200_only")
-    trend_min_adx= genome.get("trend_strength_min_adx", 15.0)
+            # Load genome params
+            adx_thresh      = genome_params[g_idx, 0]
+            vol_mult        = genome_params[g_idx, 1]
+            sl_atr          = genome_params[g_idx, 2]
+            tp_rr           = genome_params[g_idx, 3]
+            rsi_sniper      = genome_params[g_idx, 4]
+            stoch_thresh    = genome_params[g_idx, 5]
+            mfi_thresh      = genome_params[g_idx, 6]
+            cci_thresh      = genome_params[g_idx, 7]
+            williams_thresh = genome_params[g_idx, 8]
+            moonshot_trig   = genome_params[g_idx, 9]
+            moonshot_gap    = genome_params[g_idx, 10]
+            trail_trig      = genome_params[g_idx, 11]
+            trail_gap       = genome_params[g_idx, 12]
+            be_trig         = genome_params[g_idx, 13]
+            be_buf          = max(0.02, genome_params[g_idx, 14])
+            max_hold        = int(genome_params[g_idx, 15])
+            sma200_buf      = genome_params[g_idx, 16]
+            vol_floor       = genome_params[g_idx, 17]
+            rsi_surge_ceil  = genome_params[g_idx, 18]
+            sl_cap          = genome_params[g_idx, 19]
+            tp_cap          = genome_params[g_idx, 20]
+            cooldown_limit  = int(genome_params[g_idx, 21])
+            kelly           = genome_params[g_idx, 22]
+            giant_mult      = genome_params[g_idx, 23]
+            use_dual        = genome_params[g_idx, 24] > 0.5
+            req_green       = genome_params[g_idx, 25] > 0.5
+            strat           = int(genome_params[g_idx, 26])
+            macro           = int(genome_params[g_idx, 27])
+            trend_min_adx   = genome_params[g_idx, 28]
 
-    g = lambda col, d=0.0: df.get(col, pd.Series(d, index=df.index)).values
+            # Shared Portfolio State
+            balance = 1000.0
+            peak_balance = 1000.0
+            max_dd = 0.0
+            wins = 0
+            total_trades = 0
+            gross_profit = 0.0
+            gross_loss = 0.0
+            curr_streak = 0.0
+            max_streak = 0.0
+            
+            in_pos = np.zeros(n_symbols, dtype=bool)
+            entry_p = np.zeros(n_symbols, dtype=np.float32)
+            sl_p = np.zeros(n_symbols, dtype=np.float32)
+            tp_p = np.zeros(n_symbols, dtype=np.float32)
+            bars_in_trade = np.zeros(n_symbols, dtype=np.float32)
+            cooldown_counter = np.zeros(n_symbols, dtype=np.float32)
+            
+            max_concurrent = 10.0
+            
+            for t in range(first_sim_bar, end_bar):
+                if t == is_end_bar:
+                    net_p = ((balance - 1000.0) / 1000.0) * 100.0
+                    if net_p > 10000.0: net_p = 10000.0
+                    w_rate = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
+                    out_results[g_idx, h_idx, 0] = net_p
+                    out_results[g_idx, h_idx, 1] = w_rate
+                    out_results[g_idx, h_idx, 2] = max_dd * 100.0
+                    out_results[g_idx, h_idx, 3] = total_trades
+                    out_results[g_idx, h_idx, 4] = gross_profit * 100.0
+                    out_results[g_idx, h_idx, 5] = gross_loss * 100.0
+                    out_results[g_idx, h_idx, 6] = max_streak
+                    out_results[g_idx, h_idx, 7] = 0.0
+                    
+                    balance = 1000.0
+                    peak_balance = 1000.0
+                    max_dd = 0.0
+                    wins = 0
+                    total_trades = 0
+                    gross_profit = 0.0
+                    gross_loss = 0.0
+                    curr_streak = 0.0
+                    max_streak = 0.0
+                    for s in range(n_symbols):
+                        in_pos[s] = False
+                        bars_in_trade[s] = 0.0
+                        cooldown_counter[s] = 0.0
+                        
+                open_positions = np.sum(in_pos)
+                
+                # Check Exits first
+                for s in range(n_symbols):
+                    idx = sym_offsets[s] + t
+                    c = price_data_flat[idx, 0]
+                    h = price_data_flat[idx, 1]
+                    l = price_data_flat[idx, 2]
+                    o = price_data_flat[idx, 3]
+                    atr = price_data_flat[idx, 7]
+                    
+                    if in_pos[s]:
+                        bars_in_trade[s] += 1.0
+                        exited = False
+                        pnl_pct = 0.0
+                        
+                        actual_sl_fill = sl_p[s]
+                        if o < sl_p[s]:
+                            actual_sl_fill = o
+                        
+                        actual_tp_fill = tp_p[s]
+                        if o > tp_p[s]:
+                            actual_tp_fill = o
+                            
+                        # Maker 0.02%, Taker 0.05%, Slippage 0.05% + Funding ~ 0.20% Round Trip
+                        round_trip_cost = 0.0020
+                        
+                        if l <= actual_sl_fill:
+                            pnl_pct = ((actual_sl_fill - entry_p[s]) / entry_p[s]) - round_trip_cost
+                            exited = True
+                        elif h >= actual_tp_fill:
+                            pnl_pct = ((actual_tp_fill - entry_p[s]) / entry_p[s]) - round_trip_cost
+                            exited = True
+                        elif bars_in_trade[s] >= max_hold:
+                            pnl_pct = ((c - entry_p[s]) / entry_p[s]) - round_trip_cost
+                            exited = True
+                            
+                        if exited:
+                            trade_impact = pnl_pct * kelly * 4.0
+                            balance *= (1.0 + trade_impact)
+                            if trade_impact > 0.0:
+                                wins += 1
+                                gross_profit += trade_impact
+                                curr_streak = 0.0
+                            else:
+                                gross_loss -= trade_impact
+                                curr_streak += 1.0
+                                if curr_streak > max_streak:
+                                    max_streak = curr_streak
+                            total_trades += 1
+                            in_pos[s] = False
+                            bars_in_trade[s] = 0.0
+                            cooldown_counter[s] = float(cooldown_limit)
+                            open_positions -= 1.0
+                        else:
+                            cur_gain_pct = (h - entry_p[s]) / entry_p[s]
+                            if cur_gain_pct >= be_trig:
+                                be_sl = entry_p[s] * (1.0 + be_buf)
+                                if be_sl > sl_p[s]:
+                                    sl_p[s] = be_sl
+                            if cur_gain_pct >= trail_trig:
+                                trail_sl = c * (1.0 - trail_gap)
+                                if trail_sl > sl_p[s]:
+                                    sl_p[s] = trail_sl
+                            if cur_gain_pct >= moonshot_trig:
+                                moon_sl = c * (1.0 - moonshot_gap)
+                                if moon_sl > sl_p[s]:
+                                    sl_p[s] = moon_sl
+                            trailing_sl = c - (atr * sl_atr)
+                            if trailing_sl > sl_p[s]:
+                                sl_p[s] = trailing_sl
+                            if sl_p[s] > c:
+                                sl_p[s] = c
+                
+                # Check Entries
+                for s in range(n_symbols):
+                    if not in_pos[s]:
+                        if cooldown_counter[s] > 0:
+                            cooldown_counter[s] -= 1.0
+                        elif open_positions < max_concurrent:
+                            idx = sym_offsets[s] + t
+                            c = price_data_flat[idx, 0]
+                            h = price_data_flat[idx, 1]
+                            l = price_data_flat[idx, 2]
+                            o = price_data_flat[idx, 3]
+                            v = price_data_flat[idx, 4]
+                            sma200 = price_data_flat[idx, 5]
+                            sma50 = price_data_flat[idx, 6]
+                            atr = price_data_flat[idx, 7]
+                            rsi = price_data_flat[idx, 8]
+                            adx = price_data_flat[idx, 9]
+                            vol_sma = price_data_flat[idx, 10]
+                            bb_up = price_data_flat[idx, 11]
+                            ema10 = price_data_flat[idx, 12]
+                            ema50 = price_data_flat[idx, 13]
+                            st_dir = price_data_flat[idx, 14]
+                            mfi = price_data_flat[idx, 15]
+                            stoch_k = price_data_flat[idx, 16]
+                            cci = price_data_flat[idx, 17]
+                            williams = price_data_flat[idx, 18]
+                            keltner_low = price_data_flat[idx, 19]
+                            tenkan = price_data_flat[idx, 20]
+                            kijun = price_data_flat[idx, 21]
+                            donchian_high_prev = price_data_flat[idx - 1, 22]
+                            ema10_prev = price_data_flat[idx - 1, 12]
+                            ema50_prev = price_data_flat[idx - 1, 13]
+                            
+                            if adx > adx_thresh and v > (vol_sma * vol_floor):
+                                trend_ok = False
+                                if macro == 0:
+                                    trend_ok = (c > sma200 * sma200_buf)
+                                    if use_dual:
+                                        trend_ok = trend_ok and (sma50 > sma200)
+                                elif macro == 1:
+                                    trend_ok = (c > sma200 * sma200_buf) and (adx > trend_min_adx)
+                                else:
+                                    trend_ok = True
 
-    close_arr = df["close"].values; high_arr = df["high"].values
-    low_arr   = df["low"].values;   open_arr = df["open"].values
-    vol_arr   = df["volume"].values
-    sma200_arr= g("SMA_200"); sma50_arr= g("SMA_50"); atr_arr= g("ATR")
-    rsi_arr   = g("RSI");     adx_arr  = g("ADX");    vol_sma= g("SMA_20_Vol")
-    bb_up_arr = g("BB_Upper");ema10    = g("EMA_10"); ema50   = g("EMA_50")
-    st_dir    = g("supertrend_dir"); mfi_arr= g("mfi", 50.0)
-    stoch_k   = g("stoch_rsi_k", 50.0); cci_arr= g("cci"); wlr= g("williams_r", -50.0)
-    kelt_low  = g("keltner_lower"); tenkan= g("ichimoku_tenkan"); kijun= g("ichimoku_kijun")
-    don_high  = g("donchian_high_20", close_arr)
+                                is_not_blowoff = (h - l) <= (atr * giant_mult)
+                                candle_ok = True
+                                if req_green:
+                                    candle_ok = c > o
 
-    in_pos = False; entry_p = sl_p = tp_p = 0.0
-    balance = peak_balance = 1000.0; max_dd = 0.0
-    wins = total_trades = bars_in_trade = cooldown = 0
+                                if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up or strat == 9):
+                                    entry_ok = False
+                                    if strat == 0:
+                                        entry_ok = (rsi < rsi_sniper) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
+                                    elif strat == 1:
+                                        entry_ok = (ema10 > ema50 and ema10_prev <= ema50_prev)
+                                    elif strat == 2:
+                                        entry_ok = (st_dir == 1 and mfi > mfi_thresh)
+                                    elif strat == 3:
+                                        entry_ok = (c > tenkan and tenkan > kijun and cci > cci_thresh)
+                                    elif strat == 4:
+                                        entry_ok = (l <= keltner_low and c > keltner_low)
+                                    elif strat == 5:
+                                        entry_ok = (stoch_k < stoch_thresh and mfi > mfi_thresh)
+                                    elif strat == 6:
+                                        entry_ok = (williams < williams_thresh and rsi < rsi_sniper)
+                                    elif strat == 7:
+                                        entry_ok = (c >= donchian_high_prev and adx > 25.0)
+                                    elif strat == 8:
+                                        entry_ok = ((ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult)
+                                    elif strat == 9:
+                                        entry_ok = (c > bb_up and adx > adx_thresh and (atr / c) < 0.03)
+                                    elif strat == 10:
+                                        entry_ok = (st_dir == 1 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0)
+                                    elif strat == 11:
+                                        entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= 0.02 and (donchian_high_prev - c) / donchian_high_prev <= 0.08 and rsi < 45.0)
 
-    for i in range(200, len(df)):
-        c, h, l, o, v = close_arr[i], high_arr[i], low_arr[i], open_arr[i], vol_arr[i]
-        atr = atr_arr[i]
-        if cooldown > 0:
-            cooldown -= 1
-        if not in_pos and cooldown == 0:
-            if adx_arr[i] > adx_thresh and v > vol_sma[i] * vol_floor:
-                trend_ok = False
-                if macro_regime == "sma200_only":
-                    trend_ok = c > sma200_arr[i] * sma200_buf and ((not use_dual) or sma50_arr[i] > sma200_arr[i])
-                elif macro_regime == "sma200_and_adx":
-                    trend_ok = c > sma200_arr[i] * sma200_buf and adx_arr[i] > trend_min_adx
-                else:
-                    trend_ok = True
-                not_blowoff = (h - l) <= atr * giant_mult
-                candle_ok = (c > o) if req_green else True
-                if trend_ok and not_blowoff and candle_ok and (c <= bb_up_arr[i] or STRAT == "bollinger_squeeze_explosion"):
-                    entry_ok = False
-                    if   STRAT == "rsi_sniper":                  entry_ok = rsi_arr[i] < rsi_sniper or (v > vol_sma[i] * vol_mult and rsi_arr[i] < rsi_surge_ceil)
-                    elif STRAT == "ema_cross":                   entry_ok = ema10[i] > ema50[i] and ema10[i-1] <= ema50[i-1]
-                    elif STRAT == "supertrend_momentum":         entry_ok = st_dir[i] == 1 and mfi_arr[i] > mfi_thresh
-                    elif STRAT == "ichimoku_cloud":              entry_ok = c > tenkan[i] and tenkan[i] > kijun[i] and cci_arr[i] > cci_thresh
-                    elif STRAT == "keltner_bounce":              entry_ok = l <= kelt_low[i] and c > kelt_low[i]
-                    elif STRAT == "stoch_mfi_flow":              entry_ok = stoch_k[i] < stoch_thresh and mfi_arr[i] > mfi_thresh
-                    elif STRAT == "williams_mean_rev":           entry_ok = wlr[i] < williams_thresh and rsi_arr[i] < rsi_sniper
-                    elif STRAT == "donchian_breakout":           entry_ok = c >= don_high[i-1] and adx_arr[i] > 25.0
-                    elif STRAT == "macd_momentum_surge":         entry_ok = (ema10[i] - ema50[i]) / c > 0.005 and ema10[i] > ema10[i-1] and v > vol_sma[i] * vol_mult
-                    elif STRAT == "bollinger_squeeze_explosion": entry_ok = c > bb_up_arr[i] and adx_arr[i] > adx_thresh and (atr / c) < 0.03
-                    elif STRAT == "parabolic_sar_vortex":        entry_ok = st_dir[i] == 1 and tenkan[i] > kijun[i] and mfi_arr[i] > mfi_thresh and rsi_arr[i] > 50.0
-                    elif STRAT == "fibonacci_golden_pullback":   entry_ok = c > sma200_arr[i] and don_high[i-1] > 0 and (don_high[i-1] - c) / don_high[i-1] >= 0.02 and (don_high[i-1] - c) / don_high[i-1] <= 0.08 and rsi_arr[i] < 45.0
-                    if entry_ok:
-                        in_pos = True; entry_p = c
-                        sl_p = max(c - atr * sl_atr, c * (1 - sl_cap))
-                        tp_p = min(c + atr * sl_atr * tp_rr, c * (1 + tp_cap))
-                        bars_in_trade = 0
-        elif in_pos:
-            bars_in_trade += 1
-            cur_close = (c - entry_p) / entry_p
-            exited = False; pnl = 0.0
-            if l <= sl_p:
-                pnl = ((sl_p - entry_p) / entry_p) - 0.0015; balance *= 1 + pnl * kelly * 4
-                if pnl > 0: wins += 1
-                total_trades += 1; in_pos = False; bars_in_trade = 0; cooldown = cooldown_lim; exited = True
-            elif h >= tp_p:
-                pnl = ((tp_p - entry_p) / entry_p) - 0.0015; balance *= 1 + pnl * kelly * 4
-                if pnl > 0: wins += 1
-                total_trades += 1; in_pos = False; bars_in_trade = 0; exited = True
-            elif bars_in_trade >= max_hold:
-                pnl = cur_close - 0.0015; balance *= 1 + pnl * kelly * 4
-                if pnl > 0: wins += 1
-                total_trades += 1; in_pos = False; bars_in_trade = 0; exited = True
-            if not exited:
-                cur_gain = (max(h, c) - entry_p) / entry_p
-                if cur_gain >= be_trig:  sl_p = max(sl_p, entry_p * (1 + be_buf))
-                if cur_gain >= trail_trig: sl_p = max(sl_p, c * (1 - trail_gap))
-                if cur_gain >= moonshot_trig: sl_p = max(sl_p, c * (1 - moonshot_gap))
-                sl_p = max(sl_p, c - atr * sl_atr)
-                sl_p = min(sl_p, c)  # ABSOLUTE SAFETY: Stop Loss can NEVER exceed current close price!
-        if balance > peak_balance: peak_balance = balance
-        dd = (peak_balance - balance) / peak_balance if peak_balance > 0 else 0
-        if dd > max_dd: max_dd = dd
+                                    if entry_ok:
+                                        in_pos[s] = True
+                                        entry_p[s] = c
+                                        sl_val = c - (atr * sl_atr)
+                                        sl_floor = c * (1.0 - sl_cap)
+                                        sl_p[s] = sl_val if sl_val > sl_floor else sl_floor
+                                        tp_val = c + (atr * sl_atr * tp_rr)
+                                        tp_cap_val = c * (1.0 + tp_cap)
+                                        tp_p[s] = tp_val if tp_val < tp_cap_val else tp_cap_val
+                                        bars_in_trade[s] = 0.0
+                                        open_positions += 1.0
 
-    net_profit = ((balance - 1000.0) / 1000.0) * 100.0
-    win_rate = wins / total_trades * 100.0 if total_trades > 0 else 0.0
-    return {"net_profit_pct": round(net_profit, 2), "win_rate": round(win_rate, 2),
-            "max_dd": round(max_dd * 100.0, 2), "trades": total_trades}
+                if balance > peak_balance:
+                    peak_balance = balance
+                if peak_balance > 0.0:
+                    dd = (peak_balance - balance) / peak_balance
+                    if dd > max_dd:
+                        max_dd = dd
+
+            net_profit = ((balance - 1000.0) / 1000.0) * 100.0
+            if net_profit > 10000.0:
+                net_profit = 10000.0
+            win_rate = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
+            out_results[g_idx, h_idx, 8] = net_profit
+            out_results[g_idx, h_idx, 9] = win_rate
+            out_results[g_idx, h_idx, 10] = max_dd * 100.0
+            out_results[g_idx, h_idx, 11] = total_trades
+            out_results[g_idx, h_idx, 12] = gross_profit * 100.0
+            out_results[g_idx, h_idx, 13] = gross_loss * 100.0
+            out_results[g_idx, h_idx, 14] = max_streak
+            out_results[g_idx, h_idx, 15] = 0.0
+
+    from .fitness import _vectorized_batch_compute_fitness
+    return _vectorized_batch_compute_fitness(out_results, n_genomes)

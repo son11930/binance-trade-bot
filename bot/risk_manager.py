@@ -1,7 +1,51 @@
 from datetime import datetime, timezone
 import math
 from .state import SymbolState
-from .config import FUTURES_LEVERAGE
+from .config import FUTURES_LEVERAGE, MAX_DAILY_LOSS_PCT, MAX_DAILY_TRADES, MAX_PORTFOLIO_HEAT_PCT
+from .logger import log_msg
+
+def calculate_portfolio_heat(state_manager) -> float:
+    """Calculate the total risk exposure as a percentage of the live balance."""
+    states = state_manager.get_all_states()
+    live_usdt = state_manager.live_usdt_balance
+    if live_usdt <= 0:
+        return 0.0
+        
+    total_risk = 0.0
+    for sym, state in states.items():
+        if state.position > 0 and state.buy_price > 0 and state.dynamic_sl > 0:
+            qty = state.position
+            entry = state.buy_price
+            sl = state.dynamic_sl
+            if state.position_side == "SHORT":
+                risk_amt = max(0.0, (sl - entry) * qty)
+            else:
+                risk_amt = max(0.0, (entry - sl) * qty)
+            total_risk += risk_amt
+            
+    return total_risk / live_usdt
+
+def check_circuit_breakers(state_manager, market_type: str = "futures") -> bool:
+    """Return True if any circuit breaker is tripped, blocking new trades."""
+    daily_trades = state_manager.daily_trades_count
+    if daily_trades >= MAX_DAILY_TRADES:
+        log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: Max Daily Trades ({MAX_DAILY_TRADES}) reached.", market_type=market_type)
+        return True
+        
+    daily_pnl = state_manager.daily_realized_pnl
+    live_usdt = state_manager.live_usdt_balance
+    if live_usdt > 0:
+        daily_loss_pct = -daily_pnl / live_usdt
+        if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
+            log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: Max Daily Loss Limit ({MAX_DAILY_LOSS_PCT*100}%) reached. Loss: {daily_pnl:.2f}", market_type=market_type)
+            return True
+            
+    heat = calculate_portfolio_heat(state_manager)
+    if heat > MAX_PORTFOLIO_HEAT_PCT:
+        log_msg("WARNING", f"🔥 PORTFOLIO HEAT EXCEEDED: Current heat {heat*100:.2f}% > Limit {MAX_PORTFOLIO_HEAT_PCT*100}%.", market_type=market_type)
+        return True
+        
+    return False
 
 def calculate_spot_pnl(entry_price: float, current_price: float, quantity: float, fee_rate: float | None = None, symbol: str = "") -> tuple[float, float]:
     """Returns (pnl_amount, pnl_percent) for Spot."""

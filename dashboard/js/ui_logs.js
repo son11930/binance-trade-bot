@@ -73,8 +73,11 @@ function renderLogsUI(logsData, isDelta = false) {
 }
 
 function renderStatsUI(statsData) {
-    if (!statsData || !statsData[selectedTimeframe]) return;
-    const data = statsData[selectedTimeframe];
+    if (!statsData) return;
+    const currentMode = typeof viewMode !== 'undefined' ? viewMode : 'PAPER';
+    const modeData = statsData[currentMode];
+    if (!modeData || !modeData[selectedTimeframe]) return;
+    const data = modeData[selectedTimeframe];
     
     const winRateEl = document.getElementById('win-rate');
     const winLossEl = document.getElementById('win-loss-count');
@@ -93,8 +96,8 @@ function renderStatsUI(statsData) {
         pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
     }
     
-    if (statsData['ALL']) {
+    if (modeData['ALL']) {
         const totalTrEl = document.getElementById('total-trades');
-        if (totalTrEl) totalTrEl.innerText = statsData['ALL'].wins + statsData['ALL'].losses;
+        if (totalTrEl) totalTrEl.innerText = modeData['ALL'].wins + modeData['ALL'].losses;
     }
 }

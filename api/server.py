@@ -84,7 +84,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot'):
+def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot', is_paper: bool = None):
     query = db.query(
         func.sum(Trade.pnl_amount).label('cumulative_pnl'),
         func.sum(case((Trade.pnl_amount > 0, 1), else_=0)).label('wins'),
@@ -97,6 +97,9 @@ def get_stats_for_period(db: Session, start_time=None, market_type: str = 'spot'
             ), else_=0
         )).label('cumulative_capital')
     ).filter(Trade.pnl_amount.isnot(None), Trade.market_type == market_type)
+    
+    if is_paper is not None:
+        query = query.filter(Trade.paper_trade == is_paper)
     
     if start_time:
         query = query.filter(Trade.timestamp >= start_time)
@@ -132,11 +135,18 @@ def get_trade_stats(db: Session, market_type: str = 'spot'):
         return _stats_cache[market_type]
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    
+    def fetch_stats(is_paper_val):
+        return {
+            "1D": get_stats_for_period(db, now - timedelta(days=1), market_type=market_type, is_paper=is_paper_val),
+            "7D": get_stats_for_period(db, now - timedelta(days=7), market_type=market_type, is_paper=is_paper_val),
+            "1M": get_stats_for_period(db, now - timedelta(days=30), market_type=market_type, is_paper=is_paper_val),
+            "ALL": get_stats_for_period(db, None, market_type=market_type, is_paper=is_paper_val)
+        }
+        
     _stats_cache[market_type] = {
-        "1D": get_stats_for_period(db, now - timedelta(days=1), market_type=market_type),
-        "7D": get_stats_for_period(db, now - timedelta(days=7), market_type=market_type),
-        "1M": get_stats_for_period(db, now - timedelta(days=30), market_type=market_type),
-        "ALL": get_stats_for_period(db, None, market_type=market_type)
+        "PAPER": fetch_stats(True),
+        "LIVE": fetch_stats(False)
     }
     _stats_cache_expiry[market_type] = now_ts + 5 # Cache for 5 seconds
     return _stats_cache[market_type]
@@ -208,10 +218,15 @@ latest_bot_state_futures = {"status_message": "Bot is offline (Not running)", "i
 from bot.config import SYMBOLS
 
 def get_bot_status():
+    from bot.strategy_manager import get_active_strategy
+    strat = get_active_strategy()
+    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("PAPER_TRADING", "True").lower() == "true" else "LIVE")
+    
     return {
         "status": "online",
         "symbols": SYMBOLS,
         "paper_trading": os.getenv("PAPER_TRADING", "True"),
+        "active_stage": active_stage,
         "spot": latest_bot_state_spot,
         "futures": latest_bot_state_futures
     }
@@ -323,8 +338,10 @@ async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(ve
 def get_db_updates(market_type: str = 'spot', since_trade_id: int = 0, since_log_id: int = 0):
     db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
     try:
-        trades_query = db.query(Trade).filter(Trade.market_type == market_type)
-        trades = trades_query.order_by(Trade.timestamp.desc()).limit(50).all()
+        trades_paper = db.query(Trade).filter(Trade.market_type == market_type, Trade.paper_trade == True).order_by(Trade.timestamp.desc()).limit(50).all()
+        trades_live = db.query(Trade).filter(Trade.market_type == market_type, Trade.paper_trade == False).order_by(Trade.timestamp.desc()).limit(50).all()
+        trades = trades_paper + trades_live
+        trades.sort(key=lambda x: x.timestamp, reverse=True)
         
         logs_query = db.query(SystemLog).filter(SystemLog.market_type == market_type)
         if since_log_id > 0:
@@ -393,6 +410,10 @@ class PositionModel(BaseModel):
     pnl_percent: float
     position_side: Optional[str] = None
     margin: Optional[float] = None
+    dynamic_sl: Optional[float] = None
+    dynamic_tp: Optional[float] = None
+    holding_time_minutes: Optional[int] = None
+    distance_to_liquidation_percent: Optional[float] = None
 
 class BroadcastState(BaseModel):
     market_type: str = 'spot'
@@ -403,6 +424,12 @@ class BroadcastState(BaseModel):
     positions: List[PositionModel] = []
     ai_debate: Optional[Dict[str, Any]] = None
     updated_at: Optional[str] = None
+    active_stage: Optional[str] = None
+    daily_realized_pnl: Optional[float] = None
+    daily_trades_count: Optional[int] = None
+    consecutive_losses: Optional[int] = None
+    max_drawdown: Optional[float] = None
+    system_health: Optional[Dict[str, Any]] = None
 
 @app.post("/api/internal/broadcast")
 @limiter.limit("120/minute")

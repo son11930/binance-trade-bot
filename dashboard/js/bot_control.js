@@ -108,7 +108,8 @@ function setMarket(market) {
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size (Side)</th>
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Entry / Mark</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Funding / L-S</th>
+                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Risk (Liq/SL/TP)</th>
+                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Funding / Hold</th>
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin</th>
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
                 <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>

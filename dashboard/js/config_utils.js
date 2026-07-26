@@ -23,6 +23,41 @@ let dataStore = {
 let isSpotPaused = false;
 let isFuturesPaused = false;
 let selectedTimeframe = "ALL";
+let viewMode = localStorage.getItem('viewMode') || 'PAPER'; // Default to PAPER
+
+function setViewMode(mode) {
+    viewMode = mode;
+    localStorage.setItem('viewMode', mode);
+    
+    // Update active button classes
+    const paperBtn = document.getElementById('view-paper-btn');
+    const liveBtn = document.getElementById('view-live-btn');
+    
+    if (mode === 'PAPER') {
+        if (paperBtn) paperBtn.className = "px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors";
+        if (liveBtn) liveBtn.className = "px-3 py-1 rounded-full text-slate-400 hover:text-white transition-colors";
+    } else {
+        if (paperBtn) paperBtn.className = "px-3 py-1 rounded-full text-slate-400 hover:text-white transition-colors";
+        if (liveBtn) liveBtn.className = "px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors";
+    }
+
+    // Re-render UIs based on new filter
+    if (dataStore[currentMarket].status) {
+        if (typeof updateStatusUI === 'function') {
+            updateStatusUI(dataStore[currentMarket].status, dataStore[currentMarket].globalConfig);
+        }
+    }
+    if (dataStore[currentMarket].trades) {
+        if (typeof updateTradesUI === 'function') {
+            updateTradesUI(dataStore[currentMarket].trades);
+        }
+    }
+    if (dataStore[currentMarket].stats) {
+        if (typeof renderStatsUI === 'function') {
+            renderStatsUI(dataStore[currentMarket].stats);
+        }
+    }
+}
 
 // XSS Prevention Utility
 function escapeHTML(str) {

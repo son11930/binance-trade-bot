@@ -43,6 +43,9 @@ class StateManager:
         self._fear_greed_index: str = "Neutral (50)"
         self._daily_realized_pnl: float = 0.0
         self._daily_trades_count: int = 0
+        self._consecutive_losses: int = 0
+        self._max_drawdown: float = 0.0
+        self._peak_balance: float = 0.0
         self._last_reset_date = datetime.now(timezone.utc).date()
         self._state_file = f"bot_internal_state_{market_type}.json"
         self._load_state()
@@ -66,6 +69,9 @@ class StateManager:
                         elif sym == "__global__":
                             self._daily_realized_pnl = s_data.get("daily_realized_pnl", 0.0)
                             self._daily_trades_count = s_data.get("daily_trades_count", 0)
+                            self._consecutive_losses = s_data.get("consecutive_losses", 0)
+                            self._max_drawdown = s_data.get("max_drawdown", 0.0)
+                            self._peak_balance = s_data.get("peak_balance", 0.0)
                             if s_data.get("last_reset_date"):
                                 self._last_reset_date = datetime.fromisoformat(s_data["last_reset_date"]).date()
                 self._reset_daily_limits_if_needed()
@@ -88,6 +94,9 @@ class StateManager:
             data["__global__"] = {
                 "daily_realized_pnl": self._daily_realized_pnl,
                 "daily_trades_count": self._daily_trades_count,
+                "consecutive_losses": getattr(self, '_consecutive_losses', 0),
+                "max_drawdown": getattr(self, '_max_drawdown', 0.0),
+                "peak_balance": getattr(self, '_peak_balance', 0.0),
                 "last_reset_date": self._last_reset_date.isoformat()
             }
             tmp_file = f"{self._state_file}.tmp"
@@ -120,14 +129,37 @@ class StateManager:
         with self._lock:
             return self._live_usdt_balance
 
+    def _update_drawdown_unlocked(self):
+        if not hasattr(self, '_peak_balance'):
+            self._peak_balance = self._live_usdt_balance
+            self._max_drawdown = 0.0
+            
+        if self._live_usdt_balance > self._peak_balance:
+            self._peak_balance = self._live_usdt_balance
+            
+        if self._peak_balance > 0:
+            dd = (self._peak_balance - self._live_usdt_balance) / self._peak_balance
+            if dd > getattr(self, '_max_drawdown', 0.0):
+                self._max_drawdown = dd
+
+    @property
+    def consecutive_losses(self) -> int:
+        with self._lock: return getattr(self, '_consecutive_losses', 0)
+
+    @property
+    def max_drawdown(self) -> float:
+        with self._lock: return getattr(self, '_max_drawdown', 0.0)
+
     @live_usdt_balance.setter
     def live_usdt_balance(self, value: float):
         with self._lock:
             self._live_usdt_balance = value
+            self._update_drawdown_unlocked()
 
     def add_to_balance(self, amount: float):
         with self._lock:
             self._live_usdt_balance += amount
+            self._update_drawdown_unlocked()
 
     def _reset_daily_limits_if_needed(self):
         current_date = datetime.now(timezone.utc).date()
@@ -146,6 +178,15 @@ class StateManager:
         with self._lock:
             self._reset_daily_limits_if_needed()
             self._daily_realized_pnl += amount
+            
+            if not hasattr(self, '_consecutive_losses'):
+                self._consecutive_losses = 0
+            
+            if amount < 0:
+                self._consecutive_losses += 1
+            elif amount > 0:
+                self._consecutive_losses = 0
+                
             self._save_state()
 
     @property

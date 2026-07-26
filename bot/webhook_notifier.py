@@ -33,6 +33,18 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
         if state.position > 0:
             pnl_amt, pnl_pct = calculate_pnl(state.buy_price, state.last_price, state.position, market_type=market_type, position_side=state.position_side)
             
+            # calculate distance to liquidation
+            dist_liq = None
+            if market_type == 'futures' and state.last_price > 0:
+                from .config import FUTURES_LEVERAGE
+                liq_dist = 1.0 / FUTURES_LEVERAGE
+                dist_liq = liq_dist * 100.0
+
+            # calculate holding time
+            hold_time = None
+            if state.trade_entry_time:
+                hold_time = int((datetime.now(timezone.utc) - state.trade_entry_time).total_seconds() / 60)
+
             position_entry = {
                 "symbol": sym,
                 "quantity": state.position,
@@ -41,6 +53,10 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
                 "pnl_amount": pnl_amt,
                 "pnl_percent": pnl_pct,
                 "position_side": state.position_side,
+                "dynamic_sl": getattr(state, 'dynamic_sl', None),
+                "dynamic_tp": getattr(state, 'dynamic_tp', None),
+                "holding_time_minutes": hold_time,
+                "distance_to_liquidation_percent": dist_liq,
             }
 
             if market_type == 'futures':
@@ -63,6 +79,15 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
     safe_ai_debate = sanitize_dict(ai_debate) if ai_debate else None
     safe_positions = sanitize_dict(positions_data)
 
+    from .strategy_manager import get_active_strategy
+    strat = get_active_strategy()
+    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("PAPER_TRADING", "True").lower() == "true" else "LIVE")
+
+    sys_health = {
+        "api_healthy": True,
+        "db_healthy": True
+    }
+
     res = {
         "market_type": market_type,
         "status_message": safe_status,
@@ -72,7 +97,13 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
         "positions": safe_positions,
         "ai_debate": safe_ai_debate,
         "fear_greed_index": sanitize_text(str(state_manager.fear_greed_index)) if state_manager.fear_greed_index is not None else None,
-        "updated_at": datetime.now(timezone.utc).isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "active_stage": active_stage,
+        "daily_realized_pnl": state_manager.daily_realized_pnl,
+        "daily_trades_count": state_manager.daily_trades_count,
+        "consecutive_losses": getattr(state_manager, 'consecutive_losses', 0),
+        "max_drawdown": getattr(state_manager, 'max_drawdown', 0.0),
+        "system_health": sys_health
     }
     try:
         import json

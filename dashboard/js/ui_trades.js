@@ -1,18 +1,23 @@
 // ui_trades.js — Trade Execution Log Table and Delta Deduplication
 
 function updateTradesUI(trades, isDelta = false) {
-    if (dataStore[currentMarket].stats && dataStore[currentMarket].stats['ALL']) {
+    if (typeof viewMode !== 'undefined') {
+        const wantsPaper = (viewMode === 'PAPER');
+        trades = trades.filter(t => t.paper_trade === wantsPaper);
+    }
+    
+    if (dataStore[currentMarket].stats && dataStore[currentMarket].stats[viewMode || 'PAPER'] && dataStore[currentMarket].stats[viewMode || 'PAPER']['ALL']) {
         const totalTrEl = document.getElementById('total-trades');
-        if (totalTrEl) totalTrEl.innerText = dataStore[currentMarket].stats['ALL'].wins + dataStore[currentMarket].stats['ALL'].losses;
+        if (totalTrEl) totalTrEl.innerText = dataStore[currentMarket].stats[viewMode || 'PAPER']['ALL'].wins + dataStore[currentMarket].stats[viewMode || 'PAPER']['ALL'].losses;
     } else {
         const totalTrEl = document.getElementById('total-trades');
-        if (totalTrEl) totalTrEl.innerText = dataStore[currentMarket].trades.length;
+        if (totalTrEl) totalTrEl.innerText = trades.length;
     }
     
     const lastRiskEl = document.getElementById('last-risk');
     if (lastRiskEl) {
-        if (dataStore[currentMarket].trades.length > 0 && dataStore[currentMarket].trades[0].ai_risk_score !== null) {
-            const risk = dataStore[currentMarket].trades[0].ai_risk_score;
+        if (trades.length > 0 && trades[0].ai_risk_score !== null) {
+            const risk = trades[0].ai_risk_score;
             lastRiskEl.innerText = `Last Risk: ${risk}/100`;
         } else {
             lastRiskEl.innerText = `Last Risk: --`;

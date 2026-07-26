@@ -85,6 +85,15 @@
             </div>
 
             <div class="flex items-center space-x-6">
+                <!-- System Health Bar -->
+                <div class="flex items-center space-x-2 text-[10px] uppercase font-bold tracking-widest text-slate-400 border border-slate-700/50 rounded-full px-3 py-1 bg-slate-900/50">
+                    <span id="health-bot" class="text-neonGreen">BOT</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="health-api" class="text-neonGreen">API</span>
+                    <span class="text-slate-600">|</span>
+                    <span id="health-db" class="text-neonGreen">DB</span>
+                </div>
+
                 <!-- Toggle Pause -->
                 <button id="toggle-pause-btn" onclick="togglePause()" class="px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors">
                     <span id="pause-text">Loading...</span>
@@ -95,6 +104,11 @@
                       <span class="relative inline-flex rounded-full h-3 w-3 bg-neonGreen"></span>
                     </span>
                     <span class="text-sm font-semibold tracking-wider text-neonGreen">SYSTEM LIVE</span>
+                </div>
+                <!-- Paper/Live View Toggle -->
+                <div class="bg-slate-800 p-1 rounded-full flex text-xs font-bold uppercase tracking-widest">
+                    <button id="view-paper-btn" onclick="setViewMode('PAPER')" class="px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors">PAPER</button>
+                    <button id="view-live-btn" onclick="setViewMode('LIVE')" class="px-3 py-1 rounded-full text-slate-400 hover:text-white transition-colors">LIVE</button>
                 </div>
                 <span id="mode-badge" class="px-4 py-1.5 rounded-full bg-blue-500/10 text-blue-400 text-sm font-bold border border-blue-500/30 uppercase tracking-widest">
                     Loading Mode...
@@ -173,7 +187,41 @@
             </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <!-- Risk Cockpit -->
+        <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-3 ml-2 flex items-center space-x-2">
+            <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+            <span>Risk Cockpit</span>
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="glass-card p-6 rounded-2xl">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Max Drawdown</p>
+                <p id="risk-drawdown" class="text-3xl font-extrabold text-white">0.00%</p>
+                <p class="text-[10px] uppercase text-slate-500 mt-2">Peak to Trough</p>
+            </div>
+            <div class="glass-card p-6 rounded-2xl">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Daily PNL</p>
+                <p id="risk-daily-pnl" class="text-3xl font-extrabold text-white">$0.00</p>
+                <p class="text-[10px] uppercase text-slate-500 mt-2">Realized Today</p>
+            </div>
+            <div class="glass-card p-6 rounded-2xl">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Daily Trades</p>
+                <p id="risk-daily-trades" class="text-3xl font-extrabold text-white">0 / 15</p>
+                <div class="w-full bg-slate-800 h-1.5 mt-3 rounded-full overflow-hidden">
+                    <div id="risk-trades-bar" class="bg-neonCyan h-full w-0"></div>
+                </div>
+            </div>
+            <div class="glass-card p-6 rounded-2xl">
+                <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em] mb-2">Consecutive Losses</p>
+                <p id="risk-consecutive-losses" class="text-3xl font-extrabold text-white">0</p>
+                <p class="text-[10px] uppercase text-slate-500 mt-2">Current Streak</p>
+            </div>
+        </div>
+
+        <h2 class="text-sm font-bold uppercase tracking-widest text-slate-400 mb-3 ml-2 flex items-center space-x-2">
+            <span class="w-2 h-2 rounded-full bg-neonCyan"></span>
+            <span>Performance & Stats</span>
+        </h2>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
                 <div>
                     <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>

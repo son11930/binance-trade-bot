@@ -5,7 +5,7 @@ from .risk_manager import calculate_pnl
 from .state import StateManager
 from .config import FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
 
-def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True):
+def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
     if side == "SELL" and not is_paper:
         base_asset = symbol.replace("USDT", "")
         actual_balance = get_live_asset_balance(base_asset)
@@ -61,7 +61,10 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         risk_score=ai_risk, reason=reason, is_paper=is_paper,
         fee=commission, fee_asset=commission_asset, 
         pnl_amount=pnl_amount, pnl_percent=pnl_percent,
-        market_type='spot'
+        market_type='spot',
+        execution_mode=context.execution_mode if context else ("PAPER" if is_paper else "LIVE"),
+        deployment_id=context.deployment_id if context else None,
+        strategy_id=context.strategy_id if context else None
     )
     if trade:
         log_msg("INFO", f"✅ Trade logged: {side} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})")
@@ -70,7 +73,7 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         log_msg("ERROR", f"⚠️ Failed to save trade to database for {symbol}")
         return None
 
-def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, positionSide: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True):
+def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, positionSide: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
     if qty <= 0:
         log_msg("WARNING", f"⚠️ Skipped {side} {positionSide} for {symbol} because quantity is <= 0.", market_type="futures")
         return None
@@ -151,7 +154,10 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         risk_score=ai_risk, reason=reason, is_paper=is_paper,
         fee=commission, fee_asset=commission_asset, 
         pnl_amount=pnl_amount, pnl_percent=pnl_percent, 
-        market_type="futures", position_side=positionSide
+        market_type="futures", position_side=positionSide,
+        execution_mode=context.execution_mode if context else ("PAPER" if is_paper else "LIVE"),
+        deployment_id=context.deployment_id if context else None,
+        strategy_id=context.strategy_id if context else None
     )
     if trade:
         log_msg("INFO", f"✅ Futures Trade logged: {side} {positionSide} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})", market_type="futures")

@@ -141,19 +141,33 @@ def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]]):
         logger.error(f"Failed to push leaderboard to DB: {e}")
 
 def get_deduplicated_top10_gpu(lb_map: dict) -> list:
+    from .config import REVERSE_STRAT_MAP
+    
     all_items = sorted(lb_map.values(), key=lambda x: x.get("fitness_score", -9999), reverse=True)
     unique, seen = [], set()
+    strat_counts = {}  # Niche preservation: max 2 phenotypes per strategy
+    
     for item in all_items:
         params = item.get("parameters", {})
         key = tuple(sorted([(k, round(v, 4) if isinstance(v, float) else v) for k, v in params.items()]))
-        if key not in seen:
-            seen.add(key); unique.append(item)
+        
+        # Determine strategy type
+        strat_id = int(params.get("strategy_type", 0))
+        
+        if key not in seen and strat_counts.get(strat_id, 0) < 2:
+            seen.add(key)
+            unique.append(item)
+            strat_counts[strat_id] = strat_counts.get(strat_id, 0) + 1
             if len(unique) >= 10:
                 break
+                
     for idx, item in enumerate(unique, 1):
         item["rank"] = idx
-        raw = item.get("name", "").split(": ")[-1]
-        item["name"] = f"🏆 #{idx} ALPHA GENOME: {raw}" if idx == 1 else f"#{idx} BLUEPRINT: {raw}"
+        strat_id = int(item.get("parameters", {}).get("strategy_type", 0))
+        strat_name = REVERSE_STRAT_MAP.get(strat_id, f"Strat-{strat_id}")
+        
+        item["name"] = f"🏆 #{idx} [{strat_name}] ALPHA GENOME" if idx == 1 else f"#{idx} [{strat_name}] BLUEPRINT"
+        
         t = item.get("total_trades_1y", 0)
         np_1y = item.get("net_profit_1y", 0.0)
         np_1y_dollar = item.get("net_profit_1y_dollar", np_1y * 10.0)

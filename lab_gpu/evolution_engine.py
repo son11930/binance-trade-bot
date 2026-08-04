@@ -10,7 +10,7 @@ import threading
 import numpy as np
 from typing import Dict, List, Any
 
-from .config import logger, SYMBOLS, N_CPU_WORKERS, GENOME_BATCH_SIZE, DASHBOARD_DATA_DIR
+from .config import logger, SYMBOLS, N_CPU_WORKERS, GENOME_BATCH_SIZE, DASHBOARD_DATA_DIR, BENCHMARK_MODE
 from .gpu_kernel import GPU_AVAILABLE
 from .data_loader import _load_and_cache_symbol, _df_to_arrays, preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA
 from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu
@@ -24,9 +24,9 @@ except ImportError:
     OPTUNA_AVAILABLE = False
     logger.warning("Optuna not installed. Running in standalone CPU mode without TPE optimization.")
 
-def _build_genome_from_trial(trial) -> Dict[str, Any]:
-    return {
-        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper","ema_cross","supertrend_momentum","ichimoku_cloud","keltner_bounce","stoch_mfi_flow","williams_mean_rev","donchian_breakout","macd_momentum_surge","bollinger_squeeze_explosion","parabolic_sar_vortex","fibonacci_golden_pullback"]),
+def _build_genome_from_trial(trial: optuna.Trial) -> dict:
+    genome = {
+        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]),
         "adx_trend_thresh":   trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
         "use_dual_trend":     trial.suggest_categorical("use_dual_trend", [True, False]),
         "vol_surge_mult":     trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),
@@ -45,8 +45,6 @@ def _build_genome_from_trial(trial) -> Dict[str, Any]:
         "gear4_breakeven_buffer_pct": trial.suggest_float("gear4_breakeven_buffer_pct", 0.0005, 0.003, step=0.0005),
         "max_hold_bars":      trial.suggest_int("max_hold_bars", 12, 72, step=6),
         "vol_exhaustion_mult":trial.suggest_float("vol_exhaustion_mult", 0.3, 0.8, step=0.1),
-        "macro_sma_fast_win": trial.suggest_int("macro_sma_fast_win", 30, 70, step=10),
-        "macro_sma_slow_win": trial.suggest_int("macro_sma_slow_win", 150, 250, step=25),
         "sma200_buffer_pct":  trial.suggest_float("sma200_buffer_pct", 0.985, 1.015, step=0.005),
         "adx_slope_check":    trial.suggest_categorical("adx_slope_check", [True, False]),
         "volume_floor_mult":  trial.suggest_float("volume_floor_mult", 0.5, 1.2, step=0.1),
@@ -55,25 +53,13 @@ def _build_genome_from_trial(trial) -> Dict[str, Any]:
         "rsi_reversal_exit_thresh": trial.suggest_float("rsi_reversal_exit_thresh", 56.0, 74.0, step=2.0),
         "bb_lower_buffer":    trial.suggest_float("bb_lower_buffer", 0.99, 1.04, step=0.01),
         "bb_upper_buffer":    trial.suggest_float("bb_upper_buffer", 0.97, 1.01, step=0.01),
-        "ema_fast_win":       trial.suggest_int("ema_fast_win", 5, 15, step=2),
-        "ema_slow_win":       trial.suggest_int("ema_slow_win", 20, 60, step=5),
-        "macd_fast_win":      trial.suggest_int("macd_fast_win", 8, 16, step=2),
-        "macd_slow_win":      trial.suggest_int("macd_slow_win", 20, 32, step=2),
-        "macd_sig_win":       trial.suggest_int("macd_sig_win", 5, 11, step=2),
         "macd_cross_lookback":trial.suggest_int("macd_cross_lookback", 3, 15, step=2),
         "mfi_bear_thresh":    trial.suggest_float("mfi_bear_thresh", 70.0, 90.0, step=5.0),
         "momentum_req_pos_hist": trial.suggest_categorical("momentum_req_pos_hist", [True, False]),
-        "supertrend_period":  trial.suggest_int("supertrend_period", 7, 15, step=2),
         "supertrend_mult":    trial.suggest_float("supertrend_mult", 2.0, 4.5, step=0.5),
         "ichi_cloud_buffer":  trial.suggest_float("ichi_cloud_buffer", 0.996, 1.004, step=0.002),
-        "stoch_win":          trial.suggest_int("stoch_win", 10, 20, step=2),
-        "keltner_win":        trial.suggest_int("keltner_win", 14, 30, step=4),
         "keltner_mult":       trial.suggest_float("keltner_mult", 1.5, 3.0, step=0.5),
-        "donchian_win":       trial.suggest_int("donchian_win", 15, 40, step=5),
-        "donchian_exit_win":  trial.suggest_int("donchian_exit_win", 5, 20, step=5),
-        "cci_win":            trial.suggest_int("cci_win", 14, 30, step=4),
         "cci_extreme_exit":   trial.suggest_float("cci_extreme_exit", 150.0, 250.0, step=25.0),
-        "williams_win":       trial.suggest_int("williams_win", 10, 20, step=2),
         "williams_r_exit":    trial.suggest_float("williams_r_exit", -25.0, -5.0, step=5.0),
         "giant_candle_atr_mult": trial.suggest_float("giant_candle_atr_mult", 1.5, 3.5, step=0.5),
         "rejection_wick_ratio":  trial.suggest_float("rejection_wick_ratio", 0.25, 0.55, step=0.05),
@@ -102,11 +88,32 @@ def _build_genome_from_trial(trial) -> Dict[str, Any]:
         "max_pos_alloc_pct":  trial.suggest_float("max_pos_alloc_pct", 0.10, 0.25, step=0.05),
         "min_trade_notional": trial.suggest_float("min_trade_notional", 5.0, 15.0, step=2.5),
         "cooldown_bars_after_sl": trial.suggest_int("cooldown_bars_after_sl", 0, 6, step=2),
-        "pyramid_scaling_mult": trial.suggest_float("pyramid_scaling_mult", 0.5, 1.5, step=0.2),
-        "trend_strength_min_adx": trial.suggest_float("trend_strength_min_adx", 10.0, 25.0, step=2.5),
-        "sideways_max_adx":   trial.suggest_float("sideways_max_adx", 20.0, 35.0, step=2.5),
-        "macro_regime_filter": trial.suggest_categorical("macro_regime_filter", ["sma200_only","sma200_and_adx","none"])
+        "pyramid_scaling_mult": trial.suggest_float("pyramid_scaling_mult", 0.5, 1.0, step=0.1),
+        "trend_strength_min_adx": trial.suggest_float("trend_strength_min_adx", 20.0, 35.0, step=2.5),
+        "sideways_max_adx":   trial.suggest_float("sideways_max_adx", 15.0, 25.0, step=2.5),
+        "macro_regime_filter":trial.suggest_categorical("macro_regime_filter", [0, 1, 2])
     }
+    
+    # Inject fixed canonical lookback windows for Live Strategy compatibility
+    # These match the pre-calculated constants in `lab_gpu/data_loader.py`
+    genome.update({
+        "macro_sma_fast_win": 50,
+        "macro_sma_slow_win": 200,
+        "ema_fast_win": 10,
+        "ema_slow_win": 50,
+        "macd_fast_win": 12,
+        "macd_slow_win": 26,
+        "macd_sig_win": 9,
+        "supertrend_period": 10,
+        "stoch_win": 14,
+        "keltner_win": 20,
+        "donchian_win": 20,
+        "donchian_exit_win": 10,
+        "cci_win": 20,
+        "williams_win": 14,
+    })
+    
+    return genome
 
 def run_gpu_synthesizer_lab(n_trials: int = 30):
     """Main entry: Runs the GPU-accelerated Evolutionary Strategy Lab."""
@@ -117,7 +124,12 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     mode_str = "INFINITE (Unlimited)" if not n_trials else str(n_trials)
     engine_str = f"GPU CUDA (RTX 3070)" if GPU_AVAILABLE else f"CPU Multi-Core ({N_CPU_WORKERS} workers)"
 
-    save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing...", 0)
+    if BENCHMARK_MODE:
+        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing (Benchmark Mode)...", 0)
+        logger.info("=" * 70)
+        logger.info(f"  🏎️ BENCHMARK MODE ENABLED (DB Writes Disabled)")
+    else:
+        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing...", 0)
     logger.info("=" * 70)
     logger.info(f"  🚀 GPU EVOLUTIONARY STRATEGY LAB (Bot Strategy Synthesizer GPU)")
     logger.info(f"  Engine : {engine_str}")
@@ -145,8 +157,10 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         logger.error("Optuna not installed! pip install optuna")
         return []
 
-    _optuna_storage = optuna.storages.InMemoryStorage()
-    logger.info(f"Optuna storage: InMemoryStorage (lightning-fast 0.001s Ask-and-Tell loop)")
+    db_path = os.path.join(DASHBOARD_DATA_DIR, "optuna_study.db")
+    os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
+    _optuna_storage = optuna.storages.RDBStorage(url=f"sqlite:///{db_path}")
+    logger.info(f"Optuna storage: SQLite Persistent ({db_path})")
 
     import warnings
     warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
@@ -156,7 +170,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         storage=_optuna_storage,
         load_if_exists=True,
         direction="maximize",
-        sampler=TPESampler(seed=None, n_startup_trials=30, multivariate=False),
+        sampler=TPESampler(seed=42, n_startup_trials=30, multivariate=False),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1)
     )
 
@@ -235,11 +249,14 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                     int_keys   = [k for k, v in genomes[0].items() if isinstance(v, int) and not isinstance(v, bool)]
                     bool_keys  = [k for k, v in genomes[0].items() if isinstance(v, bool)]
                     for m_idx in range(n_mutants):
+                        # Exploration Floor: 5% of mutants get a purely random strategy type and reset
+                        is_exploration = random.random() < 0.05
+                        
                         parent = random.choice(elites) if elites else genomes[0]
                         mutant = parent.copy()
                         for k in float_keys:
-                            if random.random() < 0.15:
-                                val = parent[k] * random.uniform(0.85, 1.15)
+                            if random.random() < 0.15 or is_exploration:
+                                val = parent[k] * random.uniform(0.85, 1.15) if not is_exploration else parent[k] * random.uniform(0.5, 1.5)
                                 if k == "kelly_fraction_cap":
                                     val = max(0.20, min(0.40, val))
                                 elif "thresh" in k or "rsi" in k or "stoch" in k or "mfi" in k:
@@ -249,12 +266,17 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                                         val = max(5.0, min(95.0, val))
                                 mutant[k] = round(val, 5)
                         for k in int_keys:
-                            if random.random() < 0.15:
+                            if random.random() < 0.15 or is_exploration:
                                 mutant[k] = max(1, int(parent[k] * random.uniform(0.85, 1.15)))
                         for k in bool_keys:
-                            if random.random() < 0.05:
-                                mutant[k] = not parent[k]
-                        mutant["strategy_type"] = parent.get("strategy_type", "rsi_sniper")
+                            if random.random() < 0.05 or is_exploration:
+                                mutant[k] = random.choice([True, False]) if is_exploration else not parent[k]
+                        
+                        if is_exploration:
+                            mutant["strategy_type"] = random.choice(["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"])
+                        else:
+                            mutant["strategy_type"] = parent.get("strategy_type", "rsi_sniper")
+                            
                         genomes.append(mutant)
 
                 batch_results = _mega_batch_gpu_backtest(genomes)
@@ -292,17 +314,19 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                     f"Best: {best_so_far_score:.2f} ({best_so_far_name[:40]}) | "
                     f"Elapsed: {elapsed//60}m{elapsed%60}s"
                 )
-                save_lab_progress_gpu(
-                    "running", completed, n_trials or 0,
-                    best_so_far_score, best_so_far_name, elapsed,
-                    total_db_trials=completed
-                )
+                if not BENCHMARK_MODE:
+                    save_lab_progress_gpu(
+                        "running", completed, n_trials or 0,
+                        best_so_far_score, best_so_far_name, elapsed,
+                        total_db_trials=completed
+                    )
 
                 if batch_idx % 5 == 0 or best_so_far_score > (batch_idx - 1) * 0:
                     try:
                         with lock:
                             top_10 = get_deduplicated_top10_gpu(leaderboard_map)
-                        push_leaderboard_to_db_and_json_gpu(top_10)
+                        if not BENCHMARK_MODE:
+                            push_leaderboard_to_db_and_json_gpu(top_10)
                     except Exception as e:
                         logger.error(f"Leaderboard sync error: {e}")
 
@@ -327,14 +351,16 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                             best_so_far_name  = full_res["name"]
 
                     elapsed = int(time.time() - start_time)
-                    save_lab_progress_gpu("running", cur_step, n_trials or 0,
-                                          best_so_far_score, best_so_far_name, elapsed,
-                                          total_db_trials=trial.number + 1)
+                    if not BENCHMARK_MODE:
+                        save_lab_progress_gpu("running", cur_step, n_trials or 0,
+                                              best_so_far_score, best_so_far_name, elapsed,
+                                              total_db_trials=trial.number + 1)
                     if trial.number % 10 == 0 or is_new_best:
                         try:
                             with lock:
                                 top_10 = get_deduplicated_top10_gpu(leaderboard_map)
-                            push_leaderboard_to_db_and_json_gpu(top_10)
+                            if not BENCHMARK_MODE:
+                                push_leaderboard_to_db_and_json_gpu(top_10)
                         except Exception as e:
                             logger.error(f"Leaderboard sync error: {e}")
                     return full_res["fitness_score"]
@@ -355,7 +381,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
     with lock:
         top_10 = get_deduplicated_top10_gpu(leaderboard_map)
-    push_leaderboard_to_db_and_json_gpu(top_10)
+    if not BENCHMARK_MODE:
+        push_leaderboard_to_db_and_json_gpu(top_10)
     elapsed = int(time.time() - start_time)
     best_item = top_10[0] if top_10 else {}
     try:
@@ -363,8 +390,9 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     except Exception:
         best_val = best_item.get("fitness_score", 0.0)
     final_status = "stopped" if not n_trials else "completed"
-    save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
-                           best_val, best_item.get("name", "N/A"), elapsed)
+    if not BENCHMARK_MODE:
+        save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
+                               best_val, best_item.get("name", "N/A"), elapsed)
     logger.info(f"GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
     logger.info(f"Best: {best_item.get('name', 'N/A')} | Score: {best_val:.2f}")
     return top_10

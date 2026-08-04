@@ -389,3 +389,22 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   9. **Approvals**: ทำด้วยมือโดยระบบผู้ใช้เพียงคนเดียว ไม่มีระบบ Auto-promote
 - **Status**: **Phase 0 Baseline Frozen**. Moving to Phase 1 (GPU Main-Path Truth and Fallback/Production Conformance).
 
+---
+
+### Phase 34: GPU Throughput and Evidence-Based Live Readiness (Planning Handoff)
+
+- **Objective**: เพิ่มความเร็วในการค้นหา strategy โดยวัด end-to-end throughput และ qualified candidates/hour พร้อมปิดช่องว่างด้าน search correctness, simulator parity, validation, execution safety และ staged rollout ก่อนใช้เงินจริง
+- **Observed Baseline (2026-08-05)**:
+  1. CUDA ทำงานจริงบน RTX 3070 และ mega-batch ขนาด 4,096 ทำ throughput ได้ประมาณ 330–334 genomes/วินาทีรวม I/O
+  2. Task Manager ในภาพแสดงกราฟ 3D ไม่ใช่ CUDA/Compute จึงใช้ 0% เป็นหลักฐานว่า GPU ไม่ทำงานไม่ได้
+  3. Default 100 trials สร้างเพียง 400 CUDA threads และ underfill GPU อย่างชัดเจน
+  4. Search space มี 80 genes แต่ GPU ใช้ 29 genes; 51 genes ไม่มีผลต่อ fitness
+  5. แต่ละ batch มี TPE ask/tell เพียง 32 จาก 4,096 candidates; raw trials จึงไม่ใช่ตัวชี้วัดคุณภาพ search
+  6. Leaderboard/DB sync ถูกเรียกแทบทุก batch และบล็อก GPU pipeline
+  7. Top 10 ปัจจุบันเป็น `williams_mean_rev` 10/10 พร้อมผลลัพธ์เหมือนกัน เป็น search collapse/behavioral duplication ไม่ใช่หลักฐานว่า Williams ชนะอย่างยุติธรรม
+  8. PAPER/LIVE header toggle เป็น view filter เท่านั้น ขณะที่ Strategy Lab promotion buttons เขียน active manifest จริง
+  9. Manifest stage และ global `PAPER_TRADING` เป็น mode authority สองชุดที่ขัดกันได้ ทำให้เกิด simulated-as-live record หรือ cross-mode exit/stop risk
+- **Canonical Detailed Plan**: ใช้ `plam.md` ฉบับ 2026-08-05 เป็นเอกสาร handoff สำหรับ Luna โดยเริ่มจาก correctness/measurement gates ก่อน optimization และห้าม promote จาก leaderboard ไป LIVE โดยตรง
+- **Immediate Priority**: Luna ต้องเริ่ม Phase 0A เพื่อปิด direct LIVE activation, รวม execution mode ให้เป็น single source of truth และเพิ่ม cross-mode safety tests ก่อน Phase 0 performance baseline
+- **Scope Boundary**: planning/documentation only; ไม่มีการแก้ kernel, optimizer, live bot, configuration, process หรือ order ในรอบนี้
+- **Status**: **Plan refreshed for Luna; Phase 0A implementation not started**

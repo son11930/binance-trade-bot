@@ -1,3 +1,25 @@
+## [2.2.0] - 2026-08-05 (Phase 1: GPU Engine Core & Evolution Boundaries)
+
+### Added (Phase 1 Engine Core Completion)
+- **Persistent AI Storage**: Replaced `InMemoryStorage` with SQLite database (`bot/optuna_study.db`) for Optuna.
+- **Master Seed**: Fixed Optuna's `TPESampler`, python `random`, and numpy to `seed=42` for determinism.
+- **Niche Preservation**: Leaderboard now strictly enforces a limit of 2 behavioral phenotypes per `strategy_type` to prevent monopoly.
+- **Exploration Floor**: Forced 5% of mutant generation in the Mega Batch to randomly select a new `strategy_type` to prevent local maximums.
+- **Canonical Mapping**: 14 Lookback Window genes pruned from Optuna are reinjected back into the final genome JSON so Live/Paper bot can parse them, and UI displays readable canonical names.
+- **Baselines**: Created `scripts/run_phase1_benchmarks.py` calculating the 20-symbol equal-weighted Buy-and-Hold Return (-53.76%) and a 1000-genome Random Entry Baseline (-1.99%), plus equal budget tests to verify GPU kernel stability across 12 strategies.
+- **Schema Optimization**: Added 37 missing threshold genes directly into the GPU and CPU kernels to accurately evaluate the strategies (verified with `test_golden_parity.py`).
+
+### Planning
+
+- Replaced `plam.md` with an evidence-backed, planning-only handoff for GPU throughput, search correctness, causal validation, realistic execution, risk controls, paper/canary promotion, monitoring, and rollback.
+- Recorded that CUDA is active at roughly 330–334 end-to-end genomes/second while the supplied Task Manager view shows the 3D engine rather than CUDA/Compute.
+- Documented the principal bottlenecks: tiny default runs, mixed-horizon warp divergence, serial bar/symbol loops, per-thread local state pressure, synchronous H2D/kernel/D2H pipeline, and blocking leaderboard/Aiven writes.
+- Documented search-quality blockers: 80 suggested genes versus 29 consumed genes, only 32 TPE observations per 4,096-candidate batch, non-deterministic seeds, in-memory studies, and insufficient CPU/GPU/live parity coverage.
+- Added the `WILLIAMS_MEAN_REV` concentration audit: current Top 10 is a search-collapse/behavioral-duplicate result and is blocked from PAPER/LIVE promotion until equal-budget strategy-fairness gates pass.
+- Added Phase 0A deployment containment after finding conflicting manifest/global execution modes, possible cross-mode exits, simulated trades labeled LIVE, and direct LIVE activation without validation/canary gates.
+- Added requirements to isolate Paper/Live state, balances, positions, risk counters, queries and logs; relabeled the UI toggle as a view filter and specified separate execution-state banners and server-enforced promotion controls.
+- Added Phase 34 to `PROJECT_PLAN.md` as a Luna handoff; no implementation, configuration, process, dependency, or trading behavior was changed.
+
 ## [2.1.2] - 2026-07-27 (Phase 2: Data Quality & Walk-Forward Validation)
 ### Changed
 - **Walk-Forward In-Sample & Out-Of-Sample Splitting**: The `gpu_kernel.py` and `cpu_kernel.py` time-loops are now strictly split into 70% IS and 30% OOS.

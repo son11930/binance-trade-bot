@@ -178,6 +178,9 @@ class Trade(Base):
     pnl_percent = Column(Float, nullable=True)
     position_side = Column(String, nullable=True)
     market_type = Column(String, default="spot", index=True)
+    execution_mode = Column(String, nullable=True)  # PAPER or LIVE
+    deployment_id = Column(String, nullable=True)
+    strategy_id = Column(String, nullable=True)
 
     __table_args__ = (
         sqlalchemy.Index('ix_trade_symbol_market_time', 'symbol', 'market_type', 'timestamp'),
@@ -293,7 +296,7 @@ class TradeRepository:
             db.close()
 
     @staticmethod
-    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True, fee: float = None, fee_asset: str = None, pnl_amount: float = None, pnl_percent: float = None, market_type: str = 'spot', position_side: str = None):
+    def create_trade(symbol: str, side: str, price: float, quantity: float, risk_score: float = None, reason: str = None, is_paper: bool = True, fee: float = None, fee_asset: str = None, pnl_amount: float = None, pnl_percent: float = None, market_type: str = 'spot', position_side: str = None, execution_mode: str = None, deployment_id: str = None, strategy_id: str = None):
         db = SessionLocalFutures() if market_type == 'futures' else SessionLocalSpot()
         try:
             trade = Trade(
@@ -309,7 +312,10 @@ class TradeRepository:
                 pnl_amount=pnl_amount,
                 pnl_percent=pnl_percent,
                 position_side=position_side,
-                market_type=market_type
+                market_type=market_type,
+                execution_mode=execution_mode,
+                deployment_id=deployment_id,
+                strategy_id=strategy_id
             )
             db.add(trade)
             db.commit()
@@ -331,6 +337,9 @@ class TradeRepository:
                 "pnl_percent": trade.pnl_percent,
                 "position_side": trade.position_side,
                 "market_type": trade.market_type,
+                "execution_mode": trade.execution_mode,
+                "deployment_id": trade.deployment_id,
+                "strategy_id": trade.strategy_id,
                 "timestamp": trade.timestamp
             }
             return trade_dict

@@ -23,6 +23,11 @@ function updatePauseUI(data) {
     
     const isPaused = currentMarket === 'spot' ? isSpotPaused : isFuturesPaused;
     
+    const liveToggle = document.getElementById('toggle-allow-live');
+    if (liveToggle && data.hasOwnProperty('allow_live')) {
+        liveToggle.checked = data.allow_live;
+    }
+    
     if (isPaused) {
         btn.className = "px-4 py-1.5 rounded-full bg-neonRed/20 text-neonRed text-sm font-bold border border-neonRed/50 uppercase tracking-widest hover:bg-neonRed/30 transition-colors animate-pulse";
         textSpan.innerText = "RESUME " + currentMarket.toUpperCase();
@@ -47,6 +52,31 @@ async function togglePause() {
         });
     } catch (e) {
         console.error(e);
+    }
+}
+
+async function toggleExecutionMode(key, value) {
+    const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+    const payload = {};
+    payload[key] = value;
+    try {
+        const response = await fetch('/api/toggle_execution_mode', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': token ? `Bearer ${token}` : ''
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            alert(`Error: ${err.detail}`);
+            // Revert UI on failure
+            fetchBotControl();
+        }
+    } catch (e) {
+        console.error(e);
+        fetchBotControl();
     }
 }
 

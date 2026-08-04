@@ -221,13 +221,19 @@ function copyAICommand(rank, name, paramStr) {
 }
 
 window.deployStrategy = async function(rank, stage) {
-    if (!confirm(`Are you sure you want to deploy Strategy Rank #${rank} to ${stage} TRADE?`)) return;
+    let msg = `Are you sure you want to deploy Strategy Rank #${rank} to ${stage} TRADE?`;
+    if (stage === 'LIVE') {
+        msg += "\n\nWARNING: LIVE deployment will use REAL MONEY. Please ensure 'Allow Live Trading' is enabled and the Bot is PAUSED.";
+    }
+    if (!confirm(msg)) return;
+    
     try {
+        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
         const response = await fetch(`/api/strategy/promote`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('dashboard_token')}`
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ rank, stage })
         });

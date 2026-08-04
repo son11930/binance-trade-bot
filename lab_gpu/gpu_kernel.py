@@ -103,6 +103,44 @@ if GPU_AVAILABLE and _cuda_jit:
         strat           = int(genome_params[g_idx, 26])
         macro           = int(genome_params[g_idx, 27])
         trend_min_adx   = genome_params[g_idx, 28]
+        
+        rsi_hook_oversold = genome_params[g_idx, 29]
+        rsi_reversal_exit_thresh = genome_params[g_idx, 30]
+        bb_lower_buffer = genome_params[g_idx, 31]
+        bb_upper_buffer = genome_params[g_idx, 32]
+        macd_cross_lookback = genome_params[g_idx, 33]
+        mfi_bear_thresh = genome_params[g_idx, 34]
+        momentum_req_pos_hist = genome_params[g_idx, 35]
+        supertrend_mult = genome_params[g_idx, 36]
+        ichi_cloud_buffer = genome_params[g_idx, 37]
+        keltner_mult = genome_params[g_idx, 38]
+        cci_extreme_exit = genome_params[g_idx, 39]
+        williams_r_exit = genome_params[g_idx, 40]
+        rejection_wick_ratio = genome_params[g_idx, 41]
+        vol_cap_rejection = genome_params[g_idx, 42]
+        vol_cap_normal = genome_params[g_idx, 43]
+        body_min_atr_pct = genome_params[g_idx, 44]
+        high_low_spread_cap = genome_params[g_idx, 45]
+        spot_step_trigger1 = genome_params[g_idx, 46]
+        spot_step_lock1 = genome_params[g_idx, 47]
+        spot_step_trigger2 = genome_params[g_idx, 48]
+        spot_step_lock2 = genome_params[g_idx, 49]
+        spot_step_trigger3 = genome_params[g_idx, 50]
+        spot_step_lock3 = genome_params[g_idx, 51]
+        gear1_sniper_slope = genome_params[g_idx, 52]
+        gear1_sniper_max_rsi = genome_params[g_idx, 53]
+        gear1_sniper_min_rsi = genome_params[g_idx, 54]
+        gear2_moonshot_atr_mult = genome_params[g_idx, 55]
+        gear3_trailing_atr_mult = genome_params[g_idx, 56]
+        mom_tp_roe_thresh = genome_params[g_idx, 57]
+        mom_tp_rsi_thresh = genome_params[g_idx, 58]
+        mom_tp_drop_pct = genome_params[g_idx, 59]
+        max_pos_alloc_pct = genome_params[g_idx, 60]
+        min_trade_notional = genome_params[g_idx, 61]
+        pyramid_scaling_mult = genome_params[g_idx, 62]
+        sideways_max_adx = genome_params[g_idx, 63]
+        adx_slope_check = genome_params[g_idx, 64]
+        vol_exhaustion_mult = genome_params[g_idx, 65]
 
         # Shared Portfolio State
         balance = 1000.0
@@ -176,6 +214,10 @@ if GPU_AVAILABLE and _cuda_jit:
                 atr = price_data_flat[idx, 7]
                 
                 if in_pos[s] > 0.5:
+                    rsi = price_data_flat[idx, 8]
+                    mfi = price_data_flat[idx, 15]
+                    cci = price_data_flat[idx, 17]
+                    williams = price_data_flat[idx, 18]
                     bars_in_trade[s] += 1.0
                     exited = False
                     pnl_pct = 0.0
@@ -199,9 +241,15 @@ if GPU_AVAILABLE and _cuda_jit:
                     elif bars_in_trade[s] >= max_hold:
                         pnl_pct = ((c - entry_p[s]) / entry_p[s]) - round_trip_cost
                         exited = True
+                    elif rsi > rsi_reversal_exit_thresh or cci > cci_extreme_exit or williams > williams_r_exit or mfi < mfi_bear_thresh:
+                        pnl_pct = ((c - entry_p[s]) / entry_p[s]) - round_trip_cost
+                        exited = True
                         
                     if exited:
-                        trade_impact = pnl_pct * kelly * 4.0
+                        adj_kelly = kelly * pyramid_scaling_mult
+                        if adj_kelly > max_pos_alloc_pct:
+                            adj_kelly = max_pos_alloc_pct
+                        trade_impact = pnl_pct * adj_kelly * 4.0
                         balance *= (1.0 + trade_impact)
                         if trade_impact > 0.0:
                             wins += 1
@@ -227,11 +275,29 @@ if GPU_AVAILABLE and _cuda_jit:
                             trail_sl = c * (1.0 - trail_gap)
                             if trail_sl > sl_p[s]:
                                 sl_p[s] = trail_sl
+                            trail_sl2 = c - (atr * gear3_trailing_atr_mult)
+                            if trail_sl2 > sl_p[s]:
+                                sl_p[s] = trail_sl2
                         if cur_gain_pct >= moonshot_trig:
                             moon_sl = c * (1.0 - moonshot_gap)
                             if moon_sl > sl_p[s]:
                                 sl_p[s] = moon_sl
-                        trailing_sl = c - (atr * sl_atr)
+                            moon_sl2 = c - (atr * gear2_moonshot_atr_mult)
+                            if moon_sl2 > sl_p[s]:
+                                sl_p[s] = moon_sl2
+                        if cur_gain_pct >= spot_step_trigger2:
+                            step_sl2 = entry_p[s] * (1.0 + spot_step_lock2)
+                            if step_sl2 > sl_p[s]:
+                                sl_p[s] = step_sl2
+                        if cur_gain_pct >= spot_step_trigger3:
+                            step_sl3 = entry_p[s] * (1.0 + spot_step_lock3)
+                            if step_sl3 > sl_p[s]:
+                                sl_p[s] = step_sl3
+                        if cur_gain_pct > mom_tp_roe_thresh and rsi < mom_tp_rsi_thresh:
+                            mom_sl = c * (1.0 - mom_tp_drop_pct)
+                            if mom_sl > sl_p[s]:
+                                sl_p[s] = mom_sl
+                        trailing_sl = c - (atr * supertrend_mult)
                         if trailing_sl > sl_p[s]:
                             sl_p[s] = trailing_sl
                         if sl_p[s] > c:
@@ -286,32 +352,61 @@ if GPU_AVAILABLE and _cuda_jit:
                             if req_green:
                                 candle_ok = c > o
 
-                            if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up or strat == 9):
+                            if adx < sideways_max_adx:
+                                trend_ok = False
+                            if adx_slope_check > 0.5 and adx < 20.0:
+                                trend_ok = False
+                            if v > vol_sma * vol_exhaustion_mult:
+                                candle_ok = False
+                                
+                            is_rejection = False
+                            if h - l > 0.00001:
+                                is_rejection = ((o if o < c else c) - l) / (h - l) > rejection_wick_ratio
+                            
+                            vol_cap = v < (vol_sma * vol_cap_normal)
+                            if is_rejection:
+                                vol_cap = v < (vol_sma * vol_cap_rejection)
+                            if not vol_cap:
+                                candle_ok = False
+                                
+                            body_pct = 0.0
+                            if atr > 0.00001:
+                                body_pct = abs(c - o) / atr
+                            if body_pct < body_min_atr_pct:
+                                candle_ok = False
+                                
+                            if c > 0.00001 and (h - l) / c > high_low_spread_cap:
+                                candle_ok = False
+                                
+                            if balance * kelly < min_trade_notional:
+                                candle_ok = False
+
+                            if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up * (1.0 + bb_upper_buffer) or strat == 9):
                                 entry_ok = False
                                 if strat == 0:
-                                    entry_ok = (rsi < rsi_sniper) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
+                                    entry_ok = (rsi < rsi_sniper and rsi > gear1_sniper_min_rsi and rsi < gear1_sniper_max_rsi and ema10 > ema10_prev * gear1_sniper_slope) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
                                 elif strat == 1:
-                                    entry_ok = (ema10 > ema50 and ema10_prev <= ema50_prev)
+                                    entry_ok = (ema10 > ema50 and ema10_prev <= ema50_prev and macd_cross_lookback > 0.0)
                                 elif strat == 2:
-                                    entry_ok = (st_dir == 1 and mfi > mfi_thresh)
+                                    entry_ok = (st_dir == 1 and mfi > mfi_thresh and cci > momentum_req_pos_hist)
                                 elif strat == 3:
-                                    entry_ok = (c > tenkan and tenkan > kijun and cci > cci_thresh)
+                                    entry_ok = (c > tenkan + ichi_cloud_buffer and tenkan > kijun and cci > cci_thresh)
                                 elif strat == 4:
-                                    entry_ok = (l <= keltner_low and c > keltner_low)
+                                    entry_ok = (l <= keltner_low * keltner_mult and c > keltner_low)
                                 elif strat == 5:
                                     entry_ok = (stoch_k < stoch_thresh and mfi > mfi_thresh)
                                 elif strat == 6:
                                     entry_ok = (williams < williams_thresh and rsi < rsi_sniper)
                                 elif strat == 7:
-                                    entry_ok = (c >= donchian_high_prev and adx > 25.0)
+                                    entry_ok = (c >= donchian_high_prev and adx > trend_min_adx)
                                 elif strat == 8:
                                     entry_ok = ((ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult)
                                 elif strat == 9:
-                                    entry_ok = (c > bb_up and adx > adx_thresh and (atr / c) < 0.03)
+                                    entry_ok = (c > bb_up * (1.0 - bb_lower_buffer) and adx > adx_thresh and (atr / c) < 0.03)
                                 elif strat == 10:
                                     entry_ok = (st_dir == 1 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0)
                                 elif strat == 11:
-                                    entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= 0.02 and (donchian_high_prev - c) / donchian_high_prev <= 0.08 and rsi < 45.0)
+                                    entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= spot_step_trigger1 and (donchian_high_prev - c) / donchian_high_prev <= spot_step_lock1 and rsi < rsi_hook_oversold)
 
                                 if entry_ok:
                                     in_pos[s] = 1.0

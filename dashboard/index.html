@@ -105,6 +105,14 @@
                     </span>
                     <span class="text-sm font-semibold tracking-wider text-neonGreen">SYSTEM LIVE</span>
                 </div>
+                <!-- Bot Execution Controls -->
+                <div class="flex items-center space-x-3 bg-slate-900/50 p-2 rounded-xl border border-slate-700/50">
+                    <span class="text-[10px] uppercase font-bold tracking-widest text-slate-400">Allow Live</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" id="toggle-allow-live" onchange="toggleExecutionMode('allow_live', this.checked)" class="sr-only peer">
+                      <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-neonRed"></div>
+                    </label>
+                </div>
                 <!-- Paper/Live View Toggle -->
                 <div class="bg-slate-800 p-1 rounded-full flex text-xs font-bold uppercase tracking-widest">
                     <button id="view-paper-btn" onclick="setViewMode('PAPER')" class="px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors">PAPER</button>

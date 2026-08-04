@@ -1,518 +1,430 @@
-# แผนยกระดับ Strategy Synthesizer, Trading Bot และ Web Dashboard
+# แผนเร่ง GPU Strategy Lab และยกระดับความพร้อมสำหรับเทรดเงินจริง
 
-> วันที่จัดทำ: 2026-07-26
-> สถานะ: Planning only — ยังไม่มีการแก้ implementation
-> ขอบเขตหลัก: `bot_strategy_synthesizer_gpu.py`, `lab_gpu/`, live bot, API และ Web Dashboard
+> วันที่ตรวจ: 2026-08-05
+> สถานะ: Planning only — สำหรับส่งต่อให้ Luna; ยังไม่มีการแก้ implementation, config, process หรือคำสั่งซื้อขาย
+> ขอบเขต: `run_strategy_lab_gpu.bat`, `bot_strategy_synthesizer_gpu.py`, `lab_gpu/`, live bot, API, strategy promotion และ monitoring
 
 ## CAPABILITY
 
-ผู้ดูแลระบบต้องสามารถค้นหาและคัดกรองกลยุทธ์ที่มีกำไรสุทธิหลังต้นทุน มีความถี่รวมทั้งพอร์ต 1–10 trades/day และยังคงแข็งแรงบนข้อมูลที่ optimizer ไม่เคยเห็น จากนั้นนำ candidate ผ่านลำดับ `backtest → robustness → replay → shadow/paper → canary live → live` ที่ตรวจสอบย้อนหลังและ rollback ได้ โดย live bot ต้องควบคุมความเสี่ยงด้วยกฎ deterministic ส่วน Dashboard ต้องแสดงผลกำไร ความเสี่ยง ต้นทุน และความสดของข้อมูลตามความจริง
+ผู้ดูแลต้องสามารถค้นหา strategy candidate ได้เร็วขึ้นโดยไม่แลกกับความถูกต้อง วัดผลด้วย `validated genomes/second` และ `qualified candidates/hour` แทนการพยายามทำให้กราฟ GPU เป็น 100% จากนั้นต้องคัดกรอง candidate ด้วย simulator ที่ causal และ reproducible, walk-forward และ untouched holdout, realistic cost/fill model, shadow/paper และ canary ก่อนเพิ่มเงินจริง พร้อม deterministic risk controls, exchange-native protection, reconciliation, monitoring และ rollback
 
-ผลลัพธ์ที่ต้องการไม่ใช่ “win rate สูงที่สุด” แต่เป็นระบบที่หาและ deploy กลยุทธ์ซึ่งมี positive expectancy, profit factor, drawdown และความสม่ำเสมอที่ยอมรับได้ เพราะ win rate สูงยังสามารถขาดทุนสะสมได้ถ้าขาดทุนต่อครั้งใหญ่กว่ากำไรต่อครั้ง
+ไม่มีระบบใดรับประกัน “กำไรจริง” ได้ เป้าหมายของแผนนี้คือสร้างหลักฐานว่า strategy มี positive expectancy หลังต้นทุนภายใต้หลาย market regimes และจำกัดความเสียหายเมื่อผลจริงเบี่ยงจาก backtest
+
+## สรุปคำตอบจากการตรวจ
+
+### GPU ทำงานจริงหรือไม่
+
+**ทำงานจริง** หลักฐานจาก run ปัจจุบัน:
+
+- Log ระบุ `GPU CUDA (RTX 3070)`, preload ข้อมูล 20 symbols เข้า VRAM และใช้ mega-batch 4,096 genomes
+- Python ตรวจพบ Numba CUDA และ CuPy; CUDA device คือ RTX 3070 Laptop GPU
+- Progress เพิ่มต่อเนื่องและทำได้ประมาณ **330–334 genomes/วินาที** รวมช่วงสร้าง candidate, fitness และ I/O
+- ใช้ VRAM ประมาณ 0.6–0.7 GB; การใช้ VRAM น้อยไม่ใช่ปัญหาในตัวเอง เพราะ dataset มีขนาดเพียงประมาณ 32 MB และ workload ไม่ได้ต้องใช้ VRAM ทั้ง 8 GB
+- ภาพ Task Manager แสดง engine `3D` ไม่ใช่ `CUDA/Compute` จึงไม่ควรใช้ค่า 0% ในภาพตัดสินว่า CUDA ไม่ทำงาน
+
+### ทำไม GPU ดูทำงานน้อยและเป็นช่วง ๆ
+
+1. **Default run เล็กเกินไป**
+   เมนู default รัน 100 trials เท่ากับเพียง 100 × 4 horizons = 400 CUDA threads หรือประมาณ 4 blocks ที่ 128 threads จึง underfill RTX 3070 อย่างมาก แม้ชื่อเมนูจะเรียก GPU Edition
+
+2. **หนึ่ง thread ทำงานอนุกรมหนักเกินไป**
+   Kernel กำหนด `1 thread = 1 genome × 1 horizon` แล้ว thread เดียววนทุก bar และทุก 20 symbols ทำให้ parallelism อยู่ที่ระดับ genome แต่ time/symbol loop ยังเป็น serial
+
+3. **Warp divergence จากการปน 4 horizons**
+   `tid % 4` ทำให้ warp เดียวมี 1M/3M/6M/1Y ปนกัน Thread 1M จบก่อนแต่ต้องรอ thread 1Y และ branch ของ 12 strategy types ยิ่งเพิ่ม divergence
+
+4. **Local-memory/register pressure สูง**
+   แต่ละ thread มี local arrays 6 ชุด × 32 ค่าเพื่อเก็บสถานะ portfolio มีความเสี่ยงเกิด register spill ไป local/global memory จึงสอดคล้องกับ memory activity สูงแต่ compute percentage ต่ำ
+
+5. **Pipeline synchronous และมี bubble ทุก batch**
+   ทุก batch สร้าง stream ใหม่, allocate/copy genome, launch, `synchronize()`, copy กลับ host แล้วจึงทำ fitness/I/O ไม่มี double buffering และไม่ overlap CPU preparation, GPU kernel, D2H และ DB write
+
+6. **Leaderboard/Aiven I/O บล็อกแทบทุก batch**
+   เงื่อนไข sync มีส่วน `best_so_far_score > (batch_idx - 1) * 0` ซึ่งเท่ากับ `best_score > 0` ทำให้ sync ทุก batch หลังมีผลบวก Log แสดง JSON/DB ใช้เวลาราว 1.7–2.2 วินาทีต่อครั้ง และ GPU ต้องรอ
+
+7. **ตัวเลข trials สูง แต่ search ที่มีคุณภาพต่ำกว่าที่เห็น**
+   ใน batch 4,096 มี TPE ask/tell เพียง 32 ตัว หรือประมาณ 0.78%; อีก 4,064 ตัวเป็น mutants ที่ไม่ถูก `study.tell()` จึงไม่ควรวัดความเร็วจาก raw trials อย่างเดียว
+
+8. **80 genes แต่ GPU ใช้จริง 29 genes**
+   มี 51 genes ที่ optimizer สุ่มและ leaderboard แสดง แต่ไม่เข้า kernel จึงไม่เปลี่ยน fitness ทำให้เสีย search budget, เกิด duplicate phenotype และสร้างความมั่นใจผิด ๆ
+
+9. **Environment และคำโฆษณายังไม่ reproducible**
+   Launcher เรียก `python` แบบไม่ล็อก interpreter, dependencies GPU ไม่ได้ pin ใน requirements และข้อความ `~1000x faster` ไม่มี benchmark ใน repo รองรับ CuPy ถูก import แต่ execution path หลักที่ตรวจพบใช้ Numba CUDA; ติดตั้ง CuPy เพิ่มอย่างเดียวไม่ทำให้เร็วขึ้น
+
+### ทำไม Top 10 เป็น WILLIAMS_MEAN_REV ทั้งหมด
+
+Top 10 ปัจจุบันเป็น `williams_mean_rev` 10/10 และมี fitness/return/drawdown/trade count เท่ากัน จึงยังสรุปไม่ได้ว่า Williams ดีที่สุดจริง ภาพนี้เป็นหลักฐานของ **search collapse และ behavioral duplicates** มากกว่าหลักฐานว่ากลยุทธ์อื่นแพ้โดยยุติธรรม
+
+- ใน batch 4,096 มี TPE candidates อิสระเพียง 32 ตัว ส่วน 4,064 mutants รับ parent จาก global elite pool
+- Mutant ถูกบังคับให้ใช้ `strategy_type` เดิมของ parent เมื่อ Williams ขึ้นนำ จึงเกิดวงจร `Williams ชนะ → สร้าง Williams เพิ่ม → Williams ครอง Top 50`
+- ไม่มี archive/quota แยกตาม 12 strategy types และ mutants ที่ชนะไม่ถูกส่งกลับเข้า TPE
+- Dedup ใช้ full 80-gene JSON ทั้งที่ GPU ใช้ 29 genes ทำให้ JSON ต่างแต่พฤติกรรมและผลลัพธ์เหมือนกันยังติด Top 10 ได้
+- Strategy-specific genes หลายตัวไม่ทำงานจริง เพราะ indicator windows ถูกคำนวณเป็นค่าคงที่ก่อนเข้า kernel ทำให้การแข่งขันระหว่าง strategy ไม่เท่าเทียม
+- Lab และ live bot ใช้ชื่อ strategy mapping ไม่ตรงกันหลายชื่อ; unknown live strategy ยัง fallback ไป index 0 ขณะที่ `williams_mean_rev` เป็นชื่อที่ตรงกัน จึงยิ่งทำให้ Williams ดู deployable กว่าคู่แข่ง
+- Fitness ให้รางวัลช่วงความถี่ 500–2,500 trades/ปี จึงอาจเอียงเข้าหา mean-reversion ที่ออกสัญญาณถี่กว่ากลยุทธ์ breakout
+- `gear4_breakeven_buffer_pct` ถูกสุ่มที่ 0.0005–0.003 แต่ kernel บังคับค่าต่ำกว่า 0.02 เป็น 0.02 ทั้งหมด จึงไม่มี diversity จริง
+
+Williams สามารถเก็บไว้เป็น candidate ได้ แต่ leaderboard ชุดปัจจุบันต้องติดสถานะ `RESEARCH / INVALIDATED_BY_SEARCH_BIAS` และห้ามส่งไป PAPER/LIVE จนผ่าน equal-budget multi-strategy benchmark และ search-fairness gate
+
+### สถานะ Paper/Live และความหมายของปุ่มใน UI
+
+ระบบมี paper execution, `paper_trade` ในฐานข้อมูล, stats แยก PAPER/LIVE และ trade-table filter แล้ว แต่ยังไม่เป็น paper environment ที่แยกและปลอดภัยครบวงจร
+
+- Toggle `PAPER | LIVE` บน header เป็น **VIEW FILTER เท่านั้น** เปลี่ยนรายการ trades/stats ที่แสดง ไม่ได้เปลี่ยน execution mode
+- Positions, balance, runtime state, cooldown, daily risk counters และ logs ยังใช้ state ชุดเดียวหรือไม่กรองตาม view mode
+- ปุ่ม `PAPER TRADE`/`LIVE TRADE` บน Strategy Lab ไม่ได้ส่ง order ทันที แต่ POST ไป promotion API และเขียน strategy/stage ทับ single active manifest จากนั้น Futures bot hot-load ตอนประเมินสัญญาณถัดไป
+- ปุ่มไม่ start/resume bot; ถ้า bot offline จะเป็นการ “arm” manifest ไว้สำหรับรอบถัดไป
+- เมื่อ global `PAPER_TRADING=false`, การกด `LIVE TRADE` แล้วกด OK สามารถนำไปสู่ Binance Futures order จริงเมื่อ bot ทำงานและเกิดสัญญาณ
+- Spot ยังอิง global `PAPER_TRADING` และไม่ได้ใช้ manifest stage เหมือน Futures
+- Futures entry บางเส้นทางใช้ manifest stage แต่ real-time exits, cancel และ native stop หลายเส้นทางใช้ global mode จึงมี mode authority สองชุดที่ขัดกัน
+- ผลที่เป็นไปได้คือ simulated order ถูกบันทึกเป็น LIVE หรือ paper position ไปเรียก real exit/stop เมื่อ config กับ manifest ไม่ตรงกัน
+- Promotion API ปัจจุบันตรวจเพียง rank/stage และ browser confirm ครั้งเดียว ยังไม่มี validation gate, re-auth, flat-position check, canary, independent live-enable หรือ atomic manifest revision
+
+ดังนั้นคำตอบสำหรับภาพที่ 4 คือ **ปุ่มทำงานจริงระดับ deployment manifest แต่ยังไม่ปลอดภัยพอให้ใช้** โดยเฉพาะ `LIVE TRADE` ห้ามกดจน Phase 0A ผ่าน และ `PAPER TRADE` ก็ยังไม่ควรถือว่า isolated 100%
 
 ## CONSTRAINTS
 
 ### กฎคงที่
 
-- ตีความเป้าหมาย 1–10 trades/day เป็นจำนวน entry รวมทั้ง portfolio ไม่ใช่ต่อเหรียญ เว้นแต่เจ้าของระบบยืนยันเป็นอย่างอื่น
-- ห้ามนำอันดับจาก leaderboard ไปแก้ `bot/strategy.py` หรือ deploy live โดยตรง
-- Hard risk controls, position sizing, stop protection, stale-data gate และ execution gate ต้องเป็น deterministic logic; AI Council ใช้เป็น optional veto/annotation ไม่ใช่ risk authority
-- ผลประเมินทุกตัวต้องรวม fee, spread, slippage และ funding ตามประเภทตลาด พร้อม cost stress
-- ต้องมี untouched out-of-sample data และ reproducibility metadata ก่อนเรียก candidate ว่า “ผ่าน”
-- ทุก candidate ต้องระบุ code version, data fingerprint, genome schema version, seed, cost model และผล validation
-- การเปลี่ยน implementation ในอนาคตต้องใช้ TDD, coverage รวมอย่างน้อย 80% และผ่าน unit/integration/E2E ตามกฎโปรเจกต์
-- ไม่มีแผนใดรับประกันกำไร เป้าหมายคือเพิ่มคุณภาพหลักฐาน ลด downside และควบคุม deployment risk
+- Correctness และ CPU/GPU/live semantic parity ต้องผ่านก่อน optimization
+- ห้าม promote strategy จาก leaderboard ไป LIVE โดยตรง
+- ห้าม promote leaderboard ชุดปัจจุบันไป PAPER เพราะยังไม่ผ่าน search-fairness gate
+- ต้องมี execution-mode authority เพียงชุดเดียว; หาก environment, manifest และ runtime context ไม่ตรงกันให้ fail closed เป็น PAUSED
+- Stage/view mode/execution mode ต้องเป็นคนละค่าและแสดงแยกกันชัดเจน
+- ห้ามเปลี่ยน PAPER↔LIVE ขณะมี open position, open order หรือ reconciliation mismatch
+- ทุก tunable gene ต้องถูก simulator ใช้จริง หรือเอาออกจาก schema/search space
+- Signal บน bar `t` ห้าม fill ก่อน `t+1` หรือก่อน bid/ask ที่ causal ตาม execution model
+- ทุกผลต้องรวม maker/taker fee, spread, slippage, funding, latency, partial fill และ market impact ตามขนาด order
+- Final holdout ห้ามถูกใช้ใน fitness, tuning, leaderboard ranking หรือ threshold adjustment
+- ทุก run ต้องมี master seed, code/data/config/kernel hash และ checkpoint ที่ resume ได้
+- Hard risk controls เป็น deterministic logic; AI เป็นได้เพียง filter/veto/annotation
+- งาน implementation ในอนาคตใช้ TDD และ coverage รวมอย่างน้อย 80% พร้อม unit/integration/E2E
+- ห้ามตั้งเป้า “GPU 100%” เป็น Definition of Done; ต้องวัด throughput, latency, search quality และ parity
 
-### ข้อจำกัดจากระบบปัจจุบัน
+### สิ่งที่ระบบมีแล้วและต้องรักษา
 
-- `bot_strategy_synthesizer_gpu.py` เป็น wrapper; logic หลักอยู่ใน `lab_gpu/`
-- `bot_strategy_synthesizer_gpu.py`/`lab_gpu/` คือระบบ Strategy Lab หลักที่ใช้งานจริงและเป็น optimization target ของแผนนี้
-- `bot_strategy_synthesizer.py` เป็น legacy CPU รุ่นเก่าที่เลิกใช้งานแล้ว ไม่ใช่ fallback ของ wrapper ปัจจุบัน อยู่นอกขอบเขตการพัฒนาและไม่ใช่ parity target
-- `lab_gpu/cpu_kernel.py` เป็น no-CUDA fallback ภายใน package หลัก จึงต้อง conform กับ active GPU genome หากยังคงรองรับ fallback นี้
-- Live bot ยังไม่ได้โหลด parameters จาก leaderboard กลยุทธ์ที่ค้นพบจึงยังไม่ใช่กลยุทธ์ที่ bot ใช้จริง
-- ฐานข้อมูล local `trades_spot.db`/`trades_futures.db` ไม่มี closed-trade history ชุดปัจจุบัน ส่วน `trades.db` มีเพียง legacy records จำนวนน้อย จึงยังสรุป root cause ของช่วงขาดทุนล่าสุดจาก repo อย่างเดียวไม่ได้
-- ต้องขอ production trade/fill/equity data แบบตัด secrets ออกก่อนปรับ threshold หรือ risk budget จากผลจริง
-
-## CURRENT AUDIT FINDINGS
-
-### P0 — ความน่าเชื่อถือของ Strategy Lab
-
-1. **80 genes แต่ GPU ใช้จริง 29 genes**
-   - Search space ใน `lab_gpu/evolution_engine.py` สุ่มประมาณ 80 parameters
-   - `GENOME_PARAM_ORDER` และ GPU mega-kernel pack เพียง 29 parameters
-   - indicator windows หลายตัวเป็นค่าคงที่ แม้ optimizer สุ่ม window ชื่อเดียวกัน
-   - ผลคือ 51 parameters ใน candidate ปัจจุบันไม่เปลี่ยนผล mega-kernel แต่ยังทำให้ JSON ดูแตกต่าง
-
-2. **Top 10 เป็น duplicate behavior**
-   - Leaderboard ปัจจุบันทั้ง 10 รายการมี fitness, 1Y return, win rate, max drawdown และ trade count เท่ากัน
-   - Deduplication ใช้ JSON ของ parameters ทั้งหมด จึงมอง ignored genes ที่ต่างกันว่าเป็นคนละกลยุทธ์
-   - ต้อง deduplicate ด้วย active phenotype, signal hash หรือ trade-ledger hash
-
-3. **ยังไม่มี OOS/walk-forward จริง**
-   - 1M/3M/6M/1Y ใช้ช่วงปลายของ dataset เดียวกันแบบซ้อนกัน
-   - Fitness นำผลจาก nested windows มาบวกซ้ำ ทำให้ข้อมูลล่าสุดมีน้ำหนักซ้ำ
-   - Optimizer เลือกและรายงานผลจากข้อมูลเดียวกัน จึงมี data-snooping risk สูง
-
-4. **GPU main path, `lab_gpu` CPU fallback และ production semantics ยังไม่มีหลักฐานว่า conform กัน**
-   - ความต่างระหว่าง legacy `bot_strategy_synthesizer.py` กับ GPU ไม่ถือเป็น regression เพราะ legacy CPU เลิกใช้งานแล้ว
-   - สิ่งที่ต้องพิสูจน์คือ GPU kernel เทียบกับ `lab_gpu/cpu_kernel.py`, deterministic test oracle และ production replay ที่ใช้ specification เดียวกัน
-   - GPU TP fill อาจดีกว่าราคา trigger, stop ไม่จำลอง gap/adverse fill และ open position ตอนจบช่วงไม่ถูก liquidate/mark-to-market
-   - Drawdown วัด realized balance ไม่ใช่ portfolio equity ที่รวม unrealized PnL
-
-5. **Portfolio accounting ยังไม่เหมือน live**
-   - แต่ละ symbol เริ่มทุนแยกกัน จากนั้นเฉลี่ย return แต่รวม trade count
-   - ไม่จำลอง concurrent positions, shared margin, leverage, portfolio exposure และ correlated losses
-   - `kelly_fraction_cap × 4` ไม่ใช่ Kelly ที่คำนวณจากสถิติจริง
-
-6. **Fitness ยังขาด robustness metrics**
-   - ยังไม่มี true expectancy, payoff ratio, profit factor, Sharpe, Sortino, true Calmar, CVaR, recovery factor, losing streak, monthly consistency และ confidence interval
-   - Frequency ใช้ annual average จึงอาจผ่านทั้งที่บางวันไม่เทรดและบางวันเกิน 10 ครั้ง
-   - เอกสาร Phase 31 กับ threshold ใน implementation ปัจจุบันไม่ตรงกัน
-
-7. **Search ทำซ้ำไม่ได้และ mutation อาจหลุด bounds**
-   - ใช้ in-memory study และ random seed ที่ไม่กำหนด
-   - Mega-batch ส่งผลกลับ Optuna เฉพาะ TPE subset ขณะที่ mutants ส่วนใหญ่ไม่เป็น observation ของ sampler
-   - Mutation ไม่มี typed per-gene clamp ชุดเดียวกับ search bounds
-
-### P0 — ความเสี่ยงของ Live Bot
-
-1. **Position sizing ไม่ผูกกับ stop distance**
-   - Futures ใช้ allocation จาก AI 10–40% ของ margin ต่อ trade
-   - เปิดพร้อมกันได้ 5 positions โดยยังไม่มี portfolio heat/correlation cap
-   - ไม่มี daily/weekly loss limit, rolling drawdown limit, losing-streak guard หรือ daily trade cap
-
-2. **Futures stop ยังพึ่ง local process**
-   - มี exchange-native TP/SL helper แต่ live flow ยังเก็บ SL/TP ไว้ใน state แล้วตรวจผ่าน WebSocket
-   - หาก process/network/stream ค้าง position อาจไม่มี protective stop ที่ exchange
-
-3. **ATR/RSI ระหว่างถือ position อาจ fallback ผิด scale**
-   - indicator คำนวณตอน candle close แต่ risk loop อาจอ่าน buffer ที่ไม่มี calculated columns
-   - fallback ATR แบบค่าคงที่ใช้ไม่ได้กับทุก symbol และอาจทำให้ trailing/stop ผิด
-
-4. **Fill จริงไม่ใช่ source of truth**
-   - Executor ได้ average fill/quantity แต่ state ตอนเปิด position ยังใช้ signal price/qty ก่อน execution
-   - ยังขาด order lifecycle, idempotency, partial-fill reconciliation และ explicit FILLED validation
-   - บาง error path ล้าง local state ทั้งที่ต้องพิสูจน์ก่อนว่า position ที่ exchange ปิดจริง
-
-5. **Hedge mode กับ state model ไม่สอดคล้อง**
-   - Exchange ใช้ Hedge Mode แต่ state เก็บ position เดียวต่อ symbol
-   - LONG/SHORT พร้อมกันอาจ overwrite กันใน reconciliation
-
-6. **Regime และ AI authority ยังไม่เหมาะกับ hard risk**
-   - Regime ใช้ timeframe/threshold ชุดค่อนข้างหยาบและใช้ร่วม 20 symbols
-   - AI model availability, prompt และ latency อาจเปลี่ยน decision behavior
-   - ต้องตรวจ signal TTL, spread, liquidity และ hard risk ก่อน/หลัง AI อย่าง deterministic
-
-7. **ยังวิเคราะห์สาเหตุขาดทุนสะสมจาก metrics ไม่ได้**
-   - API มี cumulative PnL/win rate แต่ขาด equity curve, drawdown, expectancy, MAE/MFE, funding, slippage และ attribution แยก strategy/regime/symbol
-   - PnL% บน Dashboard ยังไม่ใช่ portfolio return ที่สร้างจาก equity curve
-
-### P0 — UI/UX ที่อาจทำให้เข้าใจผิด
-
-- `SYSTEM LIVE` และ API status ยังไม่สะท้อน heartbeat/data age จริง
-- หน้า Strategy Lab แสดง `running` จาก progress file เก่าโดยไม่เตือน stale
-- Infinite mode แสดง progress 100% แทน indeterminate
-- ปุ่ม Pause/Resume ขาด confirmation/loading/error state และหน้า Lab มี market mapping ที่ API ไม่รองรับ
-- `Live Balance` เป็น USDT cash ไม่ใช่ total equity
-- `Total Executed Trades` ใช้ wins + losses จึงไม่เท่าจำนวน executions จริง
-- Estimated fee แสดงเหมือน actual fee
-- Dashboard ยังไม่มี equity curve/drawdown view จึงมองไม่เห็นช่วงขาดทุนสะสม
+- มี fixed-fractional futures sizing ผูกกับ stop distance
+- มี daily trade/loss และ portfolio heat circuit breakers
+- มี exchange-native futures stop พร้อม fail-closed flow เมื่อวาง stop ไม่สำเร็จ
+- มี strategy manifest และ authenticated promotion endpoint
+- มี IS/OOS split ภายใน kernel และ cost บางส่วนแล้ว แต่ยังไม่ถือเป็น untouched validation หรือ realistic execution model
 
 ## IMPLEMENTATION CONTRACT
 
 ### Actors
 
-- Operator: ตรวจสุขภาพระบบ เลือก candidate อนุมัติ stage และ rollback
-- Strategy Lab: ค้นหา/ประเมิน candidate แต่ไม่มีสิทธิ์ deploy live เอง
-- Validation Pipeline: ตรวจ GPU/fallback/production conformance, OOS, robustness และ promotion gates
-- Trading Bot: ใช้ strategy manifest ที่อนุมัติแล้วและบังคับ hard risk controls
-- Dashboard/API: แสดงข้อมูลตาม source of truth และสถานะ deployment
-
-### Surfaces
-
-- Lab CLI/runner และ Optuna storage
-- Versioned strategy manifest/registry
-- Backtest/replay engine และ trade ledger
-- Live execution/risk/reconciliation services
-- Performance, risk, health และ deployment APIs
-- Risk-first Dashboard และ Strategy Lab comparison view
-
-### Candidate lifecycle
-
-`DISCOVERED → VALIDATED_IS → VALIDATED_OOS → ROBUSTNESS_PASSED → REPLAY_PASSED → SHADOW → PAPER → CANARY → LIVE`
-
-เส้นทางผิดพลาด:
-
-`ANY_STAGE → REJECTED`
-
-เส้นทางเสื่อม:
-
-`CANARY/LIVE → PAUSED → ROLLED_BACK`
-
-ห้ามข้าม stage และทุก transition ต้องมี actor, timestamp, evidence, version และ reason
-
-### Required candidate artifact
-
-- strategy ID/version และ immutable checksum
-- active parameters เท่านั้น พร้อม typed schema/bounds
-- code commit/version และ simulator version
-- dataset hash, symbols, timeframe, date ranges และ split map
-- seed/seed ensemble และ optimizer configuration
-- fee/spread/slippage/funding assumptions
-- IS, validation, OOS, walk-forward และ stress metrics
-- trade ledger/equity curve references
-- approved risk limits และ supported regimes/symbols
-- promotion status, approver, rollback target และ expiry/revalidation date
-
-## TARGET KPI AND HARD GATES
-
-ค่าต่อไปนี้เป็น proposed defaults ต้องยืนยันก่อน implementation:
-
-### Strategy eligibility
-
-- OOS net return > 0 หลังต้นทุน และต้องชนะ benchmark/current bot ภายใต้ risk budget เดียวกันตาม excess-return หรือ return/drawdown gate ที่อนุมัติ
-- Portfolio entries 1–10 trades/day
-- วันที่เกิน 10 entries = 0 ใน validation; หากจำเป็นต้อง burst ต้องกำหนด exception เป็น policy
-- Aggregate non-overlapping OOS folds มี total trades ≥ 300; final untouched holdout ใช้ sample gate แยกตามระยะ 3–6 เดือนและรายงาน confidence interval โดยห้ามรวมช่วง overlap ให้ครบจำนวน
-- Profit factor ≥ 1.25 และ ≥ 1.10 ที่ cost stress 2×
-- Positive expectancy หลัง fee/slippage/funding
-- OOS win rate ≥ 50% และ Wilson 95% lower bound ≥ 45% เป็น secondary target ไม่ใช่ hard gate เดี่ยว; กลยุทธ์ payoff สูงอาจผ่านได้เมื่อ expectancy/PF/drawdown ผ่านเกณฑ์ที่เข้มกว่า
-- Max portfolio drawdown ≤ 15%
-- Sharpe ≥ 1.0, Sortino ≥ 1.5, true Calmar ≥ 0.8
-- Profitable walk-forward folds ≥ 70% โดยมีจำนวน folds ขั้นต่ำที่อนุมัติ
-- Profitable OOS months ≥ 70% โดยมีจำนวนเดือนขั้นต่ำที่อนุมัติ
-- กำไรจาก symbol เดียวไม่เกิน 25% ของกำไรรวม
-- ต้องไม่พึ่ง regime เดียวหรือ moonshot ไม่กี่รายการ
-- Parameter neighborhood ±5–10% อย่างน้อย 70% ของ perturbation samples ที่กำหนดยัง PF > 1 และ net return > 0
-
-### Live risk defaults
-
-- Risk per trade เริ่ม 0.25–0.50% ของ equity โดยคำนวณจาก entry-to-stop distance
-- Portfolio open risk cap เริ่ม 2% ของ equity
-- Daily loss circuit breaker เริ่ม 1.5–2.0% ของ starting-day equity
-- Weekly loss circuit breaker เริ่ม 4–5%
-- Auto-pause เมื่อ losing streak, rolling expectancy, drawdown หรือ execution health เกิน threshold ที่อนุมัติ
-- จำกัด 1–10 new entries/day รวม Spot/Futures ตาม policy ที่ยืนยัน
-- Candidate canary เริ่มที่ 5–10% ของ normal risk budget
-
-ตัวเลข risk budget ห้าม hardcode ตามแผนนี้จนกว่าเจ้าของระบบยืนยัน
-
-## PHASED ROADMAP
-
-## Phase 0 — Freeze Baseline และสร้าง Data Contract
-
-### งาน
-
-- นิยามให้ตรงกัน: signal, entry, fill, round trip, trade/day, fee, funding, realized/unrealized PnL, equity, drawdown, exposure และ win/loss
-- ยืนยันว่า 1–10 trades/day คือ portfolio entries และกำหนด timezone/day boundary
-- Export production trade, fill, funding, balance/equity snapshot, order reject และ signal log โดยตัด secrets
-- สร้าง baseline report แยก Spot/Futures, symbol, strategy, regime, hour/day และ exit reason
-- วัด expectancy, profit factor, avg win/loss, max drawdown, losing streak, fees, slippage, MAE/MFE และ trades/day distribution
-- Freeze baseline ด้วย code hash, data hash, seed, fee tier, leverage และ symbol universe
-- สร้าง metric dictionary/API schema เดียว
-
-### Exit criteria
-
-- ตัวเลข Dashboard, DB report และ exchange statement reconcile ได้ภายใน tolerance
-- ระบุ top loss contributors ได้อย่างน้อยตาม symbol/strategy/regime/exit/cost
-- ได้ risk budget และ KPI ที่เจ้าของระบบอนุมัติ
-
-## Phase 1 — GPU Main-Path Truth และ Fallback/Production Conformance
-
-### งาน
-
-- กำหนด GPU simulator เป็น optimization/ranking engine หลัก และออกแบบ execution/accounting specification เดียวกับ `lab_gpu` CPU fallback, deterministic test oracle และ production replay
-- กำหนด next-bar entry, same-bar SL/TP policy, gap/adverse fill, trailing update order และ end-of-window liquidation
-- เพิ่ม maker/taker fee, spread, liquidity/volatility slippage และ funding
-- สร้าง shared portfolio equity curve รวม unrealized PnL, shared margin, leverage, concurrency และ exposure caps
-- สร้าง golden deterministic trade ledgers สำหรับ strategy fixtures
-- เทียบ GPU main path/`lab_gpu` CPU fallback/reference replay ทีละ event ภายใน tolerance: timestamp, signal, side, entry/exit, reason, exposure, fee/funding, realized/unrealized PnL, equity และ drawdown
-- ระบุ `bot_strategy_synthesizer.py` และ legacy backtests ว่า deprecated/non-authoritative และห้ามใช้เป็น promotion evidence
-- ไม่ต้องรักษาผลลัพธ์หรือ performance parity กับ legacy CPU script
-- เพิ่ม dependency test ว่า GPU wrapper และ promotion pipeline ไม่ import หรืออ่านผลจาก legacy `bot_strategy_synthesizer.py`
-- แยก simulated fill conformance ออกจาก live execution reconciliation; ไม่บังคับให้ราคา live fill เท่าราคา simulation
-
-### Tests first
-
-- GPU main path/`lab_gpu` CPU fallback/production-replay event-ledger conformance
-- Same-bar SL/TP, gap, partial fill, trailing และ end liquidation
-- Fee/slippage/funding ที่ 1×/1.5×/2×
-- Unrealized equity drawdown และ concurrent positions
-- Long/short, spot/futures และ leverage accounting
-
-### Exit criteria
-
-- ไม่มี unexplained ledger divergence
-- Cost model configurable/versioned
-- Open positions ถูก mark-to-market หรือปิดตาม policy เสมอ
-
-## Phase 2 — Data Quality และ Walk-Forward Validation
-
-### งาน
-
-- ตรวจ missing/duplicate/out-of-order candles, timestamp continuity, symbol delisting และ zero/NaN indicators
-- ห้าม `fillna(0)` กลบ invalid warmup/data silently
-- ใช้ข้อมูลหลาย market regimes และอย่างน้อย 2–3 ปีเมื่อ data availability รองรับ
-- แยก warmup window ออกจาก measurement window
-- ใช้ rolling walk-forward เช่น train 12M → validate 3M → test 3M แล้วเลื่อนหน้าต่าง
-- กัน final untouched holdout 3–6M ที่ optimizer ห้ามเห็น
-- เพิ่ม cross-symbol holdout และ regime buckets: trend, sideways, high-volatility, crash/recovery
-- ใช้ purge/embargo เมื่อ feature/label horizon อาจ overlap
-
-### Exit criteria
-
-- Split manifest deterministic และผ่าน no-leakage tests
-- รายงานผลแยก fold/regime/symbol พร้อม confidence intervals
-- ไม่มี final holdout access ระหว่าง search
-
-## Phase 3 — Typed Genome Schema และ Reproducible Search
-
-### งาน
-
-- สร้าง schema เดียวสำหรับ gene: name, type, min/max, step, default, conditional strategy, mutation rule, GPU index และ production mapping
-- ตัด 51 dead genes ออกจาก search ก่อน หรือ implement ให้มีผลครบ GPU main path/`lab_gpu` CPU fallback/production replay
-- เพิ่ม active-gene sensitivity test: เปลี่ยนค่าต้องเปลี่ยน signal/ledger มิฉะนั้นห้าม optimize
-- Clamp mutation ด้วย schema และ reject invalid genome ก่อน evaluate/save
-- ใช้ persistent Optuna storage, deterministic seed และ seed ensemble
-- บันทึก study metadata/checkpoint เพื่อ resume/reproduce
-- ใช้ conditional search space ต่อ strategy type
-- ส่ง mutant observations กลับ sampler ตาม design ที่เลือก
-- Deduplicate จาก active phenotype/signal/trade-ledger hash
-- กำหนด diversity quota ต่อ strategy/regime เพื่อไม่ให้ Top 10 เป็นผลเหมือนกัน
-
-### Exit criteria
-
-- 100% active genes มี effect test และ production mapping
-- Run เดิม reproduce ranking/metrics ได้ภายใน tolerance
-- Top candidates ไม่มี duplicate phenotype
-
-## Phase 4 — Hard Gates และ Multi-Objective Robustness
-
-### งาน
-
-- ใช้ hard eligibility gates ก่อน scoring
-- เปลี่ยนจาก profit-dominant composite score เป็น Pareto ranking
-- Objectives: OOS return, max DD, Sortino/Calmar, PF, expectancy, frequency deviation, cost sensitivity และ stability
-- วัด daily trade distribution: median, P90/P95, active-day ratio และ violation days
-- Bootstrap/Monte Carlo trade order และ 95% confidence intervals
-- Parameter perturbation ±5–10%
-- Stress fee/slippage/funding 1×/1.5×/2×
-- ตรวจ IS→validation→OOS performance decay
-- วัด optimizer selection bias ด้วย Deflated Sharpe Ratio และ Probability of Backtest Overfitting หรือวิธีเทียบเท่าที่คำนึงถึงจำนวน trials
-- ใช้ final holdout แบบ one-shot; หาก fail ให้ reject research version และห้าม tune แล้วทดสอบ holdout เดิมซ้ำ
-- Reject concentration จาก symbol/month/regime/moonshots
-- ตรวจ capacity/market impact: notional ต่อ depth/volume, implementation shortfall และ slippage drift threshold
-- Benchmark กับ current live bot, buy-and-hold ตาม risk budget และ no-trade baseline
-
-### Exit criteria
-
-- Candidate ทุกตัวผ่าน hard gates และ robustness suite
-- Ranking อธิบายได้ว่าชนะเพราะอะไรและเสี่ยงตรงไหน
-- KPI ใน `PROJECT_PLAN.md`, tests และ implementation ตรงกัน
-
-## Phase 5 — Live Hard Risk และ Execution Safety
-
-### งาน
-
-- Position sizing แบบ fixed-fractional: `risk budget / stop distance` แล้ว cap ด้วย margin, notional, exposure และ liquidity
-- เอา allocation authority ออกจาก LLM
-- เพิ่ม portfolio heat, per-symbol cap, correlated exposure และ Spot/Futures combined risk
-- เพิ่ม daily/weekly loss, rolling drawdown, losing-streak และ 1–10 entries/day circuit breakers
-- วาง exchange-native reduce-only/close-position stop ทันทีหลัง fill
-- หากวาง stop ไม่สำเร็จให้ fail closed และปิด/reconcile position ตาม policy
-- ใช้ actual fill price/quantity/commission เป็น source of truth
-- เพิ่ม order lifecycle และ idempotent client order identity
-- รองรับ partial fills, retry, stale-signal TTL และ reconciliation-required state
-- ตัดสินใจ Hedge Mode: เปลี่ยน One-way หรือปรับ state key เป็น `(symbol, side)`
-- คำนวณ ATR/RSI จาก snapshot ที่มี timestamp/data-quality flag
-- เพิ่ม spread/depth/volatility/funding/session/news-freshness deterministic gates
-- ให้ AI Council เป็น veto/annotation หลัง hard gates
-
-### Tests first
-
-- Risk sizing ตาม stop distance และ equity
-- Portfolio/daily/weekly/drawdown circuit breakers
-- Native stop placement/verification/failure close
-- Partial fill, duplicate submit, retry และ reconciliation
-- Stale signal/data, spread/slippage guard และ AI timeout
-- Hedge/one-way position state
-
-### Exit criteria
-
-- ไม่มี unprotected live position
-- State reconcile กับ exchange ได้หลัง restart/network failure
-- Hard loss/risk limits บังคับได้โดยไม่ขึ้นกับ AI availability
-
-## Phase 6 — Strategy Manifest และ Promotion Pipeline
-
-### งาน
-
-- สร้าง immutable strategy manifest ตาม contract
-- เพิ่ม mapping จาก active lab parameters ไป production strategy config
-- ห้าม manual copy/paste gene JSON ลง live code
-- เพิ่ม stage approval, audit trail, expiry/revalidation และ rollback target
-- Production replay ต้องผ่านก่อน shadow/paper
-- แยก immediate health stop ออกจาก statistical performance decay; decay gate ต้องมี minimum trades/time window/confidence ก่อน auto-demote
-- กำหนด rollback policy สำหรับ position ที่ยังเปิด: flatten ทันที, ใช้ exit policy เดิมจนปิด หรือ handoff แบบ versioned ห้ามเปลี่ยน exit semantics กลาง position โดยไม่ตั้งใจ
-- Auto-demote เมื่อ rolling expectancy ≤ 0, PF < 1, slippage drift, drawdown หรือ cost สูงกว่า gate หลังผ่าน minimum evidence
-- เปรียบเทียบ backtest expectation กับ live results แยก strategy version/regime
-
-### Promotion gates
-
-1. Replay ผ่าน GPU/fallback/production conformance และ no-leakage
-2. Shadow ไม่มี stale/unprotected/reconciliation breach
-3. Paper อย่างน้อย 30–60 วันและจำนวน trades ขั้นต่ำที่อนุมัติ
-4. Paper PF/expectancy/drawdown/frequency ผ่าน KPI หลังต้นทุน
-5. Canary 1–2 symbols ที่ 5–10% risk budget หลังผ่าน capacity/market-impact gate
-6. เพิ่ม risk ทีละขั้นเมื่อผ่าน minimum calendar window, minimum closed trades และ confidence gate ที่อนุมัติ
-7. Auto rollback เมื่อชน hard stop หรือ health breach
-
-## Phase 7 — Risk-First Web Dashboard
-
-### P0 correctness
-
-- แสดง health แยก Bot heartbeat, market tick, WebSocket, Binance API, DB และ data age
-- เพิ่ม `STALE/OFFLINE/RECONNECTING` และ Last updated
-- Infinite lab mode ใช้ indeterminate progress
-- ซ่อน Pause ใน Lab; เพิ่ม confirmation, loading, disabled และ success/error toast
-- แก้ชื่อ metric: Cash balance, Total equity, Closed trades, Executions, Portfolio return
-- แยก actual fee กับ estimated fee
-- ทำ API/leaderboard schema ให้ตรงกับ UI และเลิก fallback `% × 10` ที่ดูเหมือนเงินจริง
-
-### P1 risk cockpit
-
-- Total equity
-- PnL วันนี้/7D/30D พร้อม previous-period comparison
-- Realized/unrealized PnL
-- Equity curve + drawdown overlay
-- Daily PnL heatmap
-- Current/max drawdown
-- Open risk เทียบ risk budget
-- Fees/funding/slippage
-- Trades today เทียบช่วง 1–10
-- Consecutive losses และ circuit-breaker state
-- Attribution ตาม strategy/version/regime/symbol
-
-### Positions/Trades
-
-- แสดง SL/TP, risk USDT/% equity, distance to stop/liquidation, holding time, R-multiple, concentration และ stale price
-- Filter/search/export execution history
-- timezone ชัดเจน, sticky header และ mobile card view
-- System Debug Log เป็น collapsible diagnostics drawer พร้อม severity/search/unread errors
-
-### Strategy Lab
-
-- Filter ตาม trades/day, OOS status, PF, expectancy, drawdown, win rate และ min samples
-- Robustness Score และ pass/fail badges ของแต่ละ gate
-- Compare 2–4 candidates: equity/drawdown, monthly returns, per-symbol/regime และ parameter diff
-- ซ่อน Genome JSON หลัง Expand
-- เปลี่ยน `Copy AI Command` เป็น `Stage Candidate for Review`
-- แสดง active strategy version/hash, stage, deployment date และ rollback version
-
-### Design direction
-
-- ใช้แนว quant risk console ให้ PnL/risk เด่นกว่า AI commentary
-- ลด neon/glow ของ non-interactive cards
-- ไม่พึ่งสีอย่างเดียว; ใช้ icon/label/pattern
-- เพิ่ม focus-visible, ARIA, modal focus trap, reduced-motion และขนาดข้อความขั้นต่ำ
-- รองรับ mobile, empty/error/skeleton/reconnecting และ locale ไทย/อังกฤษ
-
-### Proposed APIs
-
-- `/api/performance`
-- `/api/risk_snapshot`
-- `/api/health`
-- `/api/strategy/deployment`
-
-API ทุกชุดต้องมี schema validation, authentication/authorization, rate limit และ data timestamp
-
-## Phase 8 — Verification, Rollout และ Operations
-
-### Automated verification
-
-- Unit, integration และ E2E ครบ critical paths
-- Coverage รวม ≥80%
-- Reproducible backtest and walk-forward reports
-- Security review สำหรับ control/deployment endpoints
-- Load/latency test ของ signal→decision→order path
-- Failure injection: WS down, API timeout, DB unavailable, partial fill, native stop reject
-
-### UI E2E
-
-- Login/session expiry
-- WebSocket disconnect/reconnect/stale
-- Spot/Futures/Lab switching
-- Pause confirmation/error/double-click
-- Stale Lab progress
-- Leaderboard filter/sort/compare/stage
-- Null/NaN/partial payload
-- Mobile overflow, keyboard navigation และ accessibility scan
-
-### Operational alarms
-
-- Unprotected position
-- Reconciliation mismatch
-- Stale market/indicator data
-- Daily/weekly/drawdown circuit breaker
-- Cost/slippage drift
-- Strategy performance decay
-- Queue latency/expired signal
-- Dashboard metric freshness
+- **Research operator**: เริ่ม/หยุด run, ดู benchmark และเลือก candidate เพื่อ review
+- **Strategy Lab**: สร้าง candidates, simulate, score, checkpoint และเผยแพร่ research evidence
+- **Validator**: ทำ walk-forward, cost stress, final holdout และ parity checks โดยไม่แก้ candidate
+- **Promotion controller**: บังคับ state `RESEARCH → VALIDATED → SHADOW → PAPER → CANARY → LIVE → DEMOTED`
+- **Live execution/risk engine**: เป็น source of truth ด้าน order, fill, position, protection และ risk
+- **Luna**: implement ตาม phase และหยุดเมื่อ gate ของ phase ก่อนหน้าไม่ผ่าน
+
+### Data and identity invariants
+
+- ใช้ canonical strategy enum และ parameter schema ชุดเดียวใน lab, manifest และ live bot
+- Unknown strategy/parameter ต้อง reject แบบ fail closed ห้าม default ไป strategy 0
+- Candidate ID ต้องผูกกับ strategy schema version, code commit, dataset hash, feature hash, seed, cost model และ validation report
+- Market data ทุก symbol ต้อง join ด้วย UTC timestamp intersection ไม่ใช่ตัดท้ายให้จำนวนแถวเท่ากัน
+- Candle ต้อง unique, monotonic, spacing 30 นาทีตาม contract และมี gap policy ชัดเจน
+- Event/trade ledger เป็น output หลักสำหรับ parity ไม่ใช่ดู aggregate return อย่างเดียว
+- ทุก order/position/fill/log ต้องมี immutable `execution_mode`, `deployment_id`, `strategy_id`, version/hash และ provenance
+- Execution mode ต้องถูกผูกกับ position ตั้งแต่ entry จน exit ห้ามอ่าน mode ใหม่กลาง position
+- Paper และ Live ต้องแยก position, balance, PnL, cooldown, risk counters, recovery state และ query scope
+
+### Observability contract
+
+ต้องมี metric แยกอย่างน้อย:
+
+- CPU load/cache time
+- candidate generation/validation/packing time
+- H2D time
+- kernel time แยก horizon/strategy
+- D2H time
+- fitness time
+- JSON/DB queue and write time
+- batch throughput p50/p95
+- GPU active time, occupancy, warp execution efficiency, register/local spill และ global-load efficiency
+- candidates generated, candidates told to optimizer, unique phenotype ratio และ qualified candidates/hour
+- generated/evaluated/qualified counts, score quantiles, unique phenotype และ trade-ledger diversity แยกตาม strategy type
+- effective execution mode, manifest stage, environment mode และ mismatch alarm
+
+## แผนดำเนินงานสำหรับ Luna
+
+### Phase 0A — Immediate deployment containment (ต้องทำก่อนทุก Phase)
+
+- ปิด direct `LIVE` activation ทั้ง UI และ server เป็นค่าเริ่มต้น; `LIVE` เป็น request จนกว่าจะผ่าน promotion gates
+- เพิ่ม server-side `ALLOW_LIVE`/independent arming control ที่ default เป็น false; ห้ามพึ่งการ disable ปุ่มหน้าเว็บอย่างเดียว
+- สร้าง immutable `ExecutionContext` เป็น single source of truth และส่งเข้า entry, exit, native stop, cancel, risk, DB และ reconciliation ทุกเส้นทาง
+- หาก global config, manifest stage และ ExecutionContext ขัดกัน ให้ block new orders, pause และแจ้ง critical alert
+- Reject stage transition เมื่อ bot ไม่ paused, มี local/exchange position/order หรือ reconciliation ไม่สะอาด
+- เปลี่ยน manifest write เป็น schema-validated, locked, atomic replace, revision/CAS, idempotency key และ audit trail
+- Manifest เสีย/อ่านไม่ครบต้อง fail closed เป็น PAUSED ห้าม fallback cached LIVE
+- เพิ่ม typed confirmation + fresh re-auth สำหรับ live request พร้อมแสดง account, symbols, leverage, max risk และ kill switch
+
+**Exit gates**
+
+- Truth-table tests ครบ global PAPER/LIVE × manifest PAPER/LIVE × Spot/Futures × entry/exit/stop/cancel
+- Exchange-mutating calls = 0 ทุกกรณี ยกเว้น LIVE context ที่ผ่าน server-side arming เท่านั้น
+- DB execution mode ตรงกับ exchange/simulator receipt 100%
+- 0 cross-mode exits และ stage transition ขณะมี position ถูก reject 100%
+- Corrupt/partial manifest ทำให้ระบบ PAUSED และไม่มี order
+
+### Phase 0 — Freeze baseline และสร้าง performance/correctness harness
+
+**ทำก่อนแก้ performance ใด ๆ**
+
+- เพิ่ม benchmark mode ที่ไม่เขียน Aiven และบันทึก phase timings ด้วย CPU timers + CUDA Events
+- เก็บ Nsight Systems/Compute baseline และ `nvidia-smi dmon`; ใน Task Manager เลือก CUDA/Compute graph
+- Benchmark batch 100, 1K, 2K, 4K, 8K และ block 64/128/256 หลัง warm-up
+- แยก startup/JIT/data-load ออกจาก steady-state throughput
+- สร้าง deterministic mini dataset และ fixed genomes สำหรับ golden CPU↔GPU test
+- เปรียบเทียบ raw 16 metrics, trade ledger และ final fitness ไม่ใช่เฉพาะ shape
+- เพิ่ม contract test ที่ fail หากมี suggested gene ไม่อยู่ใน consumed schema
+- บันทึก current baseline ประมาณ 330–334 genomes/s และ batch interval p50 ประมาณ 9.85s เป็น reference ไม่ใช่ guarantee
+
+**Exit gates**
+
+- Same seed + same hashes ให้ candidate sequence และ Top-K เดิม
+- CPU/GPU raw metrics และ ledger ตรงตาม tolerance ที่ประกาศ (`<=1e-5` สำหรับ float ที่เหมาะสม)
+- Benchmark report ระบุ p50/p95 ของทุก phase และไม่รวม JIT ใน steady state
+- ทราบ register count, local spills, occupancy และ warp efficiency จาก profiler
+
+### Phase 1 — แก้ search truth ก่อนเพิ่มจำนวน trials
+
+- เลือกทางใดทางหนึ่ง: ลด schema ให้เหลือ 29 active genesอย่างซื่อสัตย์ หรือ implement 51 genes ที่เหลือใน feature/kernel/live path ให้ครบ
+- Deduplicate ด้วย active phenotype/signal hash/trade-ledger hash ไม่ใช่ full JSON
+- ทำ canonical mapping ของ 12 strategy types ระหว่าง lab และ live; ห้าม unknown fallback
+- Clamp mutation ตาม typed per-gene bounds ชุดเดียวกับ search schema
+- กำหนด master seed ให้ Python `random`, NumPy และ Optuna
+- เปลี่ยน persistent study/checkpoint เพื่อ resume ได้และไม่ทำ trials ซ้ำ
+- ออกแบบ optimizer batch policy ให้ชัด: ทุก candidate ต้อง register/tell หรือใช้ evolutionary population ที่มี selection/replacement contract ชัดเจน
+- แยก per-strategy archive/niche ทั้ง 12 แบบพร้อม global archive และให้ equal exploration budget ก่อน global exploitation
+- ให้แต่ละ strategy มี exploration floor อย่างน้อย 5% ต่อ batch ในช่วงค้นหาเริ่มต้น และคง random exploration 10–20% หลังเริ่ม exploit
+- ทำให้ `strategy_type` mutate แบบ controlled categorical ได้ หรือแยก optimizer/study ต่อ strategy
+- ใช้ conditional search space ที่สุ่มเฉพาะ genes ที่ strategy นั้นใช้จริง พร้อม sensitivity test ว่า perturb gene แล้ว output ต้องเปลี่ยน
+- Audit ทุก search bound/default กับ kernel clamp รวมถึง breakeven buffer mismatch
+- ทำ equal-budget benchmark: 12 strategies × หลาย seeds × หลาย regimes × cost model เดียวกัน
+- เพิ่ม buy-and-hold, random-entry ที่ match frequency และ fixed Williams เป็น control baselines
+- จำกัด Top 10 ไม่เกิน 2 behavioral phenotypes ต่อ strategy จน search-fairness ผ่าน
+
+**Exit gates**
+
+- 0 unused tunable genes
+- 100% strategy enum และ parameter mapping parity
+- Same run identity ให้ผลซ้ำได้
+- Dashboard แยก `raw candidates`, `optimizer observations`, `unique phenotypes` และ `qualified candidates`
+- ไม่มี strategy ใดได้ exploration ต่ำกว่า floor ก่อน convergence และ leaderboard ไม่มี trade-ledger duplicates
+- จะประกาศ Williams ว่าดีกว่าได้เมื่อ median/CI ของ OOS PF, expectancy และ drawdown ชนะอย่างสม่ำเสมอข้าม seeds/regimes/final holdout
+
+### Phase 2 — Quick wins เพื่อลด GPU idle โดยไม่เปลี่ยน semantics
+
+- แก้ leaderboard sync predicate ให้ sync เมื่อถึง interval หรือมี new global best จริง
+- แยก JSON/DB เป็น bounded async single-writer queue; GPU loop ห้ามรอ network
+- ใช้ atomic JSON snapshot, pooled DB connection และ upsert; เอา create/delete-all ออกจาก hot path
+- Throttle progress DB write ตามเวลา ไม่ใช่ทุก event
+- สำหรับ GPU mode กำหนด minimum useful batch; งานเล็ก 100 trials ให้เตือนหรือใช้ CPU path
+- ลบข้อความ `~1000x faster` แล้วแสดง measured throughput จาก benchmark ล่าสุด
+- Pin interpreter/environment และเพิ่ม startup preflight สำหรับ CUDA driver, Numba, compute capability และ package versions
+- เอา redundant per-symbol VRAM preload ออกเมื่อ mega flat buffer เป็น path เดียว
+- Preallocate/reuse device buffers, host pinned buffers และ streams
+
+**Exit gates**
+
+- DB/API ล่มหรือช้าไม่ทำให้ kernel pipeline stall
+- ไม่มี leaderboard corruption/duplicate write หลัง restart
+- End-to-end throughput เพิ่มอย่างน้อย 20–30% จาก baselineโดย raw metrics/ledger ไม่เปลี่ยน
+- Default launcher ไม่สร้าง GPU run ที่ underfill โดยไม่เตือนผู้ใช้
+
+### Phase 3 — ลด warp divergence และทำ pipeline overlap
+
+- แยก launch ตาม horizon หรือจัด horizon-major เพื่อให้ warp เดียวมี loop length เดียวกัน
+- หลัง parity ผ่าน ให้ group ตาม strategy type และใช้ strategy-specialized kernels เพื่อลด branch divergence
+- เปลี่ยน layout เป็น structure-of-arrays หรือ feature subsets ตาม strategy เมื่อ profiler ยืนยันประโยชน์
+- ลด/compact per-thread portfolio state และแก้ open-position count แบบ incremental แทน scan ทุก symbol ทุก bar
+- ใช้ double buffer/อย่างน้อย 2 streams เพื่อ overlap candidate generation + H2D ของ batch N+1 กับ kernel/D2H ของ batch N
+- พิจารณา CUDA Graphs หลัง launch pattern คงที่
+- ห้าม parallelize symbols แบบตรง ๆ ถ้ายังรักษา shared balance, max concurrent positions และลำดับ event แบบ deterministic ไม่ได้
+
+**Exit gates**
+
+- Golden parity ยังผ่านทุก strategy/horizon
+- End-to-end validated genomes/s หรือ qualified candidates/hour เพิ่มอย่างน้อย 2× จาก baseline
+- ไม่มี throughput regression >10% ใน p95 จาก run ซ้ำ 5 ครั้ง
+- Profiler ยืนยัน warp efficiency/occupancy ดีขึ้นและ local spills ลดลง
+
+### Phase 4 — Multi-fidelity search โดยไม่ลดมาตรฐานผู้ชนะ
+
+- ใช้ short horizon/symbol subset เป็น cheap screening เท่านั้น
+- Candidate ที่รอดต้อง re-evaluate ด้วย canonical 20-symbol/4-horizon simulation เต็มรูปแบบ
+- วัด false-negative rate ของ screening และ diversity ของ survivors
+- ใช้ metric `validated winners/hour`, repeat-run stability และ phenotype diversity ไม่ใช่ trials/hour
+
+**Exit gates**
+
+- Champion ทุกตัวมี full canonical evaluation
+- Screening ไม่เปลี่ยน final evidence contract และไม่แตะ final holdout
+- Winner discovery rate ดีขึ้นโดย robustness ไม่ลดจาก baseline
+
+### Phase 5 — Causal simulator และ validation ที่เชื่อถือได้
+
+- Join symbols ด้วย timestamp และเพิ่ม gap/data-quality report
+- Signal bar `t` fill ที่ next tradable bid/ask หลัง latency; ห้าม same-close fill
+- เพิ่ม symbol/time-varying maker/taker fee, spread, slippage, funding timestamps, depth impact, partial/rejected fill, margin และ liquidation
+- ทำ rolling walk-forward อย่างน้อย 6 folds บนข้อมูล 3–5 ปี ครอบคลุม bull/bear/sideways/high-vol
+- Purge อย่างน้อย max lookback 200 bars และ embargo อย่างน้อย max hold 72 bars
+- สร้าง immutable final holdout ล่าสุด 6–12 เดือนที่ optimizer และ leaderboard ไม่เคยเห็น และประเมินครั้งเดียว
+- เพิ่ม bootstrap confidence interval, Deflated Sharpe และ PBO/equivalent สำหรับ multiple-testing bias จาก trials จำนวนมาก
+
+**Validation gates ก่อนเรียก candidate ว่า VALIDATED**
+
+- Positive net return และ expectancy อย่างน้อย 70% ของ folds
+- OOS PF `>=1.20`, OOS max drawdown `<=15%`, median OOS Sharpe `>=1.0`
+- ไม่มี fold ใด PF `<0.90`
+- Bootstrap 95% CI lower bound ของ net expectancy `>0` หลังต้นทุน
+- OOS degradation ของ risk-adjusted metric ไม่เกิน 40% จาก IS
+- Cost stress 2× ยังมี PF `>=1.05`, expectancy `>0`, drawdown `<=20%`
+- Final holdout ผ่าน one-shot; หาก fail ให้ reject research version ห้าม tune แล้วทดสอบ holdout เดิมซ้ำ
+
+### Phase 6 — Shadow/Paper engine ที่จำลอง execution จริง
+
+- แยก paper service/account/state จาก live โดย paper credentials/network policy ต้องไม่มีสิทธิ์สร้าง exchange order
+- แยก paper/live positions, balance/equity, PnL, cooldown, daily limits, drawdown, recovery snapshot และ reconciliation namespace
+- เพิ่ม `execution_mode`, `deployment_id`, strategy version/hash, client/exchange order ID และ fill provenance ลง trade/log/event schema
+- บังคับทุก repository/query/cache/learning pipeline ระบุ execution mode ห้าม aggregate ข้าม mode โดยปริยาย
+- ใช้ event-driven engine กับ live bid/ask/order book
+- บันทึก signal, submit, ack, partial fill, final fill, cancel/reject, fee, funding และ expected-vs-actual slippage
+- Fault injection: stale data, websocket down, API timeout, partial fill, duplicate submit, DB down, restart และ native-stop reject
+- Reconcile order/fill/position กับ exchange source of truth
+
+**Promotion gate PAPER → CANARY**
+
+- Run อย่างน้อย 8 สัปดาห์และอย่างน้อย 300 closed trades โดยใช้เงื่อนไขที่ใช้เวลานานกว่า
+- PF `>=1.15`; 95% CI lower bound ของ expectancy `>0`; drawdown `<=10%`
+- Fill ratio `>=98%`; p95 order ack `<2s`
+- p95 realized slippage ไม่เกิน model +10 bps
+- ไม่มี unreconciled position เกิน 60 วินาที
+- Paper-vs-backtest metric drift ไม่เกิน 20%
+- Activity ใน PAPER ต้องไม่เปลี่ยน LIVE state/metrics และ activity ใน LIVE ต้องไม่เปลี่ยน PAPER state/metrics
+
+### Phase 6A — Paper/Live UI และ deployment workflow
+
+- เปลี่ยน header toggle เป็น `VIEW: PAPER | LIVE` เพื่อยืนยันว่าเป็นตัวกรอง ไม่ใช่ execution switch
+- เพิ่ม banner แยก `EXECUTION: PAPER/LIVE/PAUSED/MISMATCH` จาก effective server context
+- แต่ละ view ต้องแสดง balance/equity, positions, trades, stats, PnL, risk counters และ logs ของ mode นั้นเท่านั้น
+- แสดง active strategy ID/version/hash, deployment time, evidence status และ data freshness
+- เปลี่ยนปุ่ม Lab เป็น `Stage for Paper Review`; ปุ่ม LIVE เป็น `Request Live Canary` และ disable จน server gates ผ่าน
+- หลัง action ต้อง refresh deployment state และแสดงผลสำเร็จจาก server revision ไม่ใช่ toast อย่างเดียว
+- LIVE challenge ต้องใช้ fresh re-auth, typed phrase และสรุป account/risk; การอนุมัติยังต้องผ่าน server-side policy
+
+**UI/data exit gates**
+
+- สลับ VIEW แล้วทุก widget เปลี่ยน mode สอดคล้องกัน ไม่มี shared positions/balance/log leakage
+- Mismatch ระหว่าง manifest/config/runtime แสดง CRITICAL และปิดปุ่ม execution
+- UI E2E ยืนยันว่า browser bypass ไม่สามารถข้าม server gate
+
+### Phase 7 — Hard risk, execution safety และ promotion governance
+
+- เริ่ม canary ด้วย risk/trade 0.25–0.5%, portfolio heat 2–3%, daily loss 1.5–2%, weekly loss 4% และ hard equity drawdown kill 8–10%
+- เพิ่ม consecutive-loss pause, correlation/sector caps, liquidation-distance floor, stale-data/API/clock-drift kill switches
+- ทุก live position ต้องมี verified exchange-native reduce-only stop; หากวางไม่ได้ให้ fail closed
+- ใช้ actual fill/commission/funding เป็น accounting source of truth
+- เพิ่ม idempotent client order ID, order state machine, partial fill handling และ restart reconciliation
+- Manifest ต้อง immutable/versioned และมี dataset/code/config hashes, validation evidence, approver, expiry และ rollback target
+- เปลี่ยน state ได้เฉพาะ `VALIDATED → SHADOW → PAPER → CANARY → LIVE`; ห้าม leaderboard → LIVE
+- Canary ใช้ทุนไม่เกิน 5%; scale 5→15→30→50→100% เมื่อผ่าน rolling evidence เท่านั้น
+
+**Canary gates**
+
+- อย่างน้อย 4 สัปดาห์และ 50 closed trades
+- Rolling PF `>=1.10`; drawdown อยู่ใน budget; fill/slippage SLO ผ่าน
+- 0 duplicate orders, 0 unprotected positions, 100% restart reconciliation
+- เมื่อ hard stop หรือ health breach ให้ block new entries และ rollback/demote ตาม policy
+
+### Phase 8 — Production monitoring และ continuous validation
+
+- Reconcile orders, fills, fees, funding, realized/unrealized PnL และ equity ทุกวัน
+- Alert: missing stop, stale feed, reject/partial, reconciliation mismatch, breaker, drawdown, slippage/cost drift และ strategy decay
+- Dashboard แสดง strategy/version/stage/hash, data age, risk budget, open risk, DD, fees/funding/slippage และ backtest-vs-live drift
+- Auto-demote ใช้ minimum trades/time/confidence gate ห้ามตัดสินจากแพ้ไม่กี่ไม้
+- ทำ quarterly recovery/rollback drill
+
+**Operations gates**
+
+- Daily equity discrepancy `<=0.1%` หรือ `$1` แล้วแต่มูลค่าที่มากกว่า
+- Unmatched fills = 0
+- Alert delivery `>=99.9%`
+- ไม่มี new trade เมื่อ data stale, exchange disconnect หรือ breaker ทำงาน
+
+## TEST-FIRST MATRIX สำหรับ Luna
+
+1. Parameter schema/unused gene/strategy enum contract tests
+2. Deterministic seed, checkpoint/resume และ candidate sequence tests
+3. Timestamp alignment, gap, no-lookahead และ next-bar fill tests
+4. CPU↔GPU raw metric + event/trade-ledger golden parity ทุก strategy/horizon
+5. Cost/funding/slippage/partial-fill/liquidation tests
+6. DB queue failure, atomic snapshot และ restart tests
+7. Native stop, duplicate submit, order lifecycle และ reconciliation integration tests
+8. Walk-forward/holdout isolation และ multiple-testing correction tests
+9. Shadow/paper drift, canary promotion และ rollback E2E tests
+10. Performance regression benchmark โดยมี p50/p95 และ quality-adjusted throughput
+11. Strategy exploration balance, per-strategy archive, phenotype dedup และ equal-budget multi-seed tests
+12. Execution-mode truth table, cross-mode entry/exit/stop/cancel และ DB provenance integration tests
+13. Promotion API authorization, stage transition, manifest atomicity/CAS และ corrupt-manifest failure tests
+14. PAPER/LIVE view isolation และ live challenge UI E2E tests
+
+Coverage รวมต้อง `>=80%` และ critical risk/execution paths ต้องมี branch coverage ที่เพียงพอ ห้ามแก้ test เพื่อให้ implementation ที่ผิดผ่าน
 
 ## NON-GOALS
 
-- ไม่ปรับสูตร strategy, thresholds, leverage หรือ position size ในงาน planning รอบนี้
-- ไม่รัน optimizer/backtest ใหม่เพื่อเลือก champion
-- ไม่ deploy, restart, pause หรือส่ง order ใด ๆ
-- ไม่รับรองว่า win rate หรือกำไรย้อนหลังจะเกิดซ้ำในอนาคต
-- ไม่ใช้ UI redesign เป็นวิธีแก้ profitability โดยตรง; UI มีหน้าที่ช่วยมองเห็นและควบคุม
-- ไม่เพิ่ม strategy types จน simulator conformance และ OOS gates ผ่านก่อน
+- ไม่แก้โค้ด, config, dependencies, process หรือ trading parameters ในงาน planning รอบนี้
+- ไม่ restart/stop run ปัจจุบันและไม่ส่ง order ใด ๆ
+- ไม่รับรองกำไรจาก leaderboard, win rate หรือ backtest return
+- ไม่เพิ่ม leverage/risk เพื่อทำให้ผลตอบแทนดูดีขึ้น
+- ไม่ optimize GPU ก่อนมี golden parity และ search-truth contract
+- ไม่ใช้ GPU utilization percentage เป็น KPI เดี่ยว
+- ไม่ auto-promote strategy
 
-## OPEN QUESTIONS
+## OPEN QUESTIONS ที่เจ้าของระบบต้องยืนยันก่อน Phase 6–7
 
-คำถามเหล่านี้ไม่ขวางการอ่านแผน แต่ต้องตอบก่อน implementation:
+1. ยอมรับ paper/shadow อย่างน้อย 8 สัปดาห์หรือไม่ แม้แผนเดิมใน `PROJECT_PLAN.md` ระบุว่าจะลงเงินจริงโดยไม่ paper?
+2. Max loss budget ที่ยอมรับได้จริงต่อ trade/day/week/portfolio drawdown เท่าไร?
+3. จะคง Hedge Mode หรือเปลี่ยน One-way Mode โดยอิง correctness/operational simplicity ก่อนกำไรหรือไม่?
+4. มี historical production fills, fee tier, funding และ order-book/slippage data 6–12 เดือนให้ calibrate simulator หรือไม่?
+5. Final untouched holdout จะกันช่วงวันใดและใครมีสิทธิ์เปิดผล one-shot?
+6. เกณฑ์ขั้นต่ำ paper/canary จะยึดตามแผนนี้ หรือมีข้อจำกัดด้านเวลา/ทุนอื่น?
+7. อนุมัติให้ปิดปุ่ม direct LIVE และบังคับ paper/canary gate เป็นนโยบายถาวรหรือไม่?
+8. ต้องการให้ Paper และ Live รันพร้อมกันแบบแยก process/account หรือให้รันได้ทีละ mode?
 
-1. 1–10 trades/day ให้นับ entry รวม Spot+Futures หรือแยก engine?
-2. Risk budget ที่ยอมรับได้ต่อ trade/day/week และ max portfolio drawdown เท่าไร?
-3. ต้องการใช้ Hedge Mode ต่อ หรือยอมใช้ One-way Mode เพื่อทำ state ให้เรียบง่าย?
-4. Production fee tier, maker/taker mix, funding และ slippage จริงย้อนหลังเป็นเท่าไร?
-5. มี production fills/equity history อย่างน้อย 30–90 วันให้วิเคราะห์หรือไม่?
-6. Candidate ต้อง paper 30 หรือ 60 วัน และต้องมี minimum closed trades เท่าไร?
-7. Symbol universe จะคง 20 เหรียญ หรือเลือกตาม liquidity/spread แบบ dynamic?
-8. ต้องการ separate capital/risk budgets ระหว่าง Spot และ Futures หรือ pool เดียว?
-9. ผู้ใดมีสิทธิ์ approve promotion/rollback และต้องมี two-person approval หรือไม่?
+คำถามเหล่านี้ไม่ขวาง Phase 0–5 แต่ต้องตอบก่อนอนุญาตเงินจริง
 
 ## HANDOFF
 
-สถานะปัจจุบัน: **Needs product/risk clarification and architecture review before implementation**
+สถานะ: **พร้อมส่งให้ Luna ทำตามแผนแบบทีละ Phase โดยเริ่ม Phase 0A เท่านั้น; ห้ามสั่งทำทุก Phase รวดเดียวและห้าม LIVE rollout ข้าม gate**
 
-ลำดับ handoff เมื่ออนุมัติแผน:
+ลำดับที่ Luna ต้องทำ:
 
-1. ยืนยัน KPI/risk budget และตอบ Open Questions
-2. ทำ Phase 0 baseline/data contract
-3. ใช้ `tdd-workflow` สร้าง GPU main-path/fallback/production-replay conformance และ data-split tests ก่อน implementation
-4. ใช้ `security-review` กับ live execution และ control/deployment APIs
-5. ใช้ `verification-loop` ตรวจ simulator, risk, rollout และ UI E2E
+1. ใช้ `tdd-workflow` ทำ Phase 0A execution-mode truth table และปิด direct LIVE activation ก่อน
+2. ให้ security-reviewer ตรวจ Phase 0A และปิด CRITICAL/HIGH ทั้งหมด
+3. ทำ Phase 0 baseline, parameter contract, deterministic seed และ CPU/GPU golden parity tests
+4. ส่งผล Phase 0 ให้ architect + trade-strategist review
+5. ทำ Phase 1 search-fairness; invalidate leaderboard เดิมและห้าม PAPER promotion จน gate ผ่าน
+6. ถ้า parity/search truth ไม่ผ่าน ห้ามแตะ kernel optimization
+7. ทำ Phase 2–3 ทีละ change พร้อม parity/performance report ทุก PR
+8. ใช้ `verification-loop` ตรวจ Phase 4–6A และใช้ `security-review` ก่อน promotion/live changes ทุกครั้ง
+9. ให้ code-reviewer และ security-reviewer ปิด CRITICAL/HIGH ก่อน merge
 
-## FILE IMPACT MAP สำหรับงานในอนาคต
+## DEFINITION OF DONE ของแผนทั้งหมด
 
-ไฟล์/โมดูลที่คาดว่าจะได้รับผลกระทบ แต่ยังไม่ได้แก้ในรอบนี้:
-
-- Strategy Lab หลัก: `bot_strategy_synthesizer_gpu.py`, `lab_gpu/config.py`, `data_loader.py`, `gpu_kernel.py`, `evaluator.py`, `fitness.py`, `evolution_engine.py`, `leaderboard_sync.py`
-- Active no-CUDA fallback/reference: `lab_gpu/cpu_kernel.py`
-- Legacy CPU ที่ไม่พัฒนาต่อ: `bot_strategy_synthesizer.py`
-- Live bot: `bot/config.py`, `strategy.py`, `signal_evaluator.py`, `risk_manager.py`, `trade_executor.py`, `state.py`, `websocket_manager.py`, `binance_client.py`
-- Data/API: `bot/database.py`, `api/server.py`
-- UI: `dashboard/index.html`, `dashboard/styles.css`, `dashboard/js/ui_status.js`, `ui_trades.js`, `ui_lab.js`, `ui_logs.js`, `bot_control.js`, `websocket.js`
-- Tests: GPU main-path/`lab_gpu` fallback/production-replay conformance, legacy dependency isolation, risk manager, allocation, executor, state/reconciliation, API, dashboard E2E/accessibility
-
-## DEFINITION OF DONE ของแผนใหญ่
-
-- Strategy candidate ผ่าน untouched OOS, walk-forward, cost stress และ robustness gates
-- GPU main path/`lab_gpu` CPU fallback/production replay ให้ event ledger ตรงกันตาม tolerance โดยแยก live fill reconciliation ออกจาก simulated fill
-- Frequency รวม portfolio อยู่ 1–10 entries/day ตาม policy ที่อนุมัติ
-- Live bot ใช้ stop-distance risk sizing, native protection และ portfolio circuit breakers
-- Strategy promotion/rollback มี versioned evidence และ audit trail
-- Dashboard แสดง equity/drawdown/risk/cost/health ตาม source of truth และเตือน stale data
-- Shadow/paper/canary ผ่านเกณฑ์ก่อนเพิ่ม live risk
-- Test coverage ≥80%, critical unit/integration/E2E ผ่าน และไม่มี unresolved critical security finding
+- ไม่มี unused genes และ strategy mapping ตรงกันตลอด lab→manifest→live
+- Same seed/data/code ให้ผล reproduce และ resume ได้
+- CPU/GPU/live replay parity ผ่าน
+- End-to-end qualified candidate throughput เพิ่มอย่างน้อย 2× โดย evidence quality ไม่ลด
+- Candidate ผ่าน rolling walk-forward, cost stress และ untouched holdout
+- Strategy search ผ่าน equal-budget fairness และ leaderboard ไม่มี behavioral duplicates
+- Shadow/paper/canary ผ่านเกณฑ์ก่อนเพิ่มเงินจริง
+- Paper/Live execution contexts และ UI/data ถูกแยก ไม่มี cross-mode mutation
+- ไม่มี unprotected position, duplicate order หรือ unresolved reconciliation
+- Risk/rollback/monitoring ทำงานได้เมื่อ component ล้มเหลว
+- Unit/integration/E2E ผ่านและ coverage รวม `>=80%`
+- ไม่มี unresolved critical security finding

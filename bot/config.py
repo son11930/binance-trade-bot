@@ -11,7 +11,14 @@ FUTURES_QUANTITY_USDT = float(os.getenv("FUTURES_QUANTITY_USDT", "10.0"))
 FUTURES_LEVERAGE = int(os.getenv("FUTURES_LEVERAGE", "3"))
 FUTURES_MARGIN_TYPE = os.getenv("FUTURES_MARGIN_TYPE", "ISOLATED")
 
-PAPER_TRADING = os.getenv("PAPER_TRADING", "True").lower() == "true"
+# PAPER_TRADING is now dynamically managed by Web UI (bot_control.json)
+# This is a fallback wrapper for legacy code, but new code should use ExecutionContext
+def is_paper_trading():
+    from .control import get_bot_control
+    return get_bot_control().get("paper_trading", True)
+
+PAPER_TRADING = is_paper_trading() # Note: This evaluates once on import. Prefer is_paper_trading() or ExecutionContext where dynamic is needed.
+
 COOLDOWN_MINUTES = int(os.getenv("COOLDOWN_MINUTES", "15"))
 MAX_CONCURRENT_TRADES = int(os.getenv("MAX_CONCURRENT_TRADES", "5"))
 STOP_LOSS_PERCENT = float(os.getenv("STOP_LOSS_PERCENT", "2.5"))

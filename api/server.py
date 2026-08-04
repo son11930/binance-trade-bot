@@ -219,13 +219,20 @@ from bot.config import SYMBOLS
 
 def get_bot_status():
     from bot.strategy_manager import get_active_strategy
+    from bot.control import get_bot_control
+    
     strat = get_active_strategy()
-    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("PAPER_TRADING", "True").lower() == "true" else "LIVE")
+    ctrl = get_bot_control()
+    allow_live = ctrl.get("allow_live", False)
+    paper_trading_config = ctrl.get("paper_trading", True)
+    
+    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if paper_trading_config else "LIVE")
     
     return {
         "status": "online",
         "symbols": SYMBOLS,
-        "paper_trading": os.getenv("PAPER_TRADING", "True"),
+        "paper_trading": str(paper_trading_config),
+        "allow_live": allow_live,
         "active_stage": active_stage,
         "spot": latest_bot_state_spot,
         "futures": latest_bot_state_futures
@@ -305,6 +312,10 @@ class TogglePauseRequest(BaseModel):
     market: str
     paused: bool
 
+class ToggleExecutionModeRequest(BaseModel):
+    allow_live: Optional[bool] = None
+    paper_trading: Optional[bool] = None
+
 @app.get("/api/bot_control")
 async def get_bot_control_endpoint():
     return get_bot_control()
@@ -332,6 +343,17 @@ async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(ve
     
     new_state = get_bot_control()
     await manager.broadcast({"type": "bot_control_update", "data": new_state})
+    return {"status": "success", "data": new_state}
+
+@app.post("/api/toggle_execution_mode")
+async def toggle_execution_mode_endpoint(req: ToggleExecutionModeRequest, auth: bool = Depends(verify_jwt)):
+    set_bot_control(allow_live=req.allow_live, paper_trading=req.paper_trading)
+    new_state = get_bot_control()
+    
+    # Broadcast the updated status immediately
+    await manager.broadcast({"type": "status_update", "data": get_bot_status()})
+    await manager.broadcast({"type": "bot_control_update", "data": new_state})
+    
     return {"status": "success", "data": new_state}
 
 
@@ -607,6 +629,24 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     if req.stage not in ["PAPER", "LIVE"]:
         raise HTTPException(status_code=400, detail="Stage must be PAPER or LIVE")
         
+    ctrl = get_bot_control()
+    if req.stage == "LIVE" and not ctrl.get("allow_live", False):
+        raise HTTPException(status_code=403, detail="LIVE deployment is disabled. Enable 'Allow Live Trading' first.")
+        
+    if not ctrl.get("spot_paused", False) or not ctrl.get("futures_paused", False):
+        raise HTTPException(status_code=400, detail="Cannot deploy strategy while bot is running. Please PAUSE the bot first.")
+        
+    try:
+        from bot.binance_client import client
+        positions_res = client.futures_position_information()
+        open_positions = [p for p in positions_res if float(p['positionAmt']) != 0]
+        if open_positions:
+            raise HTTPException(status_code=400, detail="Cannot deploy strategy while there are open exchange positions.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.warning(f"Could not check open positions: {e}")
+        
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
     if not os.path.exists(json_path):
         raise HTTPException(status_code=404, detail="Leaderboard not found")
@@ -649,8 +689,10 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     manifest_data["active_strategy"] = new_strategy
     
     try:
-        with open(manifest_path, "w", encoding="utf-8") as f:
+        tmp_manifest = f"{manifest_path}.tmp"
+        with open(tmp_manifest, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2)
+        os.replace(tmp_manifest, manifest_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write manifest: {e}")
         

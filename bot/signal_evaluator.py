@@ -152,7 +152,7 @@ def _calculate_spot_position_size(state_manager: StateManager, symbol: str, allo
     qty = safe_trade_amount / current_price 
     return qty, trade_amount
 
-def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
+def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN", context=None):
     try:
         control = get_bot_control()
         if _check_trading_paused(control, "futures", symbol, state_manager):
@@ -185,7 +185,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             strat = get_active_strategy()
             is_paper = (strat.get("stage", "PAPER") == "PAPER") if strat else PAPER_TRADING
             
-            trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=is_paper)
+            trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=is_paper, context=context)
             
             if trade:
                 send_discord_alert(f"🤖 **[FUTURES] Sniper Entry: {signal} {symbol}**\nReason: {reason}")
@@ -203,7 +203,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 from .binance_client import futures_place_native_stop
                 if not futures_place_native_stop(symbol, position_side, sl_target):
                     log_msg("ERROR", f"🚨 Native Stop placement failed for {symbol}. FAILING CLOSED immediately.", market_type="futures")
-                    close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper)
+                    close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper, context=context)
                     
                     if close_trade:
                         profit_amt = (close_trade.get("pnl_amount") if isinstance(close_trade, dict) else getattr(close_trade, "pnl_amount", 0.0)) or 0.0
@@ -228,7 +228,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
     except Exception as e:
         log_msg("ERROR", f"❌ Error in _evaluate_futures_trade_signal for {symbol}: {e}")
 
-def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN"):
+def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN", context=None):
     try:
         control = get_bot_control()
         if _check_trading_paused(control, "spot", symbol, state_manager):
@@ -262,7 +262,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 return
             qty, trade_amount = size_res
             
-            trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING)
+            trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING, context=context)
             if trade:
                 send_discord_alert(f"🤖 **[SPOT] Sniper Entry: BUY {symbol}**\nReason: {reason}")
                 state_manager.add_to_balance(-trade_amount)
@@ -517,7 +517,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         log_msg("ERROR", f"❌ Error processing futures {symbol}: {sanitize_text(str(e))}", market_type="futures")
 
 
-def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbols: list):
+def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbols: list, context=None):
     try:
         log_msg("INFO", "Running Spot Single-Pass Evaluation...", market_type='spot')
         
@@ -546,7 +546,7 @@ def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbol
             
             if signal == "SELL" and state.position > 0:
                 log_msg("INFO", f"📉 SPOT EXIT SELL Signal for {symbol} via {strategy_used}. Executing...")
-                trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=PAPER_TRADING)
+                trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=PAPER_TRADING, context=context)
                 if trade:
                     pnl_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                     pnl_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
@@ -623,7 +623,7 @@ def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbol
             ai_queue_manager.submit(
                 vol_surge_val, symbol, _evaluate_buy_signal, 
                 state_manager, symbol, current_price, signal_plan.strategy_used, signal_plan.stop_loss, signal_plan.take_profit, signal_plan.time_in_trade, 
-                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val
+                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val, context
             )
             
     except Exception as e:
@@ -631,7 +631,7 @@ def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbol
         log_msg("ERROR", f"❌ Error in evaluate_all_spot_strategies_single_pass: {e}\n{traceback.format_exc()}", market_type='spot')
 
 
-def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, symbols: list):
+def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, symbols: list, context=None):
     try:
         log_msg("INFO", "Running Futures Single-Pass Evaluation...", market_type='futures')
         
@@ -677,7 +677,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
             if state.position > 0:
                 if "EXIT" in strategy_used and state.position_side == position_side:
                     log_msg("INFO", f"📉 FUTURES EXIT {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
-                    trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=data['is_paper'])
+                    trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=data['is_paper'], context=context)
                     if trade:
                         from .binance_client import futures_cancel_all_orders
                         futures_cancel_all_orders(symbol)
@@ -695,7 +695,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                        ("LONG" in strategy_used and state.position_side == "SHORT"):
                         log_msg("INFO", f"📉 FUTURES REVERSAL EXIT for {symbol} via {strategy_used}...", market_type="futures")
                         exit_side = "SELL" if state.position_side == "LONG" else "BUY"
-                        trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper)
+                        trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper, context=context)
                         if trade:
                             from .binance_client import futures_cancel_all_orders
                             futures_cancel_all_orders(symbol)

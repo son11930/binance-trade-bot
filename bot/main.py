@@ -12,6 +12,9 @@ from .webhook_notifier import update_bot_state
 from .risk_manager import calculate_pnl
 from .opportunity_tracker import track_opportunities
 from .global_memory_agent import generate_global_memory
+from .context import ExecutionContext
+from .strategy_manager import get_active_strategy
+from .control import get_bot_control, set_bot_control
 
 setup_logging()
 
@@ -118,11 +121,40 @@ def main():
             if now.minute in (0, 30) and now.second == 2:
                 log_msg("INFO", f"⏰ Central Clock Triggered at {now.strftime('%H:%M:%S')}. Running Single-Pass evaluations...")
                 
-                from .config import SYMBOLS
+                from .config import SYMBOLS, PAPER_TRADING
+                
+                # Phase 0A: Build ExecutionContext and validate state
+                strat = get_active_strategy()
+                ctrl = get_bot_control()
+                
+                if strat:
+                    manifest_stage = strat.get("stage", "PAPER")
+                    exec_mode = "PAPER" if PAPER_TRADING else "LIVE"
+                    
+                    if manifest_stage != exec_mode:
+                        log_msg("ERROR", f"CRITICAL SECURITY ALERT: Config execution mode ({exec_mode}) does not match Manifest stage ({manifest_stage}). Failsafe triggered: PAUSING bot.")
+                        set_bot_control(spot_paused=True, futures_paused=True)
+                        time.sleep(2)
+                        continue
+                        
+                    context = ExecutionContext(
+                        execution_mode=exec_mode,
+                        deployment_id=strat.get("id", "unknown_deployment"),
+                        strategy_id=strat.get("name", "unknown_strategy"),
+                        version=strat.get("version", "1.0.0")
+                    )
+                else:
+                    exec_mode = "PAPER" if PAPER_TRADING else "LIVE"
+                    context = ExecutionContext(
+                        execution_mode=exec_mode,
+                        deployment_id="default_deployment",
+                        strategy_id="default_strategy",
+                        version="1.0.0"
+                    )
                 
                 # Run evaluations in separate threads so we don't block the clock
-                threading.Thread(target=evaluate_all_futures_strategies_single_pass, args=(state_manager_futures, SYMBOLS), daemon=True).start()
-                threading.Thread(target=evaluate_all_spot_strategies_single_pass, args=(state_manager_spot, SYMBOLS), daemon=True).start()
+                threading.Thread(target=evaluate_all_futures_strategies_single_pass, args=(state_manager_futures, SYMBOLS, context), daemon=True).start()
+                threading.Thread(target=evaluate_all_spot_strategies_single_pass, args=(state_manager_spot, SYMBOLS, context), daemon=True).start()
                 
                 # Sleep for 2 seconds to avoid triggering multiple times within the same second
                 time.sleep(2)

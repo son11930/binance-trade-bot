@@ -7,7 +7,7 @@ from .database import sanitize_text, TradeRepository
 from bot.logger import log_msg
 from bot.state import StateManager, SymbolState
 from bot.control import get_bot_control
-from .config import PAPER_TRADING, COOLDOWN_MINUTES
+from .config import is_paper_trading, COOLDOWN_MINUTES
 from .trade_executor import execute_trade
 from .webhook_notifier import update_bot_state, send_discord_alert
 from .binance_client import get_current_price
@@ -145,7 +145,7 @@ def _calculate_spot_position_size(state_manager: StateManager, symbol: str, allo
     if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
     
     if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
-        log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not PAPER_TRADING else 'Paper'} USDT to buy {symbol}")
+        log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not is_paper_trading() else 'Paper'} USDT to buy {symbol}")
         return None
         
     safe_trade_amount = trade_amount * 0.98
@@ -180,10 +180,10 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             
             from .trade_executor import execute_futures_trade
             from .strategy_manager import get_active_strategy
-            from .config import PAPER_TRADING
+            from .config import is_paper_trading
             
             strat = get_active_strategy()
-            is_paper = (strat.get("stage", "PAPER") == "PAPER") if strat else PAPER_TRADING
+            is_paper = (strat.get("stage", "PAPER") == "PAPER") if strat else is_paper_trading()
             
             trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=is_paper, context=context)
             
@@ -262,7 +262,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
                 return
             qty, trade_amount = size_res
             
-            trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=PAPER_TRADING, context=context)
+            trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=is_paper_trading(), context=context)
             if trade:
                 send_discord_alert(f"🤖 **[SPOT] Sniper Entry: BUY {symbol}**\nReason: {reason}")
                 state_manager.add_to_balance(-trade_amount)
@@ -346,7 +346,7 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
             
         elif signal == "SELL" and state.position > 0:
             log_msg("INFO", f"📉 SELL Signal for {symbol} via {strategy_used}. Executing...")
-            trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=PAPER_TRADING)
+            trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=is_paper_trading())
             if trade:
                 pnl_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                 pnl_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
@@ -372,7 +372,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         from .strategy import analyze_futures_market, evaluate_dynamic_strategy
         from .trade_executor import execute_futures_trade
         from .strategy_manager import get_active_strategy
-        from .config import PAPER_TRADING
+        from .config import is_paper_trading
         
         update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol, market_type='futures')
         
@@ -385,7 +385,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
             is_paper = (active_strat.get("stage", "PAPER") == "PAPER")
         else:
             signal_plan = analyze_futures_market(df)
-            is_paper = PAPER_TRADING
+            is_paper = is_paper_trading()
 
         
         signal = signal_plan.action
@@ -546,7 +546,7 @@ def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbol
             
             if signal == "SELL" and state.position > 0:
                 log_msg("INFO", f"📉 SPOT EXIT SELL Signal for {symbol} via {strategy_used}. Executing...")
-                trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=PAPER_TRADING, context=context)
+                trade = execute_trade(state_manager, symbol, "SELL", state.position, current_price, reason=f"Strategy SELL: {strategy_used}", is_paper=is_paper_trading(), context=context)
                 if trade:
                     pnl_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                     pnl_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
@@ -638,7 +638,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
         from .strategy import analyze_futures_market, evaluate_dynamic_strategy
         from .trade_executor import execute_futures_trade
         from .strategy_manager import get_active_strategy
-        from .config import PAPER_TRADING
+        from .config import is_paper_trading
         
         symbol_data = {}
         for symbol in symbols:
@@ -655,7 +655,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                 is_paper = (active_strat.get("stage", "PAPER") == "PAPER")
             else:
                 signal_plan = analyze_futures_market(df)
-                is_paper = PAPER_TRADING
+                is_paper = is_paper_trading()
                 
             symbol_data[symbol] = {
                 'df': df,

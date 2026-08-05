@@ -1,3 +1,10 @@
+## [2.3.1] - 2026-08-06 (Security & Execution Consistency Fixes)
+
+### Fixed
+- **API Security (Phase 7)**: Removed insecure IP-based authentication bypass (`127.0.0.1`) from the `/api/lab/upload_results` webhook. Added strict JWT requirement to all `/api/bot_control`, `/api/lab/leaderboard`, and `/api/lab/progress` endpoints. Added a 120/minute rate limit to prevent DoS.
+- **Execution Mode Bug (Phase 6)**: Resolved a critical architectural flaw where the `PAPER_TRADING` constant was statically evaluated at import time in `bot/config.py`. All bot modules now dynamically evaluate `is_paper_trading()` per execution, guaranteeing zero cross-mode leakage when toggling LIVE TRADE from the dashboard.
+- **Secrets Management**: Eradicated hardcoded plaintext root password in `ssh_restart.py`, enforcing SSH key-based authentication.
+
 ## [2.3.0] - 2026-08-06 (Phases 6-8: Multi-Mode Execution, Risk Controls & Production Monitoring)
 
 ### Added

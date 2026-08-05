@@ -9,7 +9,7 @@ from binance.exceptions import BinanceAPIException
 from dotenv import load_dotenv
 
 from .database import LogRepository, sanitize_text
-from .config import PAPER_TRADING
+from .config import is_paper_trading
 
 def sanitize_error(e: Exception) -> str:
     err_str = str(e)
@@ -142,7 +142,7 @@ def get_cached_spot_fee(symbol: str) -> float:
     if symbol in _spot_fees and now - _spot_fee_ts.get(symbol, 0) < 3600:
         return _spot_fees[symbol]
     try:
-        if PAPER_TRADING:
+        if is_paper_trading():
             return 0.001
         res = client.get_trade_fee(symbol=symbol)
         if res and len(res) > 0:
@@ -161,7 +161,7 @@ def get_cached_futures_fee(symbol: str) -> float:
     if symbol in _futures_fees and now - _futures_fee_ts.get(symbol, 0) < 3600:
         return _futures_fees[symbol]
     try:
-        if PAPER_TRADING:
+        if is_paper_trading():
             return 0.0005
         res = client.futures_commission_rate(symbol=symbol)
         if res:
@@ -228,7 +228,7 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     Places a market order. If is_paper is True, it simulates the execution.
     side: 'BUY' or 'SELL'
     """
-    if is_paper or PAPER_TRADING:
+    if is_paper or is_paper_trading():
         price = get_current_price(symbol)
         log_msg("INFO", f"[PAPER TRADE] {side} {quantity} of {symbol} at approx {price}")
         return {
@@ -362,7 +362,7 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     side: 'BUY' or 'SELL'
     positionSide: 'LONG' or 'SHORT'
     """
-    if is_paper or PAPER_TRADING:
+    if is_paper or is_paper_trading():
         price = futures_get_current_price(symbol)
         log_msg("INFO", f"[FUTURES PAPER] {side} {positionSide} {quantity} of {symbol} at approx {price}")
         return {
@@ -457,7 +457,7 @@ from bot.database import sanitize_text
 def futures_cancel_all_orders(symbol: str):
     """Cancel all open orders (including TP/SL) for a futures symbol."""
     try:
-        if PAPER_TRADING:
+        if is_paper_trading():
             log_msg("INFO", f"[FUTURES PAPER] Cancelled all orders for {symbol}")
             return True
             
@@ -470,7 +470,7 @@ def futures_cancel_all_orders(symbol: str):
 
 def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float):
     """Set Take Profit and Stop Loss for a specific position using closePosition=True"""
-    if PAPER_TRADING:
+    if is_paper_trading():
         log_msg("INFO", f"[FUTURES PAPER] Set TP={tp_price} SL={sl_price} for {positionSide} {symbol}")
         return True
         
@@ -509,7 +509,7 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
 
 def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float) -> bool:
     """Place a STOP_MARKET reduce-only (closePosition=True) order immediately after entry."""
-    if PAPER_TRADING:
+    if is_paper_trading():
         log_msg("INFO", f"[FUTURES PAPER] Native Stop Loss placed at {sl_price} for {positionSide} {symbol}")
         return True
         

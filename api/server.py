@@ -336,7 +336,7 @@ class ToggleExecutionModeRequest(BaseModel):
     paper_trading: Optional[bool] = None
 
 @app.get("/api/bot_control")
-async def get_bot_control_endpoint():
+async def get_bot_control_endpoint(auth: bool = Depends(verify_jwt)):
     return get_bot_control()
 
 def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
@@ -494,7 +494,7 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
 _leaderboard_cache = {"data": None, "expiry": 0}
 
 @app.get("/api/lab/leaderboard")
-def get_strategy_leaderboard():
+def get_strategy_leaderboard(auth: bool = Depends(verify_jwt)):
     """Returns Top 10 synthesized strategies from Aiven DB or JSON fallback with 15s TTL cache."""
     now = time.time()
     if _leaderboard_cache["data"] and now < _leaderboard_cache["expiry"]:
@@ -551,7 +551,7 @@ def get_strategy_leaderboard():
 
 
 @app.get("/api/lab/progress")
-def get_strategy_lab_progress():
+def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
     """Returns live real-time progress of the AI Strategy Synthesizer Lab from Aiven DB or local file fallback."""
     try:
         from bot.database import LabProgressState
@@ -587,16 +587,14 @@ def get_strategy_lab_progress():
 
 
 @app.post("/api/lab/upload_results")
+@limiter.limit("120/minute")
 async def upload_strategy_results(data: Dict[str, Any], request: Request):
     """Webhook endpoint for local AI Synthesizer Lab to push Top 10 results."""
     _leaderboard_cache["expiry"] = 0  # Invalidate cache instantly on new results
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "").strip() if auth_header else ""
     if not token or (token != WEBHOOK_TOKEN and token != os.getenv("BOT_TOKEN", "")):
-        # Allow internal localhost loopback without auth token if token not provided
-        client_ip = get_remote_address(request)
-        if client_ip not in ("127.0.0.1", "localhost", "::1"):
-            raise HTTPException(status_code=401, detail="Unauthorized upload")
+        raise HTTPException(status_code=401, detail="Unauthorized upload")
             
     strategies = data.get("strategies", [])
     if not strategies:

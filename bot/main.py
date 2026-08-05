@@ -1,7 +1,7 @@
 import time
 import threading
 
-from .config import SYMBOLS, PAPER_TRADING, FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
+from .config import SYMBOLS, is_paper_trading, FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
 from .state import StateManager
 from .database import setup_logging
 from .logger import log_msg
@@ -22,7 +22,7 @@ def main():
     log_msg("INFO", "Starting Multi-Coin Dual-Engine Bot (Spot & Futures)...")
     
     # Configure Futures settings on real account
-    if not PAPER_TRADING:
+    if not is_paper_trading():
         log_msg("INFO", f"Setting up Futures Margin ({FUTURES_MARGIN_TYPE}) and Leverage ({FUTURES_LEVERAGE}x)...", market_type='futures')
         futures_set_position_mode(is_paper=False)
         for sym in SYMBOLS:
@@ -100,12 +100,12 @@ def main():
         import time
         from .binance_client import futures_account_balance
         from .discord import send_discord_alert
-        from .config import PAPER_TRADING
+        from .config import is_paper_trading
         
         while True:
             # Reconcile every 4 hours (14400 seconds)
             time.sleep(14400)
-            if PAPER_TRADING:
+            if is_paper_trading():
                 continue
                 
             try:
@@ -198,7 +198,7 @@ def main():
             if now.minute in (0, 30) and now.second == 2:
                 log_msg("INFO", f"⏰ Central Clock Triggered at {now.strftime('%H:%M:%S')}. Running Single-Pass evaluations...")
                 
-                from .config import SYMBOLS, PAPER_TRADING
+                from .config import SYMBOLS, is_paper_trading
                 
                 # Phase 0A: Build ExecutionContext and validate state
                 strat = get_active_strategy()
@@ -206,7 +206,7 @@ def main():
                 
                 if strat:
                     manifest_stage = strat.get("stage", "PAPER")
-                    exec_mode = "PAPER" if PAPER_TRADING else "LIVE"
+                    exec_mode = "PAPER" if is_paper_trading() else "LIVE"
                     
                     if manifest_stage != exec_mode:
                         log_msg("ERROR", f"CRITICAL SECURITY ALERT: Config execution mode ({exec_mode}) does not match Manifest stage ({manifest_stage}). Failsafe triggered: PAUSING bot.")
@@ -221,7 +221,7 @@ def main():
                         version=strat.get("version", "1.0.0")
                     )
                 else:
-                    exec_mode = "PAPER" if PAPER_TRADING else "LIVE"
+                    exec_mode = "PAPER" if is_paper_trading() else "LIVE"
                     context = ExecutionContext(
                         execution_mode=exec_mode,
                         deployment_id="default_deployment",
@@ -358,8 +358,8 @@ def main():
                 reconnect_time = 0.0
 
         try:
-            from .config import PAPER_TRADING
-            if PAPER_TRADING:
+            from .config import is_paper_trading
+            if is_paper_trading():
                 update_bot_state(state_manager_spot_paper, "Monitoring Spot markets...", symbol="All", market_type='spot')
                 update_bot_state(state_manager_futures_paper, "Monitoring Futures markets...", symbol="All", market_type='futures')
             else:

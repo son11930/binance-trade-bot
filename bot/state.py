@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace, asdict, fields
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from .config import SYMBOLS, PAPER_TRADING, FUTURES_LEVERAGE
+from .config import SYMBOLS, is_paper_trading, FUTURES_LEVERAGE
 from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance, get_all_spot_balances, client
 from .database import TradeRepository
 from .logger import log_msg
@@ -334,7 +334,7 @@ class StateManager:
                     pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, market_type='spot')
                     from .database import TradeRepository
                     TradeRepository.create_trade(
-                        symbol, "SELL", current_price, state.position, None, "Startup Sync / Manual Sell", PAPER_TRADING,
+                        symbol, "SELL", current_price, state.position, None, "Startup Sync / Manual Sell", is_paper_trading(),
                         0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
                     )
                 new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")

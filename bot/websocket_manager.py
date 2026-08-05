@@ -7,7 +7,7 @@ from typing import Dict
 from concurrent.futures import ThreadPoolExecutor
 
 from .state import StateManager
-from .config import STOP_LOSS_PERCENT, PAPER_TRADING
+from .config import STOP_LOSS_PERCENT, is_paper_trading
 from .risk_manager import check_spot_risk_management, check_futures_risk_management
 from .trade_executor import execute_trade, execute_futures_trade
 from .signal_evaluator import evaluate_strategy_for_symbol, evaluate_futures_strategy_for_symbol
@@ -131,7 +131,7 @@ class WebSocketManager:
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         def _execute_spot_rm():
-                            trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
+                            trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=is_paper_trading())
                             if trade:
                                 _notify_profitable_close(trade, symbol, rm_signal, "spot")
                                 gross_return = state.position * current_price
@@ -161,7 +161,7 @@ class WebSocketManager:
                         def _execute_futures_rm():
                             close_side = "BUY" if state.position_side == "SHORT" else "SELL"
                             from .trade_executor import execute_futures_trade
-                            trade = execute_futures_trade(self.state_manager, symbol, close_side, state.position_side, state.position, current_price, reason=rm_signal, is_paper=PAPER_TRADING)
+                            trade = execute_futures_trade(self.state_manager, symbol, close_side, state.position_side, state.position, current_price, reason=rm_signal, is_paper=is_paper_trading())
                             if trade:
                                 from .binance_client import futures_cancel_all_orders
                                 futures_cancel_all_orders(symbol)

@@ -3,14 +3,14 @@ import sys
 
 host = "45.136.254.62"
 username = "root"
-password = "6hl$!5CXBkgx"
+# password removed for security; use SSH keys
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
 try:
     print(f"Connecting to {host}...")
-    client.connect(host, username=username, password=password, timeout=10)
+    client.connect(host, username=username, timeout=10)
     
     commands = [
         "cd /root/binance-trade-bot && git pull origin main",

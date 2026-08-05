@@ -81,7 +81,7 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
 
     from .strategy_manager import get_active_strategy
     strat = get_active_strategy()
-    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("PAPER_TRADING", "True").lower() == "true" else "LIVE")
+    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("is_paper_trading()", "True").lower() == "true" else "LIVE")
 
     sys_health = {
         "api_healthy": True,

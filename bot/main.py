@@ -77,7 +77,7 @@ def main():
             time.sleep(60) # Sync every 1 minute
             try:
                 # 1. API Clock Drift Kill Switch
-                server_time_ms = client.time().get('serverTime', 0)
+                server_time_ms = client.get_server_time().get('serverTime', 0)
                 local_time_ms = int(time.time() * 1000)
                 drift_ms = abs(server_time_ms - local_time_ms)
                 

@@ -34,7 +34,7 @@ def fetch_liquidations(symbol: str) -> dict:
         response = requests.get(url, params={"symbol": symbol, "limit": 100}, timeout=10)
         
         # Handle the out of maintenance endpoint gracefully without throwing errors
-        if response.status_code == 400:
+        if response.status_code in [400, 401, 404, 410]:
             return {"long_liq_usd": 0.0, "short_liq_usd": 0.0}
             
         response.raise_for_status()

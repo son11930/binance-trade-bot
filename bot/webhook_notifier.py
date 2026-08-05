@@ -1,6 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import os
+import time
+from urllib.parse import urlparse
+import os
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 
@@ -139,9 +142,31 @@ def update_bot_state(state_manager: StateManager, status_msg: str, thinking=Fals
     payload = build_webhook_payload(state_manager, status_msg, thinking, symbol, ai_debate, market_type)
     dispatch_webhook(payload)
 
+# Simple deduplication cache to prevent Discord spam bursts
+_discord_alert_cache = {}
+_BOT_START_TIME = time.time()
+
 def send_discord_alert(msg: str):
     webhook = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook: return
+    
+    # Startup grace period: Block alerts for the first 15 seconds to prevent startup spam
+    if time.time() - _BOT_START_TIME < 15:
+        log_msg("INFO", "Suppressed Discord alert (startup grace period).")
+        return
+        
+    # Deduplication: prevent exact same message from being sent multiple times within 60s
+    now = time.time()
+    if msg in _discord_alert_cache and (now - _discord_alert_cache[msg]) < 60:
+        log_msg("INFO", "Suppressed duplicate Discord alert (rate limit).")
+        return
+    _discord_alert_cache[msg] = now
+    
+    # Cleanup old cache entries occasionally
+    if len(_discord_alert_cache) > 100:
+        to_delete = [k for k, v in _discord_alert_cache.items() if (now - v) >= 60]
+        for k in to_delete:
+            del _discord_alert_cache[k]
     
     def _send():
         try:

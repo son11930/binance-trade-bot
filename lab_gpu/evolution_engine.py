@@ -139,12 +139,19 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     logger.info("=" * 70)
 
     logger.info("Loading historical data from local cache (binace_backtest1y/)...")
-    symbol_arrays: Dict[str, Dict[str, np.ndarray]] = {}
+    symbol_dfs: Dict[str, pd.DataFrame] = {}
     for sym in SYMBOLS:
         df = _load_and_cache_symbol(sym)
         if df is not None:
-            symbol_arrays[sym] = _df_to_arrays(df)
-            logger.info(f"  ✅ [{sym}] {len(df)} bars loaded → GPU-ready float32 arrays")
+            symbol_dfs[sym] = df
+            logger.info(f"  ✅ [{sym}] {len(df)} bars loaded")
+            
+    symbol_arrays: Dict[str, Dict[str, np.ndarray]] = {}
+    if symbol_dfs:
+        from .data_loader import align_symbols_to_arrays
+        logger.info("Aligning all symbols to a universal time axis to prevent lookahead/causal bugs...")
+        symbol_arrays = align_symbols_to_arrays(symbol_dfs)
+        logger.info("Time alignment complete. Converted to GPU-ready float32 arrays.")
     
     if not symbol_arrays:
         logger.error("❌ No symbol data found! Run the CPU synthesizer first to download data.")
@@ -174,8 +181,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1)
     )
 
-    if GPU_AVAILABLE:
-        preload_all_symbols_to_gpu(symbol_arrays, GPU_AVAILABLE)
+    if symbol_arrays:
+        # We skip individual preload_all_symbols_to_gpu because _GPU_FLAT_DATA handles the mega-batch.
         _pack_symbols_to_flat_gpu(symbol_arrays, GPU_AVAILABLE)
 
     leaderboard_map: Dict[str, Any] = {}
@@ -226,6 +233,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
     completed = 0
     batch_idx = 0
+    validated_winners = 0
     try:
         while True:
             if n_trials is not None and completed >= n_trials:
@@ -279,28 +287,38 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                             
                         genomes.append(mutant)
 
-                batch_results = _mega_batch_gpu_backtest(genomes)
+                # Pre-sort genomes by strategy type to eliminate Warp Divergence on the GPU
+                paired_tpe = [(t, g) for t, g in zip(optuna_trials, genomes[:n_tpe])]
+                paired_mut = [(None, g) for g in genomes[n_tpe:]]
+                all_paired = paired_tpe + paired_mut
+                all_paired.sort(key=lambda pair: str(pair[1].get("strategy_type", "")))
+                
+                sorted_genomes = [pair[1] for pair in all_paired]
+                batch_results = _mega_batch_gpu_backtest(sorted_genomes)
 
                 with lock:
-                    for t, genome, res in zip(optuna_trials, genomes[:n_tpe], batch_results[:n_tpe]):
+                    m_idx = 0
+                    for (trial, genome), res in zip(all_paired, batch_results):
                         st_name = str(genome.get("strategy_type", "rsi")).upper()
-                        res["name"] = f"[{st_name}] Evolved Alpha TPE #{t.number}"
                         res["parameters"] = genome
-                        leaderboard_map[f"trial_{t.number}"] = res
-                        study.tell(t, res["fitness_score"])
+                        
+                        if trial is not None:
+                            res["name"] = f"[{st_name}] Evolved Alpha TPE #{trial.number}"
+                            leaderboard_map[f"trial_{trial.number}"] = res
+                            study.tell(trial, res["fitness_score"])
+                        else:
+                            mut_id = completed + n_tpe + m_idx + 1
+                            m_idx += 1
+                            res["name"] = f"[{st_name}] Evolved Alpha Mutant #{mut_id}"
+                            leaderboard_map[f"mutant_{mut_id}"] = res
+                            
                         if res["fitness_score"] > best_so_far_score:
                             best_so_far_score = res["fitness_score"]
                             best_so_far_name  = res["name"]
-
-                    for m_idx, (genome, res) in enumerate(zip(genomes[n_tpe:], batch_results[n_tpe:])):
-                        st_name = str(genome.get("strategy_type", "rsi")).upper()
-                        mut_id = completed + n_tpe + m_idx + 1
-                        res["name"] = f"[{st_name}] Evolved Alpha Mutant #{mut_id}"
-                        res["parameters"] = genome
-                        leaderboard_map[f"mutant_{mut_id}"] = res
-                        if res["fitness_score"] > best_so_far_score:
-                            best_so_far_score = res["fitness_score"]
-                            best_so_far_name  = res["name"]
+                            
+                        # KPI for Phase 4: Validated Winners / Hour
+                        if res["fitness_score"] > 0.0:
+                            validated_winners += 1
 
                     if len(leaderboard_map) > 50:
                         top_keys = sorted(leaderboard_map.keys(), key=lambda k: leaderboard_map[k].get("fitness_score", 0.0), reverse=True)[:50]
@@ -309,9 +327,13 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 completed += batch_size
                 batch_idx += 1
                 elapsed = int(time.time() - start_time)
+                elapsed_hrs = elapsed / 3600.0 if elapsed > 0 else 0.0001
+                rate = validated_winners / elapsed_hrs
+                
                 logger.info(
-                    f"[Batch {batch_idx}] {completed} genomes done | "
-                    f"Best: {best_so_far_score:.2f} ({best_so_far_name[:40]}) | "
+                    f"[Batch {batch_idx}] {completed} genomes | "
+                    f"Winners: {validated_winners} ({rate:.1f} win/hr) | "
+                    f"Best: {best_so_far_score:.2f} | "
                     f"Elapsed: {elapsed//60}m{elapsed%60}s"
                 )
                 if not BENCHMARK_MODE:

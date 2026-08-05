@@ -225,15 +225,34 @@ def get_bot_status():
     ctrl = get_bot_control()
     allow_live = ctrl.get("allow_live", False)
     paper_trading_config = ctrl.get("paper_trading", True)
+    spot_paused = ctrl.get("spot_paused", False)
+    futures_paused = ctrl.get("futures_paused", False)
+    pause_reason = ctrl.get("pause_reason", "")
     
     active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if paper_trading_config else "LIVE")
     
+    # Phase 8: Reconciliation status
+    recon_status = "Pending..."
+    import os, json
+    state_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_state.json")
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, 'r') as f:
+                s_data = json.load(f)
+                recon_status = s_data.get('reconciliation_status', "Pending...")
+        except:
+            pass
+            
     return {
         "status": "online",
         "symbols": SYMBOLS,
         "paper_trading": str(paper_trading_config),
         "allow_live": allow_live,
+        "spot_paused": str(spot_paused),
+        "futures_paused": str(futures_paused),
+        "pause_reason": pause_reason,
         "active_stage": active_stage,
+        "reconciliation_status": recon_status,
         "spot": latest_bot_state_spot,
         "futures": latest_bot_state_futures
     }
@@ -672,6 +691,14 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
                 manifest_data = json.load(f)
         except Exception:
             pass
+            
+    active_strat = manifest_data.get("active_strategy", {})
+    
+    if req.stage in ["CANARY", "LIVE"]:
+        if active_strat.get("rank") != req.rank:
+            raise HTTPException(status_code=403, detail="Governance Violation: Strategy must be deployed to PAPER first before promoting to LIVE/CANARY.")
+        if active_strat.get("stage") not in ["PAPER", "CANARY"]:
+            raise HTTPException(status_code=403, detail="Governance Violation: Strategy must currently be in PAPER stage to be promoted.")
             
     if manifest_data.get("active_strategy", {}).get("name"):
         manifest_data["history"].append(manifest_data["active_strategy"])

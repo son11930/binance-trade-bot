@@ -1,4 +1,5 @@
 from .binance_client import place_market_order, get_live_asset_balance, futures_place_order, futures_set_leverage, futures_set_margin_type, sanitize_error
+import uuid
 from .database import TradeRepository
 from .logger import log_msg
 from .risk_manager import calculate_pnl
@@ -24,8 +25,17 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
             state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0)
         return None
 
+    client_oid = f"agy_spot_{uuid.uuid4().hex[:16]}"
+    
     try:
-        order = place_market_order(symbol, side, qty, is_paper=is_paper)
+        if is_paper:
+            from .paper_engine import PaperSimulator
+            order = PaperSimulator.execute_spot_trade(state_manager, symbol, side, qty)
+            if not order:
+                return None
+        else:
+            from .binance_client import place_market_order
+            order = place_market_order(symbol, side, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
         if not avg_price:
             avg_price = price
@@ -38,7 +48,7 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
             from .binance_client import get_cached_spot_fee
             commission = (exec_qty * avg_price) * get_cached_spot_fee(symbol)
             commission_asset = "USDT"
-        if commission < 0.01 and commission_asset == "USDT":
+        if commission < 0.01 and commission_asset == "USDT" and not is_paper:
             commission = 0.01
     except Exception as e:
         err_msg = sanitize_error(e)
@@ -105,20 +115,38 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
                     state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
                     return None
 
-        order = futures_place_order(symbol, side, positionSide, qty, is_paper=is_paper)
+        client_oid = f"agy_fut_{uuid.uuid4().hex[:16]}"
+        if is_paper:
+            from .paper_engine import PaperSimulator
+            order = PaperSimulator.execute_futures_trade(state_manager, symbol, side, positionSide, qty)
+            if not order:
+                return None
+        else:
+            from .binance_client import futures_place_order
+            order = futures_place_order(symbol, side, positionSide, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
         if not avg_price:
             avg_price = price
+            
         exec_qty = order.get('parsed_exec_qty')
         if not exec_qty:
             exec_qty = qty
+            
+        # Phase 8: Slippage Auditing
+        if not is_paper and avg_price and price > 0:
+            slippage_pct = abs(avg_price - price) / price * 100
+            slip_str = f"Slippage: {slippage_pct:.3f}%"
+            if slippage_pct > 0.5:
+                log_msg("WARNING", f"⚠️ HIGH SLIPPAGE detected on {symbol}: {slip_str} (Expected: {price}, Filled: {avg_price})", market_type="futures")
+            reason = f"{reason} | {slip_str}"
+            
         commission = order.get('parsed_commission', 0.0)
         commission_asset = order.get('parsed_commission_asset', 'USDT')
         if is_paper or commission == 0.0:
             from .binance_client import get_cached_futures_fee
             commission = (exec_qty * avg_price) * get_cached_futures_fee(symbol)
             commission_asset = "USDT"
-        if commission < 0.01 and commission_asset == "USDT":
+        if commission < 0.01 and commission_asset == "USDT" and not is_paper:
             commission = 0.01
     except Exception as e:
         err_msg = sanitize_error(e)

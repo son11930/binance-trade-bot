@@ -54,7 +54,14 @@ class WebSocketManager:
             if msg.get('e') == '24hrTicker':
                 self.last_message_time = time.time()
                 sym = msg['s']
-                self.state_manager.update_state(sym, last_price=float(msg['c']))
+                self.state_manager.update_state(
+                    sym, 
+                    last_price=float(msg['c']),
+                    best_bid=float(msg.get('b', 0.0)),
+                    best_bid_qty=float(msg.get('B', 0.0)),
+                    best_ask=float(msg.get('a', 0.0)),
+                    best_ask_qty=float(msg.get('A', 0.0))
+                )
         except Exception as e:
             log_msg("ERROR", f"Unhandled exception in process_ticker_message: {e}", market_type=self.market_type)
 

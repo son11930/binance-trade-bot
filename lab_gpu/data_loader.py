@@ -77,6 +77,41 @@ def _df_to_arrays(df: pd.DataFrame) -> Dict[str, np.ndarray]:
         "donchian_high": g("donchian_high_20", df["close"].values.mean()),
     }
 
+def align_symbols_to_arrays(symbol_dfs: Dict[str, pd.DataFrame]) -> Dict[str, Dict[str, np.ndarray]]:
+    """Aligns all dataframes to a universal datetime index to prevent causality bugs and time-shifts."""
+    # Try to find a timestamp index
+    all_indices = []
+    for sym, df in symbol_dfs.items():
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            df.set_index("timestamp", inplace=True)
+        # Drop duplicates if any
+        df = df[~df.index.duplicated(keep='first')]
+        symbol_dfs[sym] = df
+        all_indices.append(df.index)
+        
+    if not all_indices:
+        return {sym: _df_to_arrays(df) for sym, df in symbol_dfs.items()}
+        
+    # Create master index
+    master_index = all_indices[0]
+    for idx in all_indices[1:]:
+        master_index = master_index.union(idx)
+    master_index = master_index.sort_values()
+    
+    symbol_arrays = {}
+    for sym, df in symbol_dfs.items():
+        # Forward fill prices, fillna(0) for missing leading data
+        aligned_df = df.reindex(master_index, method='ffill').fillna(0.0)
+        # Force volume to 0 where it was missing to avoid fake trading volume during gaps
+        missing_mask = ~master_index.isin(df.index)
+        if "volume" in aligned_df.columns:
+            aligned_df.loc[missing_mask, "volume"] = 0.0
+            
+        symbol_arrays[sym] = _df_to_arrays(aligned_df)
+        
+    return symbol_arrays
+
 def preload_all_symbols_to_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], gpu_available: bool) -> None:
     """Transfer ALL 20 symbols' price data to GPU VRAM exactly once at startup."""
     global _GPU_DEVICE_ARRAYS

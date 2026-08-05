@@ -114,9 +114,12 @@
                     </label>
                 </div>
                 <!-- Paper/Live View Toggle -->
-                <div class="bg-slate-800 p-1 rounded-full flex text-xs font-bold uppercase tracking-widest">
+                <div class="flex items-center space-x-2">
+                    <span class="text-[10px] uppercase font-bold tracking-widest text-slate-400">View:</span>
+                    <div class="bg-slate-800 p-1 rounded-full flex text-xs font-bold uppercase tracking-widest">
                     <button id="view-paper-btn" onclick="setViewMode('PAPER')" class="px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors">PAPER</button>
                     <button id="view-live-btn" onclick="setViewMode('LIVE')" class="px-3 py-1 rounded-full text-slate-400 hover:text-white transition-colors">LIVE</button>
+                    </div>
                 </div>
                 <span id="mode-badge" class="px-4 py-1.5 rounded-full bg-blue-500/10 text-blue-400 text-sm font-bold border border-blue-500/30 uppercase tracking-widest">
                     Loading Mode...
@@ -235,9 +238,15 @@
                     <p class="text-xs font-bold text-slate-400 uppercase tracking-[0.15em]">Market Radar</p>
                     <p class="text-lg font-bold text-white mt-1 leading-tight" id="symbol-display">Loading...</p>
                 </div>
-                <div class="mt-4 pt-3 border-t border-slate-700/50">
-                    <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Fear & Greed Index</p>
-                    <p id="fear-greed-display" class="text-xl font-extrabold text-neonCyan">--</p>
+                <div class="mt-4 pt-3 border-t border-slate-700/50 flex justify-between">
+                    <div>
+                        <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Fear & Greed Index</p>
+                        <p id="fear-greed-display" class="text-xl font-extrabold text-neonCyan">--</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[10px] uppercase tracking-widest text-slate-400 mb-1">Reconciliation</p>
+                        <p id="reconciliation-display" class="text-xs font-bold text-slate-300">Pending...</p>
+                    </div>
                 </div>
             </div>
             

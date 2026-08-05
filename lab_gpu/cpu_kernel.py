@@ -6,7 +6,7 @@ from typing import Dict, List, Any
 from .config import _STRAT_MAP_MB, _MACRO_MAP_MB, N_GENOME_PARAMS
 from .fitness import _pack_genomes_to_flat
 
-def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool = True) -> List[Dict[str, Any]]:
     from .data_loader import _GPU_FLAT_DATA
     if not _GPU_FLAT_DATA:
         return []
@@ -188,7 +188,8 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]]) -> List[Dict[st
                             actual_tp_fill = o
                             
                         # Maker 0.02%, Taker 0.05%, Slippage 0.05% + Funding ~ 0.20% Round Trip
-                        round_trip_cost = 0.0020
+                        atr_s = price_data_flat[idx, 6]
+                        round_trip_cost = 0.0010 + (atr_s / c) * 0.05
                         
                         if l <= actual_sl_fill:
                             pnl_pct = ((actual_sl_fill - entry_p[s]) / entry_p[s]) - round_trip_cost

@@ -223,7 +223,7 @@ def round_step_size(quantity: float, step_size: float) -> float:
         precision = int(round(-math.log(step_size, 10), 0))
         return math.floor(quantity * (10**precision)) / (10**precision)
 
-def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool = True):
+def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool = True, client_order_id: str = None):
     """
     Places a market order. If is_paper is True, it simulates the execution.
     side: 'BUY' or 'SELL'
@@ -249,12 +249,16 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     step_size = get_step_size(symbol)
     rounded_quantity = round_step_size(quantity, step_size)
     
-    order = client.create_order(
-        symbol=symbol,
-        side=binance_side,
-        type=ORDER_TYPE_MARKET,
-        quantity=f"{rounded_quantity:.10f}".rstrip('0').rstrip('.')
-    )
+    params = {
+        "symbol": symbol,
+        "side": binance_side,
+        "type": ORDER_TYPE_MARKET,
+        "quantity": f"{rounded_quantity:.10f}".rstrip('0').rstrip('.')
+    }
+    if client_order_id:
+        params["newClientOrderId"] = client_order_id
+        
+    order = client.create_order(**params)
 
     fills = order.get('fills', [])
     total_qty = 0.0
@@ -352,7 +356,7 @@ def futures_get_current_price(symbol: str) -> float:
         log_msg("ERROR", f"Failed to get futures price for {symbol}: {sanitize_error(e)}")
         return 0.0
 
-def futures_place_order(symbol: str, side: str, positionSide: str, quantity: float, is_paper: bool = True):
+def futures_place_order(symbol: str, side: str, positionSide: str, quantity: float, is_paper: bool = True, client_order_id: str = None):
     """
     Places a Futures market order.
     side: 'BUY' or 'SELL'
@@ -384,13 +388,17 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
         raise Exception(f"APIError: Calculated quantity ({quantity}) is smaller than Binance minimum step size ({step_size}). Trade aborted to protect margin limit.")
         
     try:
-        order = client.futures_create_order(
-            symbol=symbol,
-            side=binance_side,
-            positionSide=positionSide,
-            type=ORDER_TYPE_MARKET,
-            quantity=rounded_quantity
-        )
+        params = {
+            "symbol": symbol,
+            "side": binance_side,
+            "positionSide": positionSide,
+            "type": ORDER_TYPE_MARKET,
+            "quantity": rounded_quantity
+        }
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+            
+        order = client.futures_create_order(**params)
         avg_price = float(order.get('avgPrice', 0.0))
         exec_qty = float(order.get('executedQty', 0.0))
         commission = 0.0

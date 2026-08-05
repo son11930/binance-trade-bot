@@ -9,7 +9,7 @@ _lock = threading.Lock()
 def get_bot_control():
     with _lock:
         if not os.path.exists(CONTROL_FILE):
-            default_state = {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True}
+            default_state = {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True, "pause_reason": ""}
             try:
                 with open(CONTROL_FILE, "w") as f:
                     json.dump(default_state, f)
@@ -22,13 +22,14 @@ def get_bot_control():
                 # Apply defaults for old files
                 if "allow_live" not in state: state["allow_live"] = False
                 if "paper_trading" not in state: state["paper_trading"] = True
+                if "pause_reason" not in state: state["pause_reason"] = ""
                 return state
         except Exception:
-            return {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True}
+            return {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True, "pause_reason": ""}
 
-def set_bot_control(spot_paused=None, futures_paused=None, allow_live=None, paper_trading=None):
+def set_bot_control(spot_paused=None, futures_paused=None, allow_live=None, paper_trading=None, pause_reason=None):
     with _lock:
-        current_state = {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True}
+        current_state = {"spot_paused": False, "futures_paused": False, "allow_live": False, "paper_trading": True, "pause_reason": ""}
         if os.path.exists(CONTROL_FILE):
             try:
                 with open(CONTROL_FILE, "r") as f:
@@ -45,6 +46,8 @@ def set_bot_control(spot_paused=None, futures_paused=None, allow_live=None, pape
             current_state["allow_live"] = allow_live
         if paper_trading is not None:
             current_state["paper_trading"] = paper_trading
+        if pause_reason is not None:
+            current_state["pause_reason"] = pause_reason
             
         try:
             tmp_file = f"{CONTROL_FILE}.tmp"

@@ -30,7 +30,7 @@ echo      AI STRATEGY LAB - GPU EDITION (NVIDIA RTX 3070) - WINDOWS LAUNCHER
 echo ===============================================================================
 echo.
 echo   Engine  : GPU CUDA (RTX 3070 8GB) + i7-11800H 8-Core Multi-Worker Optuna
-echo   Speed   : ~1000x faster than CPU-only mode
+echo   Speed   : Uses GPU CUDA for High-Throughput Genomes/sec
 echo   Shared  : Syncs results to SAME Aiven DB as CPU lab (combined leaderboard!)
 echo.
 echo   [1] Start GPU Lab (Default: 100 Trials - Fast Alpha Search)

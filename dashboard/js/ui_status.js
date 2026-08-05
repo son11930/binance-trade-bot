@@ -4,25 +4,63 @@ function updateStatusUI(aiStatus, globalConfig) {
     if (!aiStatus || !globalConfig) return;
     const symDisp = document.getElementById('symbol-display');
     const fgDisp = document.getElementById('fear-greed-display');
+    const stDisp = document.getElementById('status-display');
+    const recDisp = document.getElementById('reconciliation-display');
     
     if (symDisp) symDisp.innerText = globalConfig.symbols ? globalConfig.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
     if (fgDisp && globalConfig.fear_greed_index !== undefined && globalConfig.fear_greed_index !== null) {
         fgDisp.innerText = globalConfig.fear_greed_index;
     }
+    if (recDisp && globalConfig.reconciliation_status) {
+        recDisp.innerText = globalConfig.reconciliation_status;
+        if (globalConfig.reconciliation_status.includes("MISMATCH") || globalConfig.reconciliation_status.includes("diff")) {
+            recDisp.className = "text-xs font-bold text-red-400";
+        } else if (globalConfig.reconciliation_status.includes("OK")) {
+            recDisp.className = "text-xs font-bold text-green-400";
+        }
+    }
     
-    const isPaper = globalConfig.active_stage === "PAPER" || globalConfig.paper_trading === "True";
+    const serverExecutionMode = (globalConfig.paper_trading === "True" || globalConfig.paper_trading === true) ? "PAPER" : "LIVE";
+    const manifestStage = globalConfig.active_stage || "PAPER";
+    const isPaused = globalConfig.spot_paused === "True" || globalConfig.spot_paused === true || globalConfig.futures_paused === "True" || globalConfig.futures_paused === true;
+    
+    let execStatus = manifestStage;
+    let badgeClass = "badge-outline";
+    let titleMsg = "Bot is running";
+    
+    if (isPaused) {
+        execStatus = "PAUSED";
+        badgeClass = "bg-red-500/10 text-red-400 border border-red-500/20";
+        titleMsg = globalConfig.pause_reason || "Bot is paused";
+    } else if (serverExecutionMode !== manifestStage) {
+        execStatus = "MISMATCH";
+        badgeClass = "bg-red-500/10 text-red-400 border border-red-500/20";
+        titleMsg = "Execution context does not match configuration";
+    } else if (execStatus === "PAPER") {
+        badgeClass = "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+    } else if (execStatus === "CANARY") {
+        badgeClass = "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20";
+    } else if (execStatus === "LIVE") {
+        badgeClass = "bg-green-500/10 text-green-400 border border-green-500/20 glow-green-sm";
+    }
+    
+    if (stDisp) {
+        stDisp.innerHTML = `<span class="px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${badgeClass}" title="${titleMsg}">${execStatus}</span>`;
+    }
+    
     const modeBadge = document.getElementById('mode-badge');
     const liveUsdt = document.getElementById('live-usdt');
     
-    if (modeBadge && liveUsdt) {
-        if (isPaper) {
-            modeBadge.innerText = "STAGE: PAPER";
-            modeBadge.className = "px-4 py-1.5 rounded-full bg-slate-500/20 text-slate-300 text-sm font-bold border border-slate-500/30 uppercase tracking-widest";
+    if (modeBadge) {
+        modeBadge.innerText = `EXECUTION: ${execStatus}`;
+        modeBadge.className = badgeClass;
+    }
+    
+    if (liveUsdt) {
+        if (serverExecutionMode === "PAPER") {
             liveUsdt.innerText = "SIMULATED";
             liveUsdt.classList.add('text-lg', 'text-slate-400');
         } else {
-            modeBadge.innerText = "STAGE: LIVE";
-            modeBadge.className = "px-4 py-1.5 rounded-full bg-neonRed/10 text-neonRed text-sm font-bold border border-neonRed/30 uppercase tracking-widest animate-pulse";
             liveUsdt.innerText = (aiStatus.live_usdt || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
             liveUsdt.classList.remove('text-lg', 'text-slate-400');
         }

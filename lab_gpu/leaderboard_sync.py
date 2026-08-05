@@ -5,6 +5,7 @@ import os
 import json
 import time
 import threading
+import copy
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
@@ -31,9 +32,6 @@ class StrategyLeaderboard(Base):
     parameters_json = Column(String(2000))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-_last_progress_write = 0.0
-_last_db_progress_write = 0.0
-_progress_lock = threading.Lock()
 _db_engine_singleton = None
 
 def _get_db_engine():
@@ -52,16 +50,128 @@ def _get_db_engine():
     )
     return _db_engine_singleton
 
+
+# ---------------------------------------------------------------------
+# ASYNC STATE QUEUE FOR NON-BLOCKING GPU WRITES
+# ---------------------------------------------------------------------
+_async_state = {
+    "progress_data": None,
+    "leaderboard_data": None,
+}
+_async_lock = threading.Lock()
+
+def _write_json_atomic(path: str, data: dict):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+def _sync_worker_loop():
+    """Background thread that flushes pending JSON and DB updates."""
+    last_progress_db_write = 0.0
+    last_leaderboard_db_write = 0.0
+    last_progress_json_write = 0.0
+
+    while True:
+        try:
+            time.sleep(1.0)
+            now_ts = time.time()
+
+            # Safely extract snapshots
+            with _async_lock:
+                prog_data = copy.deepcopy(_async_state["progress_data"])
+                lb_data = copy.deepcopy(_async_state["leaderboard_data"])
+                _async_state["progress_data"] = None  # Clear dirty flag
+                _async_state["leaderboard_data"] = None # Clear dirty flag
+
+            # 1. Process Progress Updates
+            if prog_data:
+                # 1.1 JSON Progress Update (Fast, throttle to 1.0s)
+                if now_ts - last_progress_json_write >= 1.0:
+                    prog_path = os.path.join(DASHBOARD_DATA_DIR, "lab_progress.json")
+                    os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
+                    try:
+                        _write_json_atomic(prog_path, prog_data)
+                        last_progress_json_write = now_ts
+                    except Exception as e:
+                        logger.error(f"SyncWorker: Failed to write progress JSON: {e}")
+
+                # 1.2 DB Progress Update (Slow, throttle to 3.0s)
+                if now_ts - last_progress_db_write >= 3.0 or prog_data["status"] != "running":
+                    try:
+                        from bot.database import LabProgressState, Base as BotBase
+                        engine = _get_db_engine()
+                        BotBase.metadata.create_all(bind=engine)
+                        Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                        with Session() as sess:
+                            row = sess.query(LabProgressState).filter_by(id=1).first()
+                            if not row:
+                                row = LabProgressState(id=1); sess.add(row)
+                            for k, v in prog_data.items():
+                                if hasattr(row, k):
+                                    setattr(row, k, v)
+                            sess.commit()
+                        last_progress_db_write = now_ts
+                    except Exception as e:
+                        pass # Ignore DB failures silently to avoid spam
+
+            # 2. Process Leaderboard Updates
+            if lb_data:
+                # 2.1 JSON Leaderboard Update (Atomic)
+                lb_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
+                os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
+                try:
+                    payload = {
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "strategies": lb_data
+                    }
+                    _write_json_atomic(lb_path, payload)
+                    # Don't log spam info
+                except Exception as e:
+                    logger.error(f"SyncWorker: Failed to write leaderboard JSON: {e}")
+                
+                # 2.2 DB Leaderboard Update (Heavy, throttle to 5.0s)
+                if now_ts - last_leaderboard_db_write >= 5.0:
+                    try:
+                        engine = _get_db_engine()
+                        Base.metadata.create_all(bind=engine)
+                        Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                        with Session() as sess:
+                            sess.query(StrategyLeaderboard).delete()
+                            for idx, item in enumerate(lb_data, 1):
+                                sess.add(StrategyLeaderboard(
+                                    rank=int(idx), name=str(item["name"]),
+                                    net_profit_1m=float(item["net_profit_1m"]),
+                                    net_profit_3m=float(item["net_profit_3m"]),
+                                    net_profit_6m=float(item["net_profit_6m"]),
+                                    net_profit_1y=float(item["net_profit_1y"]),
+                                    win_rate_1y=float(item["win_rate_1y"]),
+                                    max_drawdown=float(item["max_dd"]),
+                                    total_trades_1y=int(item["total_trades_1y"]),
+                                    moonshots_1y=int(item["moonshots_1y"]),
+                                    parameters_json=json.dumps(item["parameters"])
+                                ))
+                            sess.commit()
+                        last_leaderboard_db_write = now_ts
+                    except Exception as e:
+                        logger.error(f"SyncWorker: Failed to push leaderboard to DB: {e}")
+
+        except Exception as e:
+            time.sleep(1.0) # Prevent tight loop on critical failure
+
+# Start Background Worker Thread (Daemon so it dies with main thread)
+_worker_thread = threading.Thread(target=_sync_worker_loop, daemon=True, name="SyncWorkerThread")
+_worker_thread.start()
+
+
+# ---------------------------------------------------------------------
+# PUBLIC NON-BLOCKING APIS (CALL THESE FROM GPU KERNEL LOOP)
+# ---------------------------------------------------------------------
+
 def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
                            best_score: float, best_name: str, elapsed_sec: int,
                            total_db_trials: int = 0):
-    global _last_progress_write, _last_db_progress_write
-    with _progress_lock:
-        now_ts = time.time()
-        if status == "running" and (now_ts - _last_progress_write < 1.0):
-            return
-        _last_progress_write = now_ts
-
+    """Puts progress data into the background async queue."""
     pct = round(min(100.0, (current_trial / total_trials) * 100.0), 1) if total_trials and total_trials > 0 else 100.0
     data = {
         "status": status,
@@ -75,70 +185,32 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "engine": "GPU" if GPU_AVAILABLE else "CPU-MultiCore",
     }
-    prog_path = os.path.join(DASHBOARD_DATA_DIR, "lab_progress.json")
-    os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
-    try:
-        tmp = prog_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, prog_path)
-    except Exception as e:
-        logger.error(f"Failed to write progress: {e}")
+    with _async_lock:
+        _async_state["progress_data"] = data
 
-    if status != "running" or (now_ts - _last_db_progress_write >= 3.0):
-        _last_db_progress_write = now_ts
-        try:
-            from bot.database import LabProgressState, Base as BotBase
-            engine = _get_db_engine()
-            BotBase.metadata.create_all(bind=engine)
-            Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-            sess = Session()
-            row = sess.query(LabProgressState).filter_by(id=1).first()
-            if not row:
-                row = LabProgressState(id=1); sess.add(row)
-            for k, v in data.items():
-                if hasattr(row, k):
-                    setattr(row, k, v)
-            sess.commit(); sess.close()
-        except Exception:
-            pass
+# State variable to track global best score so we don't spam leaderboard updates
+_last_top1_score = -999999.0
+_last_lb_push_time = 0.0
 
 def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]]):
-    """Push Top 10 to Aiven DB + dashboard JSON."""
-    os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
-    json_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
-    try:
-        tmp = json_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"updated_at": datetime.now(timezone.utc).isoformat(),
-                       "strategies": leaderboard}, f, indent=2)
-        os.replace(tmp, json_path)
-        logger.info(f"Saved GPU Top 10 Leaderboard → {json_path}")
-    except Exception as e:
-        logger.error(f"Failed to write leaderboard JSON: {e}")
-    try:
-        engine = _get_db_engine()
-        Base.metadata.create_all(bind=engine)
-        Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-        sess = Session()
-        sess.query(StrategyLeaderboard).delete()
-        for idx, item in enumerate(leaderboard, 1):
-            sess.add(StrategyLeaderboard(
-                rank=int(idx), name=str(item["name"]),
-                net_profit_1m=float(item["net_profit_1m"]),
-                net_profit_3m=float(item["net_profit_3m"]),
-                net_profit_6m=float(item["net_profit_6m"]),
-                net_profit_1y=float(item["net_profit_1y"]),
-                win_rate_1y=float(item["win_rate_1y"]),
-                max_drawdown=float(item["max_dd"]),
-                total_trades_1y=int(item["total_trades_1y"]),
-                moonshots_1y=int(item["moonshots_1y"]),
-                parameters_json=json.dumps(item["parameters"])
-            ))
-        sess.commit(); sess.close()
-        logger.info("✅ Pushed GPU Top 10 Leaderboard → Aiven DB!")
-    except Exception as e:
-        logger.error(f"Failed to push leaderboard to DB: {e}")
+    """Puts leaderboard data into the background async queue only if it's meaningful."""
+    global _last_top1_score, _last_lb_push_time
+    
+    if not leaderboard:
+        return
+        
+    current_top1 = float(leaderboard[0].get("fitness_score", -99999.0))
+    now_ts = time.time()
+    
+    # PREDICATE: Only sync if there is a NEW global best OR 10 seconds have passed
+    is_new_best = current_top1 > _last_top1_score
+    is_interval_reached = (now_ts - _last_lb_push_time) > 10.0
+    
+    if is_new_best or is_interval_reached:
+        _last_top1_score = current_top1
+        _last_lb_push_time = now_ts
+        with _async_lock:
+            _async_state["leaderboard_data"] = copy.deepcopy(leaderboard)
 
 def get_deduplicated_top10_gpu(lb_map: dict) -> list:
     from .config import REVERSE_STRAT_MAP
@@ -176,3 +248,4 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
         if "avg_profit_per_trade_dollar" not in item:
             item["avg_profit_per_trade_dollar"] = round(np_1y_dollar / t, 2) if t > 0 else 0.0
     return unique
+

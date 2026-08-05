@@ -1,3 +1,22 @@
+## [2.3.0] - 2026-08-06 (Phases 6-8: Multi-Mode Execution, Risk Controls & Production Monitoring)
+
+### Added
+- **Multi-Mode Execution & Safe Deployment (Phase 6)**:
+  - Re-architected dashboard UI to decouple "View" (Paper vs Live filters) from "Execution Mode" (what backend is doing).
+  - Implemented Safe Deployment logic from Leaderboard: Strategies must be pushed to `PAPER` stage first before `LIVE`.
+  - Added Danger confirmation dialogue for "Request Live Canary".
+  - Global header dynamically displays `PAPER`, `LIVE`, `MISMATCH`, or `PAUSED` statuses.
+- **Hard Risk & Execution Safety (Phase 7)**:
+  - Added Circuit Breakers (`bot/risk_manager.py`) to monitor Weekly Realized PNL (4% limit), Consecutive Losses (5 limit), and Peak Equity Drawdown (10% kill switch).
+  - Added API/Clock drift kill switch in `bot/main.py` (halts if Binance server time drifts >3s from local system).
+  - Implemented `newClientOrderId` idempotency for all real-trade executions to prevent duplicate submissions on network timeouts.
+  - Implemented Native Stop-Loss fail-closed mechanism (cancels position immediately if SL placement fails).
+  - UI now renders specific `pause_reason` strings when the system enters PAUSED mode.
+- **Production Monitoring & Continuous Validation (Phase 8)**:
+  - Automated Reconciliation System: Checks Binance Futures account balance vs local `StateManager` balance every 4 hours. Discrepancies >$1 trigger Discord `FATAL MISMATCH` alerts.
+  - Slippage Auditing: Real trades are audited against the expected signal price; slippage >0.5% logs a warning and is appended to the trade's `reason`.
+  - Dashboard UI updated to display real-time Reconciliation Status (OK / MISMATCH).
+
 ## [2.2.0] - 2026-08-05 (Phase 1: GPU Engine Core & Evolution Boundaries)
 
 ### Added (Phase 1 Engine Core Completion)

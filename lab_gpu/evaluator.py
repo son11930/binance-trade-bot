@@ -218,10 +218,10 @@ def evaluate_genome_gpu(
     """Evaluate a genome across 4 time horizons on GPU (or CPU fallback) across all symbols."""
     return _mega_batch_gpu_backtest([genome])[0]
 
-def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool = True) -> List[Dict[str, Any]]:
     """Single mega-kernel call: evaluates genome_batch across ALL symbols × ALL horizons simultaneously."""
     if not GPU_AVAILABLE or not _GPU_FLAT_DATA:
-        return _cpu_mega_batch_fallback(genome_batch)
+        return _cpu_mega_batch_fallback(genome_batch, screening)
 
     from numba import cuda as nb_cuda
 
@@ -236,31 +236,69 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]]) -> List[Dict[st
     stream          = nb_cuda.stream()
 
     try:
-        blocks = (total_threads + CUDA_THREADS_PER_BLOCK - 1) // CUDA_THREADS_PER_BLOCK
-        _mega_backtest_kernel[blocks, CUDA_THREADS_PER_BLOCK, stream](
+        # -------------------------------------------------------------
+        # STAGE 1: CHEAP SCREENING (Only run 1m and 3m horizons)
+        # -------------------------------------------------------------
+        n_h_screen = 2 if (screening and n_h >= 2) else n_h
+        total_threads_screen = n_g * n_h_screen
+        blocks_screen = (total_threads_screen + CUDA_THREADS_PER_BLOCK - 1) // CUDA_THREADS_PER_BLOCK
+        
+        _mega_backtest_kernel[blocks_screen, CUDA_THREADS_PER_BLOCK, stream](
             _GPU_FLAT_DATA["price_flat"],
             _GPU_FLAT_DATA["sym_offsets"],
             _GPU_FLAT_DATA["sym_lengths"],
             _GPU_FLAT_DATA["horizon_bars"],
-            d_genome_params,
-            d_out,
-            n_g, n_s, n_h, _GPU_FLAT_DATA["min_len"]
+            d_genome_params, d_out, n_g, n_s, n_h_screen, _GPU_FLAT_DATA["min_len"]
         )
-        try:
-            stream.synchronize()
-        except Exception as cuda_err:
-            logger.error(f"Mega-kernel CUDA error: {cuda_err}")
-            return [{"fitness_score": 0.0, "net_profit_1y": 0.0, "net_profit_6m": 0.0,
-                     "net_profit_3m": 0.0, "net_profit_1m": 0.0, "win_rate_1y": 0.0,
-                     "max_dd": 0.0, "total_trades_1y": 0, "moonshots_1y": 0,
-                     "avg_trades_month": 0.0, "avg_trades_day": 0.0}] * n_g
-
-        raw = np.nan_to_num(
-            d_out.copy_to_host(stream=stream),
-            nan=0.0, posinf=0.0, neginf=0.0
-        ).reshape(n_g, n_h, 16)
+        stream.synchronize()
+        
+        if n_h_screen < n_h:
+            # CPU FILTERING
+            raw_screen = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h_screen, 16)
+            avg_p_1m = raw_screen[:, 0, 0] + raw_screen[:, 0, 8]
+            avg_p_3m = raw_screen[:, 1, 0] + raw_screen[:, 1, 8]
+            
+            # Require at least break-even on 3m, and not terrible on 1m
+            survivors_mask = (avg_p_3m > -2.0) & (avg_p_1m > -5.0)
+            survivor_indices = np.where(survivors_mask)[0]
+            
+            final_results = [{"fitness_score": -999.0, "net_profit_1y": -99.0, "max_dd": 100.0, "total_trades_1y": 0, "win_rate_1y": 0.0} for _ in range(n_g)]
+            
+            if len(survivor_indices) > 0:
+                # -------------------------------------------------------------
+                # STAGE 2: FULL LENGTH FOR SURVIVORS
+                # -------------------------------------------------------------
+                n_surv = len(survivor_indices)
+                surv_genomes = [genome_batch[i] for i in survivor_indices]
+                surv_mat = _pack_genomes_to_flat(surv_genomes)
+                d_surv_params = nb_cuda.to_device(surv_mat, stream=stream)
+                d_surv_out = nb_cuda.device_array(n_surv * n_h * 16, dtype=np.float32)
+                
+                blocks_full = (n_surv * n_h + CUDA_THREADS_PER_BLOCK - 1) // CUDA_THREADS_PER_BLOCK
+                _mega_backtest_kernel[blocks_full, CUDA_THREADS_PER_BLOCK, stream](
+                    _GPU_FLAT_DATA["price_flat"],
+                    _GPU_FLAT_DATA["sym_offsets"],
+                    _GPU_FLAT_DATA["sym_lengths"],
+                    _GPU_FLAT_DATA["horizon_bars"],
+                    d_surv_params, d_surv_out, n_surv, n_s, n_h, _GPU_FLAT_DATA["min_len"]
+                )
+                stream.synchronize()
+                
+                raw_full = np.nan_to_num(d_surv_out.copy_to_host(stream=stream), nan=0.0).reshape(n_surv, n_h, 16)
+                surv_fitness_results = _vectorized_batch_compute_fitness(raw_full, n_surv)
+                
+                for idx, s_idx in enumerate(survivor_indices):
+                    final_results[s_idx] = surv_fitness_results[idx]
+                    
+            return final_results
+            
+        else:
+            # NO SCREENING OR STAGE 1 ALREADY DID EVERYTHING
+            raw = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h, 16)
+            return _vectorized_batch_compute_fitness(raw, n_g)
+            
+    except Exception as cuda_err:
+        logger.error(f"Mega-kernel CUDA error: {cuda_err}")
+        return [{"fitness_score": 0.0}] * n_g
     finally:
         del d_genome_params, d_out
-
-    h_names = ["1m", "3m", "6m", "1y"]
-    return _vectorized_batch_compute_fitness(raw, n_g)

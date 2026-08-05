@@ -153,10 +153,10 @@ async function fetchLeaderboard() {
                     </div>
                     <div class="flex gap-2">
                         <button onclick="deployStrategy(${strat.rank}, 'PAPER')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500/20 to-blue-400/10 text-blue-400 font-bold text-[10px] uppercase tracking-widest border border-blue-500/40 hover:bg-blue-500/30 transition-all shadow-[0_0_10px_rgba(59,130,246,0.2)] flex items-center gap-2">
-                            <span>🧪</span> Paper Trade
+                            <span>🧪</span> Stage for Paper Review
                         </button>
                         <button onclick="deployStrategy(${strat.rank}, 'LIVE')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/10 text-red-400 font-bold text-[10px] uppercase tracking-widest border border-red-500/40 hover:bg-red-500/30 transition-all shadow-[0_0_10px_rgba(239,68,68,0.2)] flex items-center gap-2">
-                            <span>🔥</span> Live Trade
+                            <span>🔥</span> Request Live Canary
                         </button>
                     </div>
                 </div>
@@ -221,9 +221,9 @@ function copyAICommand(rank, name, paramStr) {
 }
 
 window.deployStrategy = async function(rank, stage) {
-    let msg = `Are you sure you want to deploy Strategy Rank #${rank} to ${stage} TRADE?`;
+    let msg = `Are you sure you want to stage Strategy Rank #${rank} for ${stage === 'LIVE' ? 'Live Canary' : 'Paper Review'}?`;
     if (stage === 'LIVE') {
-        msg += "\n\nWARNING: LIVE deployment will use REAL MONEY. Please ensure 'Allow Live Trading' is enabled and the Bot is PAUSED.";
+        msg += "\n\n🚨 DANGER: LIVE DEPLOYMENT 🚨\n\nThis will request a LIVE CANARY deployment using REAL MONEY.\nAre you absolutely sure you want to proceed?";
     }
     if (!confirm(msg)) return;
     

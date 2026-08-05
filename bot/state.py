@@ -27,13 +27,18 @@ class SymbolState:
     position_side: str = "" # "LONG" or "SHORT" for futures
     ai_hold_cooldown_until: datetime | None = None
     cooldown_start_price: float = 0.0
+    best_bid: float = 0.0
+    best_ask: float = 0.0
+    best_bid_qty: float = 0.0
+    best_ask_qty: float = 0.0
 
 class StateManager:
-    def __init__(self, market_type: str = 'spot'):
+    def __init__(self, market_type: str = 'spot', execution_mode: str = 'PAPER'):
         self.market_type = market_type
+        self.execution_mode = execution_mode
         self._lock = threading.Lock()
         self._states: Dict[str, SymbolState] = {sym: SymbolState(sym) for sym in SYMBOLS}
-        self._live_usdt_balance = 1000.0 if PAPER_TRADING else 0.0
+        self._live_usdt_balance = 1000.0 if execution_mode == 'PAPER' else 0.0
         self._kline_buffers = {}
         self._latest_news = "No recent news available."
         self._funding_rates: Dict[str, float] = {}
@@ -43,11 +48,13 @@ class StateManager:
         self._fear_greed_index: str = "Neutral (50)"
         self._daily_realized_pnl: float = 0.0
         self._daily_trades_count: int = 0
+        self._weekly_realized_pnl: float = 0.0
+        self._last_weekly_reset: str = ""
         self._consecutive_losses: int = 0
         self._max_drawdown: float = 0.0
         self._peak_balance: float = 0.0
         self._last_reset_date = datetime.now(timezone.utc).date()
-        self._state_file = f"bot_internal_state_{market_type}.json"
+        self._state_file = f"bot_internal_state_{market_type}_{execution_mode}.json"
         self._load_state()
 
     def _load_state(self):
@@ -67,8 +74,11 @@ class StateManager:
                             filtered_data = {k: v for k, v in s_data.items() if k in valid_keys}
                             self._states[sym] = replace(self._states[sym], **filtered_data)
                         elif sym == "__global__":
-                            self._daily_realized_pnl = s_data.get("daily_realized_pnl", 0.0)
-                            self._daily_trades_count = s_data.get("daily_trades_count", 0)
+                            self._daily_realized_pnl = s_data.get("daily_pnl", 0.0)
+                            self._weekly_realized_pnl = s_data.get("weekly_pnl", 0.0)
+                            self._daily_trades_count = s_data.get("daily_trades", 0)
+                            self._last_daily_reset = s_data.get("last_daily_reset", "")
+                            self._last_weekly_reset = s_data.get("last_weekly_reset", "")
                             self._consecutive_losses = s_data.get("consecutive_losses", 0)
                             self._max_drawdown = s_data.get("max_drawdown", 0.0)
                             self._peak_balance = s_data.get("peak_balance", 0.0)
@@ -92,8 +102,11 @@ class StateManager:
                     s_dict["ai_hold_cooldown_until"] = s_dict["ai_hold_cooldown_until"].isoformat()
                 data[sym] = s_dict
             data["__global__"] = {
-                "daily_realized_pnl": self._daily_realized_pnl,
-                "daily_trades_count": self._daily_trades_count,
+                "daily_pnl": getattr(self, '_daily_realized_pnl', 0.0),
+                "weekly_pnl": getattr(self, '_weekly_realized_pnl', 0.0),
+                "daily_trades": getattr(self, '_daily_trades_count', 0),
+                "last_daily_reset": getattr(self, '_last_daily_reset', ""),
+                "last_weekly_reset": getattr(self, '_last_weekly_reset', ""),
                 "consecutive_losses": getattr(self, '_consecutive_losses', 0),
                 "max_drawdown": getattr(self, '_max_drawdown', 0.0),
                 "peak_balance": getattr(self, '_peak_balance', 0.0),
@@ -117,7 +130,7 @@ class StateManager:
             if symbol not in self._states:
                 self._states[symbol] = SymbolState(symbol)
             self._states[symbol] = replace(self._states[symbol], **kwargs)
-            if any(k not in ['last_price', 'highest_price', 'lowest_price'] for k in kwargs):
+            if any(k not in ['last_price', 'highest_price', 'lowest_price', 'best_bid', 'best_ask', 'best_bid_qty', 'best_ask_qty'] for k in kwargs):
                 self._save_state()
 
     def get_all_states(self) -> Dict[str, SymbolState]:
@@ -150,6 +163,10 @@ class StateManager:
     def max_drawdown(self) -> float:
         with self._lock: return getattr(self, '_max_drawdown', 0.0)
 
+    @property
+    def weekly_realized_pnl(self) -> float:
+        with self._lock: return getattr(self, '_weekly_realized_pnl', 0.0)
+
     @live_usdt_balance.setter
     def live_usdt_balance(self, value: float):
         with self._lock:
@@ -160,6 +177,28 @@ class StateManager:
         with self._lock:
             self._live_usdt_balance += amount
             self._update_drawdown_unlocked()
+
+    def check_daily_reset(self):
+        current_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        current_week = datetime.now(timezone.utc).strftime("%Y-%W")
+        with self._lock:
+            if not hasattr(self, '_last_daily_reset'):
+                self._last_daily_reset = ""
+                self._daily_realized_pnl = 0.0
+                self._daily_trades_count = 0
+            if not hasattr(self, '_last_weekly_reset'):
+                self._last_weekly_reset = ""
+                self._weekly_realized_pnl = 0.0
+            
+            if self._last_daily_reset != current_date:
+                self._daily_realized_pnl = 0.0
+                self._daily_trades_count = 0
+                self._last_daily_reset = current_date
+                
+            if getattr(self, '_last_weekly_reset', "") != current_week:
+                self._weekly_realized_pnl = 0.0
+                self._last_weekly_reset = current_week
+            return self._daily_realized_pnl
 
     def _reset_daily_limits_if_needed(self):
         current_date = datetime.now(timezone.utc).date()
@@ -178,6 +217,9 @@ class StateManager:
         with self._lock:
             self._reset_daily_limits_if_needed()
             self._daily_realized_pnl += amount
+            
+            if not hasattr(self, '_weekly_realized_pnl'): self._weekly_realized_pnl = 0.0
+            self._weekly_realized_pnl += amount
             
             if not hasattr(self, '_consecutive_losses'):
                 self._consecutive_losses = 0
@@ -266,7 +308,7 @@ class StateManager:
             return self._kline_buffers.copy()
 
     def sync_spot_state_with_binance(self, calculate_pnl_func):
-        if PAPER_TRADING:
+        if self.execution_mode == 'PAPER':
             return
 
         all_spot_balances = get_all_spot_balances() or {}
@@ -323,7 +365,7 @@ class StateManager:
             self._save_state()
 
     def sync_futures_state_with_binance(self, calculate_pnl_func):
-        if PAPER_TRADING:
+        if self.execution_mode == 'PAPER':
             return
 
         usdt_bal = futures_get_live_balance("USDT")

@@ -26,23 +26,54 @@ def calculate_portfolio_heat(state_manager) -> float:
     return total_risk / live_usdt
 
 def check_circuit_breakers(state_manager, market_type: str = "futures") -> bool:
-    """Return True if any circuit breaker is tripped, blocking new trades."""
+    """Return True if any circuit breaker is tripped, blocking new trades and pausing the bot."""
+    from .control import set_bot_control
+    
     daily_trades = state_manager.daily_trades_count
     if daily_trades >= MAX_DAILY_TRADES:
-        log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: Max Daily Trades ({MAX_DAILY_TRADES}) reached.", market_type=market_type)
+        reason = f"Max Daily Trades ({MAX_DAILY_TRADES}) reached."
+        log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
+        set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
         return True
         
     daily_pnl = state_manager.daily_realized_pnl
+    weekly_pnl = state_manager.weekly_realized_pnl
+    consecutive_losses = state_manager.consecutive_losses
+    max_dd = state_manager.max_drawdown
     live_usdt = state_manager.live_usdt_balance
+    
     if live_usdt > 0:
         daily_loss_pct = -daily_pnl / live_usdt
         if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
-            log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: Max Daily Loss Limit ({MAX_DAILY_LOSS_PCT*100}%) reached. Loss: {daily_pnl:.2f}", market_type=market_type)
+            reason = f"Max Daily Loss Limit ({MAX_DAILY_LOSS_PCT*100}%) reached. Loss: {daily_pnl:.2f}"
+            log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
+            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            return True
+            
+        from .config import MAX_WEEKLY_LOSS_PCT, MAX_CONSECUTIVE_LOSSES, HARD_EQUITY_DRAWDOWN_KILL_PCT
+        weekly_loss_pct = -weekly_pnl / live_usdt
+        if weekly_loss_pct >= MAX_WEEKLY_LOSS_PCT:
+            reason = f"Max Weekly Loss Limit ({MAX_WEEKLY_LOSS_PCT*100}%) reached. Loss: {weekly_pnl:.2f}"
+            log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
+            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            return True
+            
+        if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            reason = f"Consecutive Losses ({MAX_CONSECUTIVE_LOSSES}) reached. Bot needs a break."
+            log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
+            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            return True
+            
+        if max_dd >= HARD_EQUITY_DRAWDOWN_KILL_PCT:
+            reason = f"🚨 FATAL: HARD EQUITY DRAWDOWN KILL TRIPPED! Peak-to-Trough drawdown {max_dd*100:.2f}% >= {HARD_EQUITY_DRAWDOWN_KILL_PCT*100}%."
+            log_msg("ERROR", reason, market_type=market_type)
+            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
             return True
             
     heat = calculate_portfolio_heat(state_manager)
     if heat > MAX_PORTFOLIO_HEAT_PCT:
-        log_msg("WARNING", f"🔥 PORTFOLIO HEAT EXCEEDED: Current heat {heat*100:.2f}% > Limit {MAX_PORTFOLIO_HEAT_PCT*100}%.", market_type=market_type)
+        # For Portfolio Heat, we don't pause the bot, we just block new trades
+        log_msg("WARNING", f"🔥 PORTFOLIO HEAT EXCEEDED: Current heat {heat*100:.2f}% > Limit {MAX_PORTFOLIO_HEAT_PCT*100}%. Blocking new trades.", market_type=market_type)
         return True
         
     return False

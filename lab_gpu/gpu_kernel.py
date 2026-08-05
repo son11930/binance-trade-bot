@@ -49,8 +49,10 @@ if GPU_AVAILABLE and _cuda_jit:
         if tid >= total_threads:
             return
 
-        h_idx = tid % n_horizons
-        g_idx = tid // n_horizons
+        # Horizon-Major layout: Threads in the same block (warp) process the SAME horizon.
+        # This completely eliminates warp divergence caused by different loop lengths (In-Sample vs Out-of-Sample).
+        g_idx = tid % n_genomes
+        h_idx = tid // n_genomes
         
         h_bars = horizon_bars[h_idx]
         
@@ -153,13 +155,13 @@ if GPU_AVAILABLE and _cuda_jit:
         curr_streak = 0.0
         max_streak = 0.0
         
-        # Local Arrays for up to 32 symbols
-        in_pos = cuda.local.array(32, dtype=nb_f32)
-        entry_p = cuda.local.array(32, dtype=nb_f32)
-        sl_p = cuda.local.array(32, dtype=nb_f32)
-        tp_p = cuda.local.array(32, dtype=nb_f32)
-        bars_in_trade = cuda.local.array(32, dtype=nb_f32)
-        cooldown_counter = cuda.local.array(32, dtype=nb_f32)
+        # Local Arrays for exactly 20 symbols (Reduced from 32 to lower register pressure & boost occupancy)
+        in_pos = cuda.local.array(20, dtype=nb_f32)
+        entry_p = cuda.local.array(20, dtype=nb_f32)
+        sl_p = cuda.local.array(20, dtype=nb_f32)
+        tp_p = cuda.local.array(20, dtype=nb_f32)
+        bars_in_trade = cuda.local.array(20, dtype=nb_f32)
+        cooldown_counter = cuda.local.array(20, dtype=nb_f32)
         
         for s in range(n_symbols):
             in_pos[s] = 0.0
@@ -230,7 +232,8 @@ if GPU_AVAILABLE and _cuda_jit:
                     if o > tp_p[s]:
                         actual_tp_fill = o
                         
-                    round_trip_cost = 0.0020
+                    atr_s = price_data_flat[idx, 6]
+                    round_trip_cost = 0.0010 + (atr_s / c) * 0.05
                     
                     if l <= actual_sl_fill:
                         pnl_pct = ((actual_sl_fill - entry_p[s]) / entry_p[s]) - round_trip_cost

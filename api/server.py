@@ -335,10 +335,6 @@ class ToggleExecutionModeRequest(BaseModel):
     allow_live: Optional[bool] = None
     paper_trading: Optional[bool] = None
 
-@app.get("/api/bot_control")
-async def get_bot_control_endpoint(auth: bool = Depends(verify_jwt)):
-    return get_bot_control()
-
 def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization Header")
@@ -350,6 +346,10 @@ def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", au
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or Expired Token")
     return True
+
+@app.get("/api/bot_control")
+async def get_bot_control_endpoint(auth: bool = Depends(verify_jwt)):
+    return get_bot_control()
 
 @app.post("/api/toggle_pause")
 async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(verify_jwt)):

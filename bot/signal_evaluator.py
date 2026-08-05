@@ -180,7 +180,6 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             
             from .trade_executor import execute_futures_trade
             from .strategy_manager import get_active_strategy
-            from .config import is_paper_trading
             
             strat = get_active_strategy()
             is_paper = (strat.get("stage", "PAPER") == "PAPER") if strat else is_paper_trading()
@@ -372,7 +371,6 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         from .strategy import analyze_futures_market, evaluate_dynamic_strategy
         from .trade_executor import execute_futures_trade
         from .strategy_manager import get_active_strategy
-        from .config import is_paper_trading
         
         update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol, market_type='futures')
         
@@ -638,7 +636,6 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
         from .strategy import analyze_futures_market, evaluate_dynamic_strategy
         from .trade_executor import execute_futures_trade
         from .strategy_manager import get_active_strategy
-        from .config import is_paper_trading
         
         symbol_data = {}
         for symbol in symbols:

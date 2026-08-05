@@ -100,7 +100,6 @@ def main():
         import time
         from .binance_client import futures_account_balance
         from .discord import send_discord_alert
-        from .config import is_paper_trading
         
         while True:
             # Reconcile every 4 hours (14400 seconds)
@@ -198,7 +197,7 @@ def main():
             if now.minute in (0, 30) and now.second == 2:
                 log_msg("INFO", f"⏰ Central Clock Triggered at {now.strftime('%H:%M:%S')}. Running Single-Pass evaluations...")
                 
-                from .config import SYMBOLS, is_paper_trading
+                from .config import SYMBOLS
                 
                 # Phase 0A: Build ExecutionContext and validate state
                 strat = get_active_strategy()
@@ -358,7 +357,6 @@ def main():
                 reconnect_time = 0.0
 
         try:
-            from .config import is_paper_trading
             if is_paper_trading():
                 update_bot_state(state_manager_spot_paper, "Monitoring Spot markets...", symbol="All", market_type='spot')
                 update_bot_state(state_manager_futures_paper, "Monitoring Futures markets...", symbol="All", market_type='futures')

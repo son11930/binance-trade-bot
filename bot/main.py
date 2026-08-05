@@ -99,7 +99,7 @@ def main():
     def reconciliation_loop():
         import time
         from .binance_client import futures_account_balance
-        from .discord import send_discord_alert
+        from .webhook_notifier import send_discord_alert
         
         while True:
             # Reconcile every 4 hours (14400 seconds)
@@ -337,12 +337,12 @@ def main():
             try:
                 from binance import ThreadedWebsocketManager
                 import bot.binance_client as bc
-                twm = ThreadedWebsocketManager()
-                bc.twm = twm
-                twm.start()
-                twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
-                if hasattr(twm, 'start_futures_multiplex_socket'):
-                    twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
+                new_twm = ThreadedWebsocketManager()
+                bc.twm = new_twm
+                new_twm.start()
+                new_twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
+                if hasattr(new_twm, 'start_futures_multiplex_socket'):
+                    new_twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
                 reconnect_time = time.time()
                 log_msg("INFO", "WebSocket re-connected cleanly.")
             except Exception as e:

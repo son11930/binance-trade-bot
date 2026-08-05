@@ -248,6 +248,24 @@ class LabProgressState(Base):
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
     Base.metadata.create_all(bind=engine_futures)
+    
+    # Auto-migrate new columns for Phase 6+
+    from sqlalchemy import text
+    for engine in [engine_spot, engine_futures]:
+        with engine.connect() as conn:
+            for col in ['execution_mode', 'deployment_id', 'strategy_id']:
+                try:
+                    conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} VARCHAR"))
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
+                except Exception:
+                    # Column likely exists
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
 def get_db(market_type: str = 'spot'):
     if market_type == 'futures':

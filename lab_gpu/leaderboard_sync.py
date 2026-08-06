@@ -223,8 +223,12 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
         params = item.get("parameters", {})
         key = tuple(sorted([(k, round(v, 4) if isinstance(v, float) else v) for k, v in params.items()]))
         
-        # Determine strategy type
-        strat_id = int(params.get("strategy_type", 0))
+        strat_val = params.get("strategy_type", 0)
+        if isinstance(strat_val, str):
+            from .config import _STRAT_MAP_MB
+            strat_id = _STRAT_MAP_MB.get(strat_val, 0)
+        else:
+            strat_id = int(strat_val)
         
         if key not in seen and strat_counts.get(strat_id, 0) < 2:
             seen.add(key)
@@ -235,7 +239,12 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
                 
     for idx, item in enumerate(unique, 1):
         item["rank"] = idx
-        strat_id = int(item.get("parameters", {}).get("strategy_type", 0))
+        strat_val = item.get("parameters", {}).get("strategy_type", 0)
+        if isinstance(strat_val, str):
+            from .config import _STRAT_MAP_MB
+            strat_id = _STRAT_MAP_MB.get(strat_val, 0)
+        else:
+            strat_id = int(strat_val)
         strat_name = REVERSE_STRAT_MAP.get(strat_id, f"Strat-{strat_id}")
         
         item["name"] = f"🏆 #{idx} [{strat_name}] ALPHA GENOME" if idx == 1 else f"#{idx} [{strat_name}] BLUEPRINT"

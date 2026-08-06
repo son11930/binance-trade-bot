@@ -98,7 +98,7 @@ GENOME_PARAM_ORDER = [
 
 _STRAT_MAP_MB  = {"rsi_sniper": 0, "ema_cross": 1, "supertrend_momentum": 2,
                   "ichi_cloud": 3, "keltner_bounce": 4, "stoch_mfi_diverge": 5,
-                  "williams_overbought": 6, "donchian_breakout": 7, "macd_momentum": 8,
+                  "williams_mean_rev": 6, "donchian_breakout": 7, "macd_momentum": 8,
                   "bb_squeeze": 9, "adx_trend_rider": 10, "fibo_pullback": 11}
 
 # Canonical Mapping for JSON export (Lab -> Live/Paper Engine)

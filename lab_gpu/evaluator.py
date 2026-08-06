@@ -254,7 +254,7 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool
         
         if n_h_screen < n_h:
             # CPU FILTERING
-            raw_screen = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h_screen, 16)
+            raw_screen = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h, 16)[:, :n_h_screen, :]
             avg_p_1m = raw_screen[:, 0, 0] + raw_screen[:, 0, 8]
             avg_p_3m = raw_screen[:, 1, 0] + raw_screen[:, 1, 8]
             

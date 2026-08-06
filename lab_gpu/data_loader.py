@@ -133,6 +133,7 @@ def _pack_symbols_to_flat_gpu(symbol_arrays: Dict[str, Dict[str, np.ndarray]], g
     global _GPU_FLAT_DATA
     
     sym_list = list(symbol_arrays.keys())
+    assert len(sym_list) <= 20, "GPU kernel supports maximum 20 symbols"
     lengths  = [symbol_arrays[s]["close"].shape[0] for s in sym_list]
     
     # Time-align symbols

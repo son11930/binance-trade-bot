@@ -154,9 +154,9 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         is_opening = (positionSide == "LONG" and side == "BUY") or (positionSide == "SHORT" and side == "SELL")
         
         if ("-1013" in err_msg or "-2019" in err_msg or "Margin is insufficient" in err_msg) and is_closing:
-            log_msg("WARNING", f"🧹 Uncloseable position for {symbol}. Clearing local state to prevent infinite loop.", market_type="futures")
-            from datetime import datetime, timezone
-            state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+            log_msg("WARNING", f"🧹 Uncloseable position for {symbol} due to locked margin. Canceling all open orders to attempt close on next tick.", market_type="futures")
+            from .binance_client import futures_cancel_all_orders
+            futures_cancel_all_orders(symbol)
             return None
             
         if "MarginError" in err_msg or (("-2019" in err_msg or "Margin is insufficient" in err_msg) and is_opening):

@@ -26,7 +26,7 @@ except ImportError:
 
 def _build_genome_from_trial(trial: optuna.Trial) -> dict:
     genome = {
-        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]),
+        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_mean_rev", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]),
         "adx_trend_thresh":   trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
         "use_dual_trend":     trial.suggest_categorical("use_dual_trend", [True, False]),
         "vol_surge_mult":     trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),

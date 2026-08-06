@@ -187,18 +187,18 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     )
     wfa_penalty = np.where(
         (is_ann_p > 10.0) & (oos_ann_p < 0.0),
-        -10000.0,
+        -5000.0 + (oos_ann_p * 100.0), # oos_ann_p is negative, so this increases penalty proportionally
         wfa_penalty
     )
 
     # ── Pillar F: Phase 4 Hard Gates (PF, Expectancy, OOS Max DD) ──
     hard_gate_penalty = np.zeros(n_g, dtype=np.float32)
     # Hard Gate 1: OOS PF < 1.10
-    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_pf_1y < 1.10), -10000.0, hard_gate_penalty)
+    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_pf_1y < 1.10), -5000.0 * (1.10 - oos_pf_1y), hard_gate_penalty)
     # Hard Gate 2: OOS Expectancy < 0
-    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_expectancy < 0.0), -10000.0, hard_gate_penalty)
+    hard_gate_penalty = np.where((oos_trades_1y > 0) & (oos_expectancy < 0.0), hard_gate_penalty - 5000.0 * (0.0 - oos_expectancy), hard_gate_penalty)
     # Hard Gate 3: OOS Max DD > 15%
-    hard_gate_penalty = np.where(oos_max_dd_1y > 15.0, -10000.0, hard_gate_penalty)
+    hard_gate_penalty = np.where(oos_max_dd_1y > 15.0, hard_gate_penalty - 1000.0 * (oos_max_dd_1y - 15.0), hard_gate_penalty)
 
     fitness_arr = np.round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit + wfa_penalty + hard_gate_penalty, 2)
 

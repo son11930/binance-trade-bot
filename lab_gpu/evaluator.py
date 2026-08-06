@@ -262,7 +262,7 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool
             survivors_mask = (avg_p_3m > -2.0) & (avg_p_1m > -5.0)
             survivor_indices = np.where(survivors_mask)[0]
             
-            final_results = [{"fitness_score": -999.0, "net_profit_1y": -99.0, "net_profit_6m": -99.0, "net_profit_3m": -99.0, "net_profit_1m": -99.0, "moonshots_1y": 0, "max_dd": 100.0, "total_trades_1y": 0, "win_rate_1y": 0.0} for _ in range(n_g)]
+            final_results = [{"fitness_score": float(-999.0 + (avg_p_3m[i] + avg_p_1m[i]) * 10.0), "net_profit_1y": -99.0, "net_profit_6m": -99.0, "net_profit_3m": float(avg_p_3m[i]), "net_profit_1m": float(avg_p_1m[i]), "moonshots_1y": 0, "max_dd": 100.0, "total_trades_1y": 0, "win_rate_1y": 0.0} for i in range(n_g)]
             
             if len(survivor_indices) > 0:
                 # -------------------------------------------------------------

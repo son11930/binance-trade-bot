@@ -207,7 +207,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         except Exception as e:
             logger.warning(f"Could not load historical leaderboard: {e}")
 
-    best_so_far_score = max((v.get("fitness_score", -9999) for v in leaderboard_map.values()), default=0.0)
+    best_so_far_score = max([v.get("fitness_score", -9999.0) for v in leaderboard_map.values()] or [-99999.0])
     best_so_far_name  = "Historical Champion"
 
     enqueued = 0

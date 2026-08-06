@@ -134,9 +134,10 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     
     total_gross_profit_1y = is_gross_profit_1y + oos_gross_profit_1y
     total_gross_loss_1y = is_gross_loss_1y + oos_gross_loss_1y
-    pf_1y = np.where(total_gross_loss_1y > 0.0, total_gross_profit_1y / total_gross_loss_1y, np.where(total_gross_profit_1y > 0.0, 99.0, 0.0))
-    oos_pf_1y = np.where(oos_gross_loss_1y > 0.0, oos_gross_profit_1y / oos_gross_loss_1y, np.where(oos_gross_profit_1y > 0.0, 99.0, 0.0))
-    oos_expectancy = np.where(oos_trades_1y > 0, (oos_gross_profit_1y - oos_gross_loss_1y) / oos_trades_1y, 0.0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        pf_1y = np.where(total_gross_loss_1y > 0.0, total_gross_profit_1y / total_gross_loss_1y, np.where(total_gross_profit_1y > 0.0, 99.0, 0.0))
+        oos_pf_1y = np.where(oos_gross_loss_1y > 0.0, oos_gross_profit_1y / oos_gross_loss_1y, np.where(oos_gross_profit_1y > 0.0, 99.0, 0.0))
+        oos_expectancy = np.where(oos_trades_1y > 0, (oos_gross_profit_1y - oos_gross_loss_1y) / oos_trades_1y, 0.0)
     
     moonshots_1y = np.where(avg_p_1y > 30.0, 1, 0)
 
@@ -176,7 +177,8 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     # ── Pillar E: Walk-Forward Validation (WFA) Penalty ──
     is_ann_p = is_p_1y / 0.7
     oos_ann_p = oos_p_1y / 0.3
-    wfa_ratio = np.where(is_ann_p > 0.0, oos_ann_p / is_ann_p, 0.0)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        wfa_ratio = np.where(is_ann_p > 0.0, oos_ann_p / is_ann_p, 0.0)
     
     wfa_penalty = np.where(
         (is_ann_p > 10.0) & (wfa_ratio < 0.5),

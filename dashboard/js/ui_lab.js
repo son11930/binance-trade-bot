@@ -4,7 +4,10 @@ async function fetchLabProgress() {
     const banner = document.getElementById('lab-progress-banner');
     if (!banner) return;
     try {
-        const res = await fetch('/api/lab/progress');
+        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
+        const res = await fetch('/api/lab/progress', {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
         const data = await res.json();
         const prog = data.progress || {};
         
@@ -111,7 +114,10 @@ async function fetchLeaderboard() {
     }
     
     try {
-        const res = await fetch('/api/lab/leaderboard');
+        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
+        const res = await fetch('/api/lab/leaderboard', {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
         const data = await res.json();
         const strategies = data.strategies || [];
         

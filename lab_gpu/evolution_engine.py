@@ -14,7 +14,7 @@ from .config import logger, SYMBOLS, N_CPU_WORKERS, GENOME_BATCH_SIZE, DASHBOARD
 from .gpu_kernel import GPU_AVAILABLE
 from .data_loader import _load_and_cache_symbol, _df_to_arrays, preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA
 from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu
-from .leaderboard_sync import save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu, get_deduplicated_top10_gpu
+from .leaderboard_sync import save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu, get_deduplicated_top10_gpu, flush_sync_worker
 
 try:
     import optuna
@@ -164,10 +164,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         logger.error("Optuna not installed! pip install optuna")
         return []
 
-    db_path = os.path.join(DASHBOARD_DATA_DIR, "optuna_study.db")
-    os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
-    _optuna_storage = optuna.storages.RDBStorage(url=f"sqlite:///{db_path}")
-    logger.info(f"Optuna storage: SQLite Persistent ({db_path})")
+    _optuna_storage = optuna.storages.InMemoryStorage()
+    logger.info("Optuna storage: InMemoryStorage (High Speed, No DB Bloat)")
 
     import warnings
     warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
@@ -236,58 +234,67 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     validated_winners = 0
     try:
         while True:
-            if n_trials is not None and completed >= n_trials:
+            if n_trials and completed >= n_trials:
+                break
+            if os.path.exists("stop_lab.txt"):
+                logger.info("Graceful stop signal (stop_lab.txt) detected. Shutting down...")
+                try: os.remove("stop_lab.txt")
+                except: pass
                 break
 
             if USE_MEGA_BATCH:
-                remaining = (n_trials - completed) if n_trials else GENOME_BATCH_SIZE
-                batch_size = min(GENOME_BATCH_SIZE, remaining)
-                n_tpe = min(32, batch_size)
-                optuna_trials = [study.ask() for _ in range(n_tpe)]
-                genomes = [_build_genome_from_trial(t) for t in optuna_trials]
+                batch_size = min(GENOME_BATCH_SIZE, (n_trials - completed) if n_trials else GENOME_BATCH_SIZE)
+                
+                with lock:
+                    n_tpe = min(64, batch_size)
+                    optuna_trials = [study.ask() for _ in range(n_tpe)]
+                    genomes = [_build_genome_from_trial(t) for t in optuna_trials]
 
-                n_mutants = batch_size - len(genomes)
-                if n_mutants > 0:
-                    elites = [res["parameters"] for res in leaderboard_map.values() if isinstance(res, dict) and "parameters" in res]
-                    if not elites:
-                        elites = [g for g in genomes]
-                    if not elites and historical_champions:
-                        elites = [c["parameters"] for c in historical_champions if isinstance(c, dict) and "parameters" in c]
-                    float_keys = [k for k, v in genomes[0].items() if isinstance(v, float)]
-                    int_keys   = [k for k, v in genomes[0].items() if isinstance(v, int) and not isinstance(v, bool)]
-                    bool_keys  = [k for k, v in genomes[0].items() if isinstance(v, bool)]
-                    for m_idx in range(n_mutants):
-                        # Exploration Floor: 5% of mutants get a purely random strategy type and reset
-                        is_exploration = random.random() < 0.05
+                    n_mutants = batch_size - len(genomes)
+                    if n_mutants > 0:
+                        elites_by_strat = {}
+                        for res in leaderboard_map.values():
+                            if isinstance(res, dict) and "parameters" in res:
+                                p = res["parameters"]
+                                st = p.get("strategy_type", "rsi_sniper")
+                                elites_by_strat.setdefault(st, []).append(p)
                         
-                        parent = random.choice(elites) if elites else genomes[0]
-                        mutant = parent.copy()
-                        for k in float_keys:
-                            if random.random() < 0.15 or is_exploration:
-                                val = parent[k] * random.uniform(0.85, 1.15) if not is_exploration else parent[k] * random.uniform(0.5, 1.5)
-                                if k == "kelly_fraction_cap":
-                                    val = max(0.20, min(0.40, val))
-                                elif "thresh" in k or "rsi" in k or "stoch" in k or "mfi" in k:
-                                    if "williams" in k or "cci" in k:
-                                        val = max(-300.0, min(300.0, val))
-                                    else:
-                                        val = max(5.0, min(95.0, val))
-                                mutant[k] = round(val, 5)
-                        for k in int_keys:
-                            if random.random() < 0.15 or is_exploration:
-                                mutant[k] = max(1, int(parent[k] * random.uniform(0.85, 1.15)))
-                        for k in bool_keys:
-                            if random.random() < 0.05 or is_exploration:
-                                mutant[k] = random.choice([True, False]) if is_exploration else not parent[k]
-                        
-                        if is_exploration:
-                            mutant["strategy_type"] = random.choice(["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"])
-                        else:
-                            mutant["strategy_type"] = parent.get("strategy_type", "rsi_sniper")
+                        fallback_parent = genomes[0]
+                        float_keys = [k for k, v in genomes[0].items() if isinstance(v, float)]
+                        int_keys   = [k for k, v in genomes[0].items() if isinstance(v, int) and not isinstance(v, bool)]
+                        bool_keys  = [k for k, v in genomes[0].items() if isinstance(v, bool)]
+                        STRATEGY_TYPES = ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]
+
+                        for m_idx in range(n_mutants):
+                            is_exploration = random.random() < 0.25
+                            target_strat = random.choice(STRATEGY_TYPES)
                             
-                        genomes.append(mutant)
+                            if is_exploration or target_strat not in elites_by_strat:
+                                parent = fallback_parent
+                                mutant = parent.copy()
+                                mutant["strategy_type"] = target_strat
+                            else:
+                                parent = random.choice(elites_by_strat[target_strat])
+                                mutant = parent.copy()
 
-                # Pre-sort genomes by strategy type to eliminate Warp Divergence on the GPU
+                            for k in float_keys:
+                                if random.random() < (0.30 if is_exploration else 0.10):
+                                    scale = random.uniform(0.5, 1.5) if is_exploration else random.uniform(0.9, 1.1)
+                                    val = parent[k] * scale
+                                    if k == "kelly_fraction_cap": val = max(0.20, min(0.40, val))
+                                    elif "thresh" in k or "rsi" in k or "stoch" in k or "mfi" in k:
+                                        if "williams" in k or "cci" in k: val = max(-300.0, min(300.0, val))
+                                        else: val = max(5.0, min(95.0, val))
+                                    mutant[k] = round(val, 5)
+                            for k in int_keys:
+                                if random.random() < (0.30 if is_exploration else 0.10):
+                                    scale = random.uniform(0.5, 1.5) if is_exploration else random.uniform(0.9, 1.1)
+                                    mutant[k] = max(1, int(parent[k] * scale))
+                            for k in bool_keys:
+                                if random.random() < (0.20 if is_exploration else 0.05):
+                                    mutant[k] = not parent[k]
+                            genomes.append(mutant)
+
                 paired_tpe = [(t, g) for t, g in zip(optuna_trials, genomes[:n_tpe])]
                 paired_mut = [(None, g) for g in genomes[n_tpe:]]
                 all_paired = paired_tpe + paired_mut
@@ -404,7 +411,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     with lock:
         top_10 = get_deduplicated_top10_gpu(leaderboard_map)
     if not BENCHMARK_MODE:
-        push_leaderboard_to_db_and_json_gpu(top_10)
+        push_leaderboard_to_db_and_json_gpu(top_10, force=True)
     elapsed = int(time.time() - start_time)
     best_item = top_10[0] if top_10 else {}
     try:
@@ -415,6 +422,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     if not BENCHMARK_MODE:
         save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
                                best_val, best_item.get("name", "N/A"), elapsed)
+        flush_sync_worker()
     logger.info(f"GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
     logger.info(f"Best: {best_item.get('name', 'N/A')} | Score: {best_val:.2f}")
     return top_10

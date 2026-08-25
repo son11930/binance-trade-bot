@@ -22,7 +22,7 @@ from .evaluator import (
 )
 from .leaderboard_sync import (
     save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu,
-    get_deduplicated_top10_gpu, StrategyLeaderboard
+    get_deduplicated_top10_gpu, StrategyLeaderboard, flush_sync_worker
 )
 from .evolution_engine import run_gpu_synthesizer_lab
 

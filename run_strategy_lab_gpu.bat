@@ -115,11 +115,10 @@ exit /b 0
 
 :STOP_LAB
 echo.
-echo [*] Terminating GPU Strategy Lab processes...
-taskkill /f /fi "WINDOWTITLE eq AI_GPU_Strategy_Lab*" >nul 2>&1
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*bot_strategy_synthesizer_gpu*' } | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
-python bot_strategy_synthesizer_gpu.py stop >nul 2>&1
-echo [+] GPU Lab stopped. Status saved.
+echo [*] Sending graceful stop signal to GPU Strategy Lab...
+echo stop > stop_lab.txt
+echo [+] Signal sent. The lab will finish the current batch, save to DB, and then exit.
+echo [!] Please wait up to 1-2 minutes for the process to close cleanly.
 if "%~1"=="stop" exit /b 0
 echo.
 pause

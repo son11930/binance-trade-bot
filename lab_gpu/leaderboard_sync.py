@@ -8,7 +8,7 @@ import threading
 import copy
 from datetime import datetime, timezone
 from typing import Dict, List, Any
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import logger, DASHBOARD_DATA_DIR, DATABASE_URL_FUTURES, DATABASE_URL_SPOT
@@ -29,7 +29,7 @@ class StrategyLeaderboard(Base):
     max_drawdown = Column(Float)
     total_trades_1y = Column(Integer)
     moonshots_1y = Column(Integer)
-    parameters_json = Column(String(2000))
+    parameters_json = Column(Text)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 _db_engine_singleton = None
@@ -192,7 +192,7 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
 _last_top1_score = -999999.0
 _last_lb_push_time = 0.0
 
-def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]]):
+def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]], force: bool = False):
     """Puts leaderboard data into the background async queue only if it's meaningful."""
     global _last_top1_score, _last_lb_push_time
     
@@ -202,15 +202,80 @@ def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]]):
     current_top1 = float(leaderboard[0].get("fitness_score", -99999.0))
     now_ts = time.time()
     
-    # PREDICATE: Only sync if there is a NEW global best OR 10 seconds have passed
+    # PREDICATE: Only sync if there is a NEW global best OR 10 seconds have passed, OR if forced
     is_new_best = current_top1 > _last_top1_score
     is_interval_reached = (now_ts - _last_lb_push_time) > 10.0
     
-    if is_new_best or is_interval_reached:
+    if is_new_best or is_interval_reached or force:
         _last_top1_score = current_top1
         _last_lb_push_time = now_ts
         with _async_lock:
             _async_state["leaderboard_data"] = copy.deepcopy(leaderboard)
+
+def flush_sync_worker():
+    """Synchronously force-flushes the async queue to DB and JSON files. Call this before exiting."""
+    logger.info("Flushing sync worker queue to DB/JSON...")
+    with _async_lock:
+        prog_data = copy.deepcopy(_async_state.get("progress_data"))
+        lb_data = copy.deepcopy(_async_state.get("leaderboard_data"))
+        _async_state["progress_data"] = None
+        _async_state["leaderboard_data"] = None
+
+    if prog_data:
+        prog_path = os.path.join(DASHBOARD_DATA_DIR, "lab_progress.json")
+        try:
+            _write_json_atomic(prog_path, prog_data)
+        except Exception:
+            pass
+        try:
+            from bot.database import LabProgressState, Base as BotBase
+            engine = _get_db_engine()
+            BotBase.metadata.create_all(bind=engine)
+            Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            with Session() as sess:
+                row = sess.query(LabProgressState).filter_by(id=1).first()
+                if not row:
+                    row = LabProgressState(id=1); sess.add(row)
+                for k, v in prog_data.items():
+                    if hasattr(row, k):
+                        setattr(row, k, v)
+                sess.commit()
+        except Exception as e:
+            logger.error(f"Flush failed for progress DB: {e}")
+
+    if lb_data:
+        lb_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
+        try:
+            payload = {
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "strategies": lb_data
+            }
+            _write_json_atomic(lb_path, payload)
+        except Exception:
+            pass
+        try:
+            engine = _get_db_engine()
+            Base.metadata.create_all(bind=engine)
+            Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            with Session() as sess:
+                sess.query(StrategyLeaderboard).delete()
+                for idx, item in enumerate(lb_data, 1):
+                    sess.add(StrategyLeaderboard(
+                        rank=int(idx), name=str(item["name"]),
+                        net_profit_1m=float(item["net_profit_1m"]),
+                        net_profit_3m=float(item["net_profit_3m"]),
+                        net_profit_6m=float(item["net_profit_6m"]),
+                        net_profit_1y=float(item["net_profit_1y"]),
+                        win_rate_1y=float(item["win_rate_1y"]),
+                        max_drawdown=float(item["max_dd"]),
+                        total_trades_1y=int(item["total_trades_1y"]),
+                        moonshots_1y=int(item["moonshots_1y"]),
+                        parameters_json=json.dumps(item["parameters"])
+                    ))
+                sess.commit()
+        except Exception as e:
+            logger.error(f"Flush failed for leaderboard DB: {e}")
+
 
 def get_deduplicated_top10_gpu(lb_map: dict) -> list:
     from .config import REVERSE_STRAT_MAP

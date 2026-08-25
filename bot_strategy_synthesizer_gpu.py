@@ -14,12 +14,14 @@ from lab_gpu import (
     _GPU_DEVICE_ARRAYS,
     save_lab_progress_gpu,
     logger,
-    run_gpu_synthesizer_lab
+    run_gpu_synthesizer_lab,
+    flush_sync_worker
 )
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("stop", "--stop", "-s"):
         save_lab_progress_gpu("stopped", 0, 0, 0.0, "Stopped by user", 0)
+        flush_sync_worker()
         logger.info("GPU Lab stopped.")
         sys.exit(0)
     trials = 30

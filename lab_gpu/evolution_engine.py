@@ -263,7 +263,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                         float_keys = [k for k, v in genomes[0].items() if isinstance(v, float)]
                         int_keys   = [k for k, v in genomes[0].items() if isinstance(v, int) and not isinstance(v, bool)]
                         bool_keys  = [k for k, v in genomes[0].items() if isinstance(v, bool)]
-                        STRATEGY_TYPES = ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_overbought", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]
+                        STRATEGY_TYPES = ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_mean_rev", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]
 
                         for m_idx in range(n_mutants):
                             is_exploration = random.random() < 0.25

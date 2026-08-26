@@ -5,6 +5,7 @@ import time
 import numpy as np
 from typing import Dict, Any, Optional
 from .config import logger, CUDA_THREADS_PER_BLOCK, N_GENOME_PARAMS
+from .cost_model import ATR_FEATURE_INDEX, ROUND_TRIP_TAKER_FEE_RATE, ATR_SLIPPAGE_FRACTION
 
 GPU_AVAILABLE = False
 CUPY_AVAILABLE = False
@@ -90,7 +91,11 @@ if GPU_AVAILABLE and _cuda_jit:
         trail_trig      = genome_params[g_idx, 11]
         trail_gap       = genome_params[g_idx, 12]
         be_trig         = genome_params[g_idx, 13]
-        be_buf          = genome_params[g_idx, 14] if genome_params[g_idx, 14] > 0.02 else 0.02
+        be_buf          = genome_params[g_idx, 14]
+        if be_buf < 0.0:
+            be_buf = 0.0
+        if be_buf > 0.02:
+            be_buf = 0.02
         max_hold        = int(genome_params[g_idx, 15])
         sma200_buf      = genome_params[g_idx, 16]
         vol_floor       = genome_params[g_idx, 17]
@@ -158,6 +163,7 @@ if GPU_AVAILABLE and _cuda_jit:
         # Local Arrays for exactly 20 symbols (Reduced from 32 to lower register pressure & boost occupancy)
         in_pos = cuda.local.array(20, dtype=nb_f32)
         entry_p = cuda.local.array(20, dtype=nb_f32)
+        entry_atr = cuda.local.array(20, dtype=nb_f32)
         sl_p = cuda.local.array(20, dtype=nb_f32)
         tp_p = cuda.local.array(20, dtype=nb_f32)
         bars_in_trade = cuda.local.array(20, dtype=nb_f32)
@@ -166,6 +172,7 @@ if GPU_AVAILABLE and _cuda_jit:
         for s in range(n_symbols):
             in_pos[s] = 0.0
             entry_p[s] = 0.0
+            entry_atr[s] = 0.0
             sl_p[s] = 0.0
             tp_p[s] = 0.0
             bars_in_trade[s] = 0.0
@@ -175,6 +182,45 @@ if GPU_AVAILABLE and _cuda_jit:
         
         for t in range(first_sim_bar, end_bar):
             if t == is_end_bar:
+                # Close positions at the last in-sample close before the
+                # portfolio is reset, preserving closed-trade accounting.
+                if t > first_sim_bar:
+                    boundary_t = t - 1
+                    for s in range(n_symbols):
+                        if in_pos[s] > 0.5:
+                            boundary_idx = sym_offsets[s] + boundary_t
+                            boundary_close = price_data_flat[boundary_idx, 0]
+                            round_trip_cost = ROUND_TRIP_TAKER_FEE_RATE
+                            if entry_p[s] > 0.0 and entry_atr[s] > 0.0:
+                                round_trip_cost += (entry_atr[s] / entry_p[s]) * ATR_SLIPPAGE_FRACTION
+                            pnl_pct = ((boundary_close - entry_p[s]) / entry_p[s]) - round_trip_cost
+                            adj_kelly = kelly * pyramid_scaling_mult
+                            if adj_kelly > max_pos_alloc_pct:
+                                adj_kelly = max_pos_alloc_pct
+                            trade_impact = pnl_pct * adj_kelly * 4.0
+                            balance *= (1.0 + trade_impact)
+                            if trade_impact > 0.0:
+                                wins += 1
+                                gross_profit += trade_impact
+                                curr_streak = 0.0
+                            else:
+                                gross_loss -= trade_impact
+                                curr_streak += 1.0
+                                if curr_streak > max_streak:
+                                    max_streak = curr_streak
+                            total_trades += 1
+                            in_pos[s] = 0.0
+                            entry_p[s] = 0.0
+                            entry_atr[s] = 0.0
+                            sl_p[s] = 0.0
+                            tp_p[s] = 0.0
+                    if balance > peak_balance:
+                        peak_balance = balance
+                    if peak_balance > 0.0:
+                        boundary_dd = (peak_balance - balance) / peak_balance
+                        if boundary_dd > max_dd:
+                            max_dd = boundary_dd
+
                 net_p = ((balance - 1000.0) / 1000.0) * 100.0
                 if net_p > 10000.0: net_p = 10000.0
                 w_rate = (wins / total_trades * 100.0) if total_trades > 0 else 0.0
@@ -213,7 +259,7 @@ if GPU_AVAILABLE and _cuda_jit:
                 h = price_data_flat[idx, 1]
                 l = price_data_flat[idx, 2]
                 o = price_data_flat[idx, 3]
-                atr = price_data_flat[idx, 7]
+                atr = price_data_flat[idx, ATR_FEATURE_INDEX]
                 
                 if in_pos[s] > 0.5:
                     rsi = price_data_flat[idx, 8]
@@ -232,8 +278,9 @@ if GPU_AVAILABLE and _cuda_jit:
                     if o > tp_p[s]:
                         actual_tp_fill = o
                         
-                    atr_s = price_data_flat[idx, 6]
-                    round_trip_cost = 0.0010 + (atr_s / c) * 0.05
+                    round_trip_cost = ROUND_TRIP_TAKER_FEE_RATE
+                    if entry_p[s] > 0.0 and entry_atr[s] > 0.0:
+                        round_trip_cost += (entry_atr[s] / entry_p[s]) * ATR_SLIPPAGE_FRACTION
                     
                     if l <= actual_sl_fill:
                         pnl_pct = ((actual_sl_fill - entry_p[s]) / entry_p[s]) - round_trip_cost
@@ -265,6 +312,10 @@ if GPU_AVAILABLE and _cuda_jit:
                                 max_streak = curr_streak
                         total_trades += 1
                         in_pos[s] = 0.0
+                        entry_p[s] = 0.0
+                        entry_atr[s] = 0.0
+                        sl_p[s] = 0.0
+                        tp_p[s] = 0.0
                         bars_in_trade[s] = 0.0
                         cooldown_counter[s] = cooldown_limit
                         open_positions -= 1.0
@@ -311,8 +362,13 @@ if GPU_AVAILABLE and _cuda_jit:
                 if in_pos[s] < 0.5:
                     if cooldown_counter[s] > 0.0:
                         cooldown_counter[s] -= 1.0
-                    elif open_positions < max_concurrent:
-                        idx = sym_offsets[s] + t
+                    elif open_positions < max_concurrent and t > first_sim_bar and t < end_bar - 1 and t != is_end_bar:
+                        # Generate from the last closed candle and fill at the
+                        # next candle's open so the simulator matches live
+                        # execution rather than using a same-close lookahead.
+                        signal_t = t - 1
+                        idx = sym_offsets[s] + signal_t
+                        fill_idx = sym_offsets[s] + t
                         c = price_data_flat[idx, 0]
                         h = price_data_flat[idx, 1]
                         l = price_data_flat[idx, 2]
@@ -320,7 +376,7 @@ if GPU_AVAILABLE and _cuda_jit:
                         v = price_data_flat[idx, 4]
                         sma200 = price_data_flat[idx, 5]
                         sma50 = price_data_flat[idx, 6]
-                        atr = price_data_flat[idx, 7]
+                        atr = price_data_flat[idx, ATR_FEATURE_INDEX]
                         rsi = price_data_flat[idx, 8]
                         adx = price_data_flat[idx, 9]
                         vol_sma = price_data_flat[idx, 10]
@@ -338,6 +394,7 @@ if GPU_AVAILABLE and _cuda_jit:
                         donchian_high_prev = price_data_flat[idx - 1, 22]
                         ema10_prev = price_data_flat[idx - 1, 12]
                         ema50_prev = price_data_flat[idx - 1, 13]
+                        entry_ok = False
                         
                         if adx > adx_thresh and v > (vol_sma * vol_floor):
                             trend_ok = False
@@ -359,7 +416,7 @@ if GPU_AVAILABLE and _cuda_jit:
                                 trend_ok = False
                             if adx_slope_check > 0.5 and adx < 20.0:
                                 trend_ok = False
-                            if v > vol_sma * vol_exhaustion_mult:
+                            if vol_sma <= 0.0 or v < vol_sma * vol_exhaustion_mult:
                                 candle_ok = False
                                 
                             is_rejection = False
@@ -378,24 +435,28 @@ if GPU_AVAILABLE and _cuda_jit:
                             if body_pct < body_min_atr_pct:
                                 candle_ok = False
                                 
-                            if c > 0.00001 and (h - l) / c > high_low_spread_cap:
+                            # This gene is stored as a percentage (3..6),
+                            # while the candle range is a decimal ratio.
+                            if c > 0.00001 and (h - l) / c > high_low_spread_cap / 100.0:
                                 candle_ok = False
                                 
                             if balance * kelly < min_trade_notional:
                                 candle_ok = False
 
-                            if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up * (1.0 + bb_upper_buffer) or strat == 9):
+                            keltner_band = keltner_low * (1.0 + (keltner_mult - 2.0) * 0.01)
+                            if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up * bb_upper_buffer or strat == 9):
                                 entry_ok = False
                                 if strat == 0:
-                                    entry_ok = (rsi < rsi_sniper and rsi > gear1_sniper_min_rsi and rsi < gear1_sniper_max_rsi and ema10 > ema10_prev * gear1_sniper_slope) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
+                                    ema_slope_ok = ema10 >= ema10_prev + atr * (gear1_sniper_slope - 1.0)
+                                    entry_ok = (rsi < rsi_sniper and rsi > gear1_sniper_min_rsi and rsi < gear1_sniper_max_rsi and ema_slope_ok) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
                                 elif strat == 1:
                                     entry_ok = (ema10 > ema50 and ema10_prev <= ema50_prev and macd_cross_lookback > 0.0)
                                 elif strat == 2:
                                     entry_ok = (st_dir == 1 and mfi > mfi_thresh and cci > momentum_req_pos_hist)
                                 elif strat == 3:
-                                    entry_ok = (c > tenkan + ichi_cloud_buffer and tenkan > kijun and cci > cci_thresh)
+                                    entry_ok = (c > tenkan * ichi_cloud_buffer and tenkan > kijun and cci > cci_thresh)
                                 elif strat == 4:
-                                    entry_ok = (l <= keltner_low * keltner_mult and c > keltner_low)
+                                    entry_ok = (l <= keltner_band and c > keltner_low)
                                 elif strat == 5:
                                     entry_ok = (stoch_k < stoch_thresh and mfi > mfi_thresh)
                                 elif strat == 6:
@@ -405,23 +466,28 @@ if GPU_AVAILABLE and _cuda_jit:
                                 elif strat == 8:
                                     entry_ok = ((ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult)
                                 elif strat == 9:
-                                    entry_ok = (c > bb_up * (1.0 - bb_lower_buffer) and adx > adx_thresh and (atr / c) < 0.03)
+                                    entry_ok = (c > bb_up * bb_lower_buffer and adx > adx_thresh and (atr / c) < 0.03)
                                 elif strat == 10:
                                     entry_ok = (st_dir == 1 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0)
                                 elif strat == 11:
-                                    entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= spot_step_trigger1 and (donchian_high_prev - c) / donchian_high_prev <= spot_step_lock1 and rsi < rsi_hook_oversold)
+                                    pullback = (donchian_high_prev - c) / donchian_high_prev if donchian_high_prev > 0.0 else -1.0
+                                    entry_ok = (c > sma200 and spot_step_lock1 <= pullback <= spot_step_trigger1 and rsi < rsi_hook_oversold)
 
-                                if entry_ok:
-                                    in_pos[s] = 1.0
-                                    entry_p[s] = c
-                                    sl_val = c - (atr * sl_atr)
-                                    sl_floor = c * (1.0 - sl_cap)
-                                    sl_p[s] = sl_val if sl_val > sl_floor else sl_floor
-                                    tp_val = c + (atr * sl_atr * tp_rr)
-                                    tp_cap_val = c * (1.0 + tp_cap)
-                                    tp_p[s] = tp_val if tp_val < tp_cap_val else tp_cap_val
-                                    bars_in_trade[s] = 0.0
-                                    open_positions += 1.0
+                            if entry_ok:
+                                in_pos[s] = 1.0
+                                fill_price = price_data_flat[fill_idx, 3]
+                                if fill_price <= 0.0:
+                                    fill_price = price_data_flat[fill_idx, 0]
+                                entry_p[s] = fill_price
+                                entry_atr[s] = atr
+                                sl_val = fill_price - (atr * sl_atr)
+                                sl_floor = fill_price * (1.0 - sl_cap)
+                                sl_p[s] = sl_val if sl_val > sl_floor else sl_floor
+                                tp_val = fill_price + (atr * sl_atr * tp_rr)
+                                tp_cap_val = fill_price * (1.0 + tp_cap)
+                                tp_p[s] = tp_val if tp_val < tp_cap_val else tp_cap_val
+                                bars_in_trade[s] = 0.0
+                                open_positions += 1.0
 
             if balance > peak_balance:
                 peak_balance = balance
@@ -429,6 +495,44 @@ if GPU_AVAILABLE and _cuda_jit:
                 dd = (peak_balance - balance) / peak_balance
                 if dd > max_dd:
                     max_dd = dd
+
+        # Liquidate positions at the final observed close so OOS metrics only
+        # contain closed trades and the matching execution cost.
+        final_t = end_bar - 1
+        for s in range(n_symbols):
+            if in_pos[s] > 0.5:
+                final_idx = sym_offsets[s] + final_t
+                final_close = price_data_flat[final_idx, 0]
+                round_trip_cost = ROUND_TRIP_TAKER_FEE_RATE
+                if entry_p[s] > 0.0 and entry_atr[s] > 0.0:
+                    round_trip_cost += (entry_atr[s] / entry_p[s]) * ATR_SLIPPAGE_FRACTION
+                pnl_pct = ((final_close - entry_p[s]) / entry_p[s]) - round_trip_cost
+                adj_kelly = kelly * pyramid_scaling_mult
+                if adj_kelly > max_pos_alloc_pct:
+                    adj_kelly = max_pos_alloc_pct
+                trade_impact = pnl_pct * adj_kelly * 4.0
+                balance *= (1.0 + trade_impact)
+                if trade_impact > 0.0:
+                    wins += 1
+                    gross_profit += trade_impact
+                    curr_streak = 0.0
+                else:
+                    gross_loss -= trade_impact
+                    curr_streak += 1.0
+                    if curr_streak > max_streak:
+                        max_streak = curr_streak
+                total_trades += 1
+                in_pos[s] = 0.0
+                entry_p[s] = 0.0
+                entry_atr[s] = 0.0
+                sl_p[s] = 0.0
+                tp_p[s] = 0.0
+        if balance > peak_balance:
+            peak_balance = balance
+        if peak_balance > 0.0:
+            final_dd = (peak_balance - balance) / peak_balance
+            if final_dd > max_dd:
+                max_dd = final_dd
 
         net_profit = ((balance - 1000.0) / 1000.0) * 100.0
         if net_profit > 10000.0:

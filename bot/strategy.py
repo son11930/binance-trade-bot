@@ -1,8 +1,10 @@
 import pandas as pd
 import ta
 import logging
+import math
 from typing import NamedTuple, Dict, Any
 from .indicators_library import apply_all_alpha_features
+from .strategy_contract import normalize_strategy_parameters, strategy_id
 
 
 class SignalPlan(NamedTuple):
@@ -331,140 +333,158 @@ def analyze_futures_market(df: pd.DataFrame) -> SignalPlan:
 
 def evaluate_dynamic_strategy(df: pd.DataFrame, parameters: Dict[str, Any]) -> SignalPlan:
     """
-    Evaluates the dataframe using one of the 12 dynamic strategies from the Strategy Manifest.
-    This exactly mirrors the logic from cpu_kernel.py / lab_gpu rules.
+    Evaluate the latest closed candle using the canonical lab strategy contract.
+
+    The GPU kernel mirrors these predicates numerically.  This function is the
+    live/paper boundary, so invalid manifests fail closed instead of silently
+    falling back to strategy 0.
     """
     default_signal = SignalPlan("HOLD", "NONE", 0.0, 0.0, 0, "", "")
     if len(df) < 200:
         return default_signal
-        
+
+    try:
+        params = normalize_strategy_parameters(parameters)
+        strat_type = params["strategy_type"]
+        strat = strategy_id(strat_type)
+    except (TypeError, ValueError) as exc:
+        return SignalPlan("HOLD", "INVALID_STRATEGY", 0.0, 0.0, 0, f"Invalid strategy parameters: {exc}", "")
+
     latest = df.iloc[-1]
     prev = df.iloc[-2]
-    
-    # Default parameters mapping
-    adx_thresh = parameters.get("adx_trend_thresh", 25.0)
-    vol_mult = parameters.get("vol_surge_mult", 2.0)
-    sl_atr = parameters.get("sl_atr_mult", 1.5)
-    tp_rr = parameters.get("tp_rr_mult", 2.0)
-    rsi_sniper = parameters.get("gear1_rsi_sniper", 30.0)
-    stoch_thresh = parameters.get("stoch_k_thresh", 20.0)
-    mfi_thresh = parameters.get("mfi_bull_thresh", 80.0)
-    cci_thresh = parameters.get("cci_trend_thresh", 100.0)
-    williams_thresh = parameters.get("williams_r_thresh", -80.0)
-    sma200_buf = parameters.get("sma200_buffer_pct", 1.0)
-    vol_floor = parameters.get("volume_floor_mult", 1.0)
-    rsi_surge_ceil = parameters.get("rsi_surge_ceiling", 70.0)
-    sl_cap = parameters.get("sl_hard_cap_pct", 0.05)
-    tp_cap = parameters.get("tp_hard_cap_pct", 0.1)
-    giant_mult = parameters.get("giant_candle_atr_mult", 3.0)
-    use_dual = parameters.get("use_dual_trend", False)
-    req_green = parameters.get("require_green_candle", True)
-    strat_type = parameters.get("strategy_type", "fibonacci_golden_pullback")
-    macro_filter = parameters.get("macro_regime_filter", "sma200_only")
-    trend_min_adx = parameters.get("trend_strength_min_adx", 20.0)
-    
-    # Map string strategy type to index for logical branching
-    strat_map = {
-        "fibonacci_golden_pullback": 0, "ema_crossover_momentum": 1,
-        "supertrend_mfi_confluence": 2, "ichimoku_cci_breakout": 3,
-        "keltner_bounce": 4, "stoch_mfi_divergence": 5,
-        "williams_mean_rev": 6, "donchian_breakout": 7,
-        "macd_momentum_surge": 8, "bb_squeeze_breakout": 9,
-        "multi_timeframe_momentum": 10, "sma_pullback_divergence": 11
-    }
-    strat = strat_map.get(strat_type, 0)
-    
-    # Map string macro filter to int
-    macro_map = {"sma200_only": 0, "sma200_and_adx": 1, "none": 2}
-    macro = macro_map.get(macro_filter, 0)
-    
-    c = latest.get('close', 0.0)
-    h = latest.get('high', 0.0)
-    l = latest.get('low', 0.0)
-    o = latest.get('open', 0.0)
-    v = latest.get('volume', 0.0)
-    sma200 = latest.get('SMA_200', 0.0)
-    sma50 = latest.get('SMA_50', 0.0)
-    atr = latest.get('ATR', 0.0)
-    rsi = latest.get('RSI', 0.0)
-    adx = latest.get('ADX', 0.0)
-    vol_sma = latest.get('SMA_20_Vol', 0.0)
-    bb_up = latest.get('BB_Upper', 0.0)
-    ema10 = latest.get('EMA_10', 0.0)
-    ema50 = latest.get('EMA_50', 0.0)
-    st_dir = latest.get('supertrend_dir', 1)
-    mfi = latest.get('mfi', 50.0)
-    stoch_k = latest.get('stoch_rsi_k', 50.0)
-    cci = latest.get('cci', 0.0)
-    williams = latest.get('williams_r', 0.0)
-    keltner_low = latest.get('keltner_lower', 0.0)
-    tenkan = latest.get('ichimoku_tenkan', 0.0)
-    kijun = latest.get('ichimoku_kijun', 0.0)
-    
-    donchian_high_prev = prev.get('donchian_high_20', 0.0)
-    ema10_prev = prev.get('EMA_10', 0.0)
-    ema50_prev = prev.get('EMA_50', 0.0)
-    
-    # Check Macro & Vol Filters
-    if adx > adx_thresh and v > (vol_sma * vol_floor):
+    def value(name: str, fallback: float = 0.0) -> float:
+        raw = latest.get(name, fallback)
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            return float(fallback)
+        return number if math.isfinite(number) else float(fallback)
+
+    c = value("close")
+    h = value("high")
+    l = value("low")
+    o = value("open")
+    v = value("volume")
+    sma200 = value("SMA_200")
+    sma50 = value("SMA_50")
+    atr = value("ATR")
+    rsi = value("RSI")
+    adx = value("ADX")
+    vol_sma = value("SMA_20_Vol")
+    bb_up = value("BB_Upper")
+    ema10 = value("EMA_10")
+    ema50 = value("EMA_50")
+    st_dir = value("supertrend_dir", 1.0)
+    mfi = value("mfi", 50.0)
+    stoch_k = value("stoch_rsi_k", 50.0)
+    cci = value("cci")
+    williams = value("williams_r", -50.0)
+    keltner_low = value("keltner_lower")
+    tenkan = value("ichimoku_tenkan")
+    kijun = value("ichimoku_kijun")
+
+    def previous_value(name: str, fallback: float = 0.0) -> float:
+        raw = prev.get(name, fallback)
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            return float(fallback)
+        return number if math.isfinite(number) else float(fallback)
+
+    donchian_high_prev = previous_value("donchian_high_20")
+    ema10_prev = previous_value("EMA_10")
+    ema50_prev = previous_value("EMA_50")
+
+    adx_thresh = float(params["adx_trend_thresh"])
+    vol_mult = float(params["vol_surge_mult"])
+    sl_atr = float(params["sl_atr_mult"])
+    tp_rr = float(params["tp_rr_mult"])
+    rsi_sniper = float(params["gear1_rsi_sniper"])
+    stoch_thresh = float(params["stoch_k_thresh"])
+    mfi_thresh = float(params["mfi_bull_thresh"])
+    cci_thresh = float(params["cci_trend_thresh"])
+    williams_thresh = float(params["williams_r_thresh"])
+    sma200_buf = float(params["sma200_buffer_pct"])
+    vol_floor = float(params["volume_floor_mult"])
+    rsi_surge_ceil = float(params["rsi_surge_ceiling"])
+    sl_cap = float(params["sl_hard_cap_pct"])
+    tp_cap = float(params["tp_hard_cap_pct"])
+    giant_mult = float(params["giant_candle_atr_mult"])
+    use_dual = bool(params["use_dual_trend"])
+    req_green = bool(params["require_green_candle"])
+    macro = {"sma200_only": 0, "sma200_and_adx": 1, "none": 2}[params["macro_regime_filter"]]
+    trend_min_adx = float(params["trend_strength_min_adx"])
+
+    # Keep these guards identical in meaning to the lab kernel.  In
+    # particular, exhaustion is a low-volume veto; using `>` here would make
+    # every volume that passed the entry floor fail immediately.
+    if not (c > 0.0 and atr > 0.0 and vol_sma > 0.0 and adx > adx_thresh and v > vol_sma * vol_floor):
+        return default_signal
+
+    trend_ok = True if macro == 2 else c > sma200 * sma200_buf
+    if macro == 0 and use_dual:
+        trend_ok = trend_ok and sma50 > sma200
+    if macro == 1:
+        trend_ok = trend_ok and adx > trend_min_adx
+    if adx < float(params["sideways_max_adx"]):
         trend_ok = False
-        if macro == 0:
-            trend_ok = (c > sma200 * sma200_buf)
-            if use_dual: trend_ok = trend_ok and (sma50 > sma200)
-        elif macro == 1:
-            trend_ok = (c > sma200 * sma200_buf) and (adx > trend_min_adx)
-        else:
-            trend_ok = True
-            
-        is_not_blowoff = (h - l) <= (atr * giant_mult)
-        candle_ok = (c > o) if req_green else True
-        
-        if trend_ok and is_not_blowoff and candle_ok and (c <= bb_up or strat == 9):
-            entry_ok = False
-            if strat == 0:
-                entry_ok = (rsi < rsi_sniper) or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
-            elif strat == 1:
-                entry_ok = (ema10 > ema50 and ema10_prev <= ema50_prev)
-            elif strat == 2:
-                entry_ok = (st_dir == 1 and mfi > mfi_thresh)
-            elif strat == 3:
-                entry_ok = (c > tenkan and tenkan > kijun and cci > cci_thresh)
-            elif strat == 4:
-                entry_ok = (l <= keltner_low and c > keltner_low)
-            elif strat == 5:
-                entry_ok = (stoch_k < stoch_thresh and mfi > mfi_thresh)
-            elif strat == 6:
-                entry_ok = (williams < williams_thresh and rsi < rsi_sniper)
-            elif strat == 7:
-                entry_ok = (c >= donchian_high_prev and adx > 25.0)
-            elif strat == 8:
-                entry_ok = ((ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult)
-            elif strat == 9:
-                entry_ok = (c > bb_up and adx > adx_thresh and (atr / c) < 0.03)
-            elif strat == 10:
-                entry_ok = (st_dir == 1 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0)
-            elif strat == 11:
-                entry_ok = (c > sma200 and donchian_high_prev > 0.0 and (donchian_high_prev - c) / donchian_high_prev >= 0.02 and (donchian_high_prev - c) / donchian_high_prev <= 0.08 and rsi < 45.0)
-                
-            if entry_ok:
-                # Calculate SL and TP bounds
-                sl_val = c - (atr * sl_atr)
-                sl_floor = c * (1.0 - sl_cap)
-                final_sl = sl_val if sl_val > sl_floor else sl_floor
-                
-                tp_val = c + (atr * sl_atr * tp_rr)
-                tp_cap_val = c * (1.0 + tp_cap)
-                final_tp = tp_val if tp_val < tp_cap_val else tp_cap_val
-                
-                return SignalPlan(
-                    action="BUY",
-                    strategy_used=strat_type.upper(),
-                    stop_loss=final_sl,
-                    take_profit=final_tp,
-                    time_in_trade=0,
-                    near_miss_reason="",
-                    position_side="LONG"
-                )
-    
-    return default_signal
+    if bool(params["adx_slope_check"]) and adx < 20.0:
+        trend_ok = False
+
+    candle_ok = not req_green or c > o
+    if v < vol_sma * float(params["vol_exhaustion_mult"]):
+        candle_ok = False
+    is_not_blowoff = (h - l) <= atr * giant_mult
+    is_rejection = ((min(o, c) - l) / (h - l)) > float(params["rejection_wick_ratio"]) if h > l else False
+    volume_cap = float(params["vol_cap_rejection"] if is_rejection else params["vol_cap_normal"])
+    candle_ok = candle_ok and v < vol_sma * volume_cap
+    candle_ok = candle_ok and abs(c - o) / atr >= float(params["body_min_atr_pct"])
+    candle_ok = candle_ok and (h - l) / c <= float(params["high_low_spread_cap"]) / 100.0
+
+    bb_ok = strat == 9 or (bb_up > 0.0 and c <= bb_up * float(params["bb_upper_buffer"]))
+    if not (trend_ok and is_not_blowoff and candle_ok and bb_ok):
+        return default_signal
+
+    momentum_positive = not bool(params["momentum_req_pos_hist"]) or cci > 0.0
+    keltner_band = keltner_low * (1.0 + (float(params["keltner_mult"]) - 2.0) * 0.01)
+    entry_ok = False
+    if strat == 0:
+        ema_slope_ok = ema10 >= ema10_prev + atr * (float(params["gear1_sniper_slope"]) - 1.0)
+        entry_ok = (
+            (rsi < rsi_sniper and rsi > float(params["gear1_sniper_min_rsi"])
+             and rsi < float(params["gear1_sniper_max_rsi"]) and ema_slope_ok)
+            or (v > vol_sma * vol_mult and rsi < rsi_surge_ceil)
+        )
+    elif strat == 1:
+        entry_ok = ema10 > ema50 and ema10_prev <= ema50_prev and float(params["macd_cross_lookback"]) > 0.0
+    elif strat == 2:
+        entry_ok = st_dir > 0.5 and mfi > mfi_thresh and momentum_positive
+    elif strat == 3:
+        entry_ok = c > tenkan * float(params["ichi_cloud_buffer"]) and tenkan > kijun and cci > cci_thresh
+    elif strat == 4:
+        entry_ok = l <= keltner_band and c > keltner_low
+    elif strat == 5:
+        entry_ok = stoch_k < stoch_thresh and mfi > mfi_thresh
+    elif strat == 6:
+        entry_ok = williams < williams_thresh and rsi < rsi_sniper
+    elif strat == 7:
+        entry_ok = c >= donchian_high_prev and adx > trend_min_adx
+    elif strat == 8:
+        entry_ok = (ema10 - ema50) / c > 0.005 and ema10 > ema10_prev and v > vol_sma * vol_mult
+    elif strat == 9:
+        entry_ok = c > bb_up * float(params["bb_lower_buffer"]) and adx > adx_thresh and (atr / c) < 0.03
+    elif strat == 10:
+        entry_ok = st_dir > 0.5 and tenkan > kijun and mfi > mfi_thresh and rsi > 50.0
+    elif strat == 11:
+        pullback = (donchian_high_prev - c) / donchian_high_prev if donchian_high_prev > 0.0 else -1.0
+        entry_ok = c > sma200 and float(params["spot_step_lock1"]) <= pullback <= float(params["spot_step_trigger1"]) and rsi < float(params["rsi_hook_oversold"])
+
+    if not entry_ok:
+        return default_signal
+
+    sl_val = c - atr * sl_atr
+    final_sl = max(sl_val, c * (1.0 - sl_cap))
+    tp_val = c + atr * sl_atr * tp_rr
+    final_tp = min(tp_val, c * (1.0 + tp_cap))
+    return SignalPlan("BUY", strat_type.upper(), final_sl, final_tp, int(params["max_hold_bars"]), "", "LONG")
 

@@ -1,257 +1,399 @@
-// ui_lab.js — AI Strategy Lab Progress Banner, Leaderboard Cards, and Command Copying
+// ui_lab.js — AI Strategy Lab progress, leaderboard rendering, and promotion actions
+
+function getLabToken() {
+    return localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
+}
+
+function toFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function formatLabNumber(value, decimals = 2) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : number.toFixed(decimals);
+}
+
+function formatLabCount(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : Math.max(0, Math.floor(number)).toLocaleString();
+}
+
+function formatLabPercent(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : `${number >= 0 ? '+' : ''}${number.toFixed(2)}%`;
+}
+
+function formatLabCurrency(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : `${number >= 0 ? '+$' : '-$'}${Math.abs(number).toFixed(2)}`;
+}
+
+function formatLabDrawdown(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : `-${Math.abs(number).toFixed(2)}%`;
+}
+
+function clampLabPercent(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? 0 : Math.max(0, Math.min(100, number));
+}
+
+function showToast(message, type = 'info') {
+    let region = document.getElementById('toast-region');
+    if (!region) {
+        region = document.createElement('div');
+        region.id = 'toast-region';
+        region.className = 'fixed right-4 top-4 z-[60] flex max-w-sm flex-col gap-2';
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
+    }
+
+    const toast = document.createElement('div');
+    const colorClass = type === 'success'
+        ? 'border-neonGreen/40 text-neonGreen'
+        : (type === 'error' ? 'border-neonRed/40 text-neonRed' : 'border-neonCyan/40 text-neonCyan');
+    toast.className = `glass-card rounded-xl border bg-slate-950/95 px-4 py-3 text-sm font-semibold shadow-xl ${colorClass}`;
+    toast.innerText = String(message || '');
+    region.appendChild(toast);
+    window.setTimeout(() => toast.remove(), 5000);
+}
+
+function renderLabProgress(progress) {
+    const banner = document.getElementById('lab-progress-banner');
+    if (!banner) return;
+
+    const status = String(progress.status || '');
+    if (!status || status === 'idle') {
+        banner.classList.add('hidden');
+        return;
+    }
+
+    const isInfinite = progress.total_trials === 0 || progress.total_trials === 'Infinite' || progress.total_trials === null;
+    const isRunning = status === 'running' || status === 'starting';
+    const current = Math.max(0, Math.floor(toFiniteNumber(progress.current_trial) || 0));
+    const total = isInfinite ? 'INFINITE MODE' : formatLabCount(progress.total_trials);
+    const totalDb = formatLabCount(progress.total_db_trials === undefined ? current : progress.total_db_trials);
+    const bestScore = formatLabNumber(progress.best_score);
+    const bestName = escapeHTML(progress.best_strategy_name || 'N/A');
+    const elapsed = Math.max(0, Math.floor(toFiniteNumber(progress.elapsed_seconds) || 0));
+    const hours = Math.floor(elapsed / 3600);
+    const mins = Math.floor((elapsed % 3600) / 60);
+    const secs = elapsed % 60;
+    const timeStr = hours > 0 ? `${hours}h ${mins}m ${secs}s` : `${mins}m ${secs}s`;
+    const pct = isInfinite ? 100 : clampLabPercent(progress.progress_pct);
+    const progressLabel = isRunning
+        ? (isInfinite ? 'INFINITE RUNNING' : `${formatLabCount(current)} / ${escapeHTML(total)}`)
+        : `${formatLabCount(current)} EVALUATED`;
+    const statusClass = isRunning
+        ? 'border-neonCyan/50 bg-gradient-to-br from-slate-900/95 via-slate-900/90 to-cyan-950/30 shadow-[0_0_30px_rgba(0,240,255,0.15)]'
+        : 'border-neonGreen/40 bg-gradient-to-br from-slate-900/95 to-emerald-950/20';
+    const iconClass = isRunning
+        ? 'bg-neonCyan/20 border border-neonCyan/50 text-neonCyan animate-pulse'
+        : 'bg-neonGreen/20 border border-neonGreen/50 text-neonGreen';
+    const labelClass = isRunning
+        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+    const progressClass = isRunning
+        ? 'bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_15px_rgba(0,240,255,0.8)]'
+        : 'bg-gradient-to-r from-emerald-400 to-teal-500 shadow-[0_0_15px_rgba(16,185,129,0.8)]';
+
+    banner.classList.remove('hidden');
+    banner.innerHTML = `
+        <div class="glass-card rounded-3xl border p-6 transition-all duration-500 md:p-8 ${statusClass}">
+            <div class="mb-6 flex flex-col items-start justify-between gap-4 border-b border-slate-800/80 pb-5 md:flex-row md:items-center">
+                <div class="flex items-center gap-4">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-2xl text-2xl shadow-lg ${iconClass}">${isRunning ? 'LAB' : 'OK'}</div>
+                    <div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="rounded-full px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider ${labelClass}">${isRunning ? 'AI LAB ACTIVE' : 'COMPLETED'}</span>
+                            <span class="font-mono text-xs text-slate-400">Elapsed: ${escapeHTML(timeStr)}</span>
+                        </div>
+                        <h2 class="mt-1 text-lg font-extrabold uppercase tracking-wide text-white md:text-xl">
+                            ${isRunning ? (isInfinite ? 'INFINITE ALPHA EVOLUTION' : 'EVOLVING ALPHA GENOME') : 'ALPHA SYNTHESIS COMPLETED'}
+                        </h2>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 self-end md:self-center">
+                    <div class="text-right">
+                        <div class="text-xs font-semibold uppercase tracking-wider text-slate-400">Session Progress</div>
+                        <div class="font-mono text-lg font-black ${isRunning ? 'text-neonCyan' : 'text-neonGreen'}">${progressLabel}</div>
+                    </div>
+                    <span class="rounded-2xl border px-4 py-2 font-mono text-sm font-black ${isRunning ? 'border-neonCyan/40 bg-neonCyan/10 text-neonCyan' : 'border-neonGreen/40 bg-neonGreen/10 text-neonGreen'}">${isRunning ? (isInfinite ? '∞' : `${pct.toFixed(1)}%`) : '100%'}</span>
+                </div>
+            </div>
+            <div class="mb-6">
+                <div class="mb-2 flex flex-wrap justify-between gap-2 text-xs font-semibold text-slate-400">
+                    <span>Current Session: <strong class="text-white">${formatLabCount(current)}</strong> of <strong class="text-white">${escapeHTML(total)}</strong> trials</span>
+                    <span>All-Time DB Memory: <strong class="font-mono text-amber-400">${escapeHTML(totalDb)}</strong> total trials</span>
+                </div>
+                <div class="h-4 w-full overflow-hidden rounded-full border border-slate-700/60 bg-slate-800/90 p-0.5 shadow-inner">
+                    <div class="h-full rounded-full transition-all duration-700 ${progressClass}" style="width: ${pct}%"></div>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div class="flex items-center justify-between rounded-2xl border border-slate-700/60 bg-slate-800/50 p-4 shadow-sm">
+                    <div>
+                        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Best Blueprint Found So Far</div>
+                        <div class="mt-0.5 truncate font-mono text-sm font-extrabold text-neonCyan md:text-base">${bestName}</div>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between rounded-2xl border border-slate-700/60 bg-slate-800/50 p-4 shadow-sm">
+                    <div>
+                        <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Top Fitness Score (Alpha Rating)</div>
+                        <div class="mt-0.5 font-mono text-lg font-black text-amber-400 md:text-xl">${escapeHTML(bestScore)} <span class="text-xs font-normal text-slate-400">pts</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
 
 async function fetchLabProgress() {
     const banner = document.getElementById('lab-progress-banner');
     if (!banner) return;
+
     try {
-        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
-        const res = await fetch('/api/lab/progress', {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        const response = await fetch('/api/lab/progress', {
+            headers: getLabToken() ? { 'Authorization': `Bearer ${getLabToken()}` } : {}
         });
-        const data = await res.json();
-        const prog = data.progress || {};
-        
-        if (!prog.status || prog.status === 'idle') {
-            banner.classList.add('hidden');
-            return;
-        }
-        if (JSON.stringify(window.currentLabProgress) === JSON.stringify(prog)) return;
-        window.currentLabProgress = prog;
-        
-        banner.classList.remove('hidden');
-        const isInfinite = prog.total_trials === 0 || prog.total_trials === 'Infinite' || prog.total_trials === null;
-        const pct = isInfinite ? 100 : Math.min(100, (prog.progress_pct || 0));
-        const current = prog.current_trial || 0;
-        const total = isInfinite ? '∞ (Infinite Mode)' : prog.total_trials;
-        const totalDb = prog.total_db_trials || current;
-        const bestScore = prog.best_score || 0;
-        const bestName = prog.best_strategy_name || 'N/A';
-        const elapsed = prog.elapsed_seconds || 0;
-        const hours = Math.floor(elapsed / 3600);
-        const mins = Math.floor((elapsed % 3600) / 60);
-        const secs = elapsed % 60;
-        const timeStr = hours > 0 ? `${hours}h ${mins}m ${secs}s` : `${mins}m ${secs}s`;
-        
-        const isRunning = prog.status === 'running' || prog.status === 'starting';
-        
-        banner.innerHTML = `
-            <div class="glass-card p-6 md:p-8 rounded-3xl border ${isRunning ? 'border-neonCyan/50 bg-gradient-to-br from-slate-900/95 via-slate-900/90 to-cyan-950/30 shadow-[0_0_30px_rgba(0,240,255,0.15)]' : 'border-neonGreen/40 bg-gradient-to-br from-slate-900/95 to-emerald-950/20'} transition-all duration-500">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800/80 pb-5 mb-6">
-                    <div class="flex items-center gap-4">
-                        <div class="w-12 h-12 rounded-2xl ${isRunning ? 'bg-neonCyan/20 border border-neonCyan/50 text-neonCyan animate-pulse' : 'bg-neonGreen/20 border border-neonGreen/50 text-neonGreen'} flex items-center justify-center text-2xl shadow-lg">
-                            ${isRunning ? '⚡' : '✅'}
-                        </div>
-                        <div>
-                            <div class="flex items-center gap-2">
-                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${isRunning ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'}">
-                                    ${isRunning ? '🔥 AI LAB ACTIVE' : '✨ COMPLETED'}
-                                </span>
-                                <span class="text-xs text-slate-400 font-mono">⏱️ Elapsed: ${timeStr}</span>
-                            </div>
-                            <h2 class="text-lg md:text-xl font-extrabold text-white uppercase tracking-wide mt-1">
-                                ${isRunning ? (isInfinite ? '⚡ INFINITE ALPHA EVOLUTION (Unlimited Mode)' : `🧬 EVOLVING ALPHA GENOME (80 Variables / 8 Systems)`) : `✅ ALPHA SYNTHESIS COMPLETED`}
-                            </h2>
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-3 self-end md:self-center">
-                        <div class="text-right">
-                            <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Session Progress</div>
-                            <div class="text-lg font-black font-mono ${isRunning ? 'text-neonCyan' : 'text-neonGreen'}">
-                                ${isRunning ? (isInfinite ? '∞ RUNNING' : `${current} / ${total}`) : `${current} Evaluated`}
-                            </div>
-                        </div>
-                        <span class="px-4 py-2 rounded-2xl text-sm font-black font-mono shadow-inner ${isRunning ? 'bg-neonCyan/10 text-neonCyan border border-neonCyan/40' : 'bg-neonGreen/10 text-neonGreen border border-neonGreen/40'}">
-                            ${isRunning ? (isInfinite ? '∞' : `${pct}%`) : '100%'}
-                        </span>
-                    </div>
-                </div>
-                <div class="mb-6">
-                    <div class="flex justify-between text-xs text-slate-400 mb-2 font-semibold">
-                        <span>🧪 Current Session: <strong class="text-white">${current}</strong> of <strong class="text-white">${total}</strong> trials</span>
-                        <span>📚 All-Time DB Memory: <strong class="text-amber-400 font-mono">${totalDb}</strong> total trials</span>
-                    </div>
-                    <div class="w-full bg-slate-800/90 rounded-full h-4 overflow-hidden border border-slate-700/60 p-0.5 shadow-inner">
-                        <div class="h-full rounded-full transition-all duration-700 ${isRunning ? 'bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 shadow-[0_0_15px_rgba(0,240,255,0.8)]' : 'bg-gradient-to-r from-emerald-400 to-teal-500 shadow-[0_0_15px_rgba(16,185,129,0.8)]'}" style="width: ${pct}%"></div>
-                    </div>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:border-slate-600 transition-colors">
-                        <div class="flex items-center gap-3.5">
-                            <span class="text-3xl">🏆</span>
-                            <div>
-                                <div class="text-[11px] text-slate-400 uppercase font-bold tracking-wider">Best Blueprint Found So Far</div>
-                                <div class="text-sm md:text-base font-extrabold text-neonCyan font-mono mt-0.5 truncate max-w-[240px] sm:max-w-[320px]">${escapeHTML(bestName)}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:border-slate-600 transition-colors">
-                        <div class="flex items-center gap-3.5">
-                            <span class="text-3xl">🔥</span>
-                            <div>
-                                <div class="text-[11px] text-slate-400 uppercase font-bold tracking-wider">Top Fitness Score (Alpha Rating)</div>
-                                <div class="text-lg md:text-xl font-black text-amber-400 font-mono mt-0.5">${bestScore} <span class="text-xs text-slate-400 font-normal">pts</span></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    } catch (err) {
-        console.error('Failed to fetch lab progress:', err);
+        if (!response.ok) throw new Error('Lab progress request failed');
+        const payload = await response.json();
+        const progress = payload && payload.progress && typeof payload.progress === 'object' ? payload.progress : {};
+        if (JSON.stringify(window.currentLabProgress) === JSON.stringify(progress)) return;
+        window.currentLabProgress = progress;
+        renderLabProgress(progress);
+    } catch (error) {
+        console.error('Failed to fetch lab progress:', error);
     }
+}
+
+function renderLeaderboardError(message) {
+    const container = document.getElementById('leaderboard-cards-container');
+    if (!container) return;
+    container.innerHTML = `
+        <div class="glass-card rounded-2xl border border-neonRed/30 p-8 text-center text-neonRed">
+            <p class="font-bold">${escapeHTML(message)}</p>
+        </div>
+    `;
+}
+
+function appendStrategyAction(button, action, rank, candidateId, artifactHash, name, paramStr) {
+    if (!button) return;
+    if (button.disabled) return;
+    button.addEventListener('click', () => {
+        if (action === 'copy') {
+            copyAICommand(rank, name, paramStr);
+        } else {
+            window.deployStrategy(rank, action, candidateId, artifactHash);
+        }
+    });
+}
+
+function buildStrategyCard(strategy, index) {
+    const rankNumber = toFiniteNumber(strategy.rank);
+    const rank = rankNumber === null ? index + 1 : Math.max(1, Math.floor(rankNumber));
+    const name = String(strategy.name || 'Blueprint');
+    const candidateId = typeof strategy.candidate_id === 'string' ? strategy.candidate_id : '';
+    const artifactHash = typeof strategy.artifact_hash === 'string' ? strategy.artifact_hash : '';
+    const qualified = strategy.qualified === true;
+    const params = strategy.parameters && typeof strategy.parameters === 'object' ? strategy.parameters : {};
+    let paramStr = '{}';
+    try {
+        paramStr = JSON.stringify(params, null, 2);
+    } catch (error) {
+        paramStr = '{}';
+    }
+
+    const netProfit1m = toFiniteNumber(strategy.net_profit_1m);
+    const netProfit3m = toFiniteNumber(strategy.net_profit_3m);
+    const netProfit6m = toFiniteNumber(strategy.net_profit_6m);
+    const netProfit1y = toFiniteNumber(strategy.net_profit_1y);
+    const netProfit1yDollar = toFiniteNumber(strategy.net_profit_1y_dollar);
+    const totalTrades = toFiniteNumber(strategy.total_trades_1y) || 0;
+    const oosProfit = toFiniteNumber(strategy.oos_profit_1y);
+    const oosTrades = toFiniteNumber(strategy.oos_trades_1y) || 0;
+    const oosDrawdown = toFiniteNumber(strategy.oos_max_dd);
+    const oosProfitFactor = toFiniteNumber(strategy.oos_profit_factor);
+    const averageDollar = toFiniteNumber(strategy.avg_profit_per_trade_dollar);
+    const fallbackAverageDollar = netProfit1yDollar === null ? null : netProfit1yDollar / Math.max(1, totalTrades);
+    const averageProfitDollar = averageDollar === null ? fallbackAverageDollar : averageDollar;
+    const averagePercent = toFiniteNumber(strategy.avg_profit_per_trade_pct);
+    const fallbackAveragePercent = netProfit1y === null ? null : netProfit1y / Math.max(1, totalTrades);
+    const averageProfitPercent = averagePercent === null ? fallbackAveragePercent : averagePercent;
+    const averageClass = averageProfitDollar !== null && averageProfitDollar >= 1
+        ? 'text-neonGreen text-glow-green'
+        : (averageProfitDollar !== null && averageProfitDollar >= 0.3 ? 'text-amber-400' : 'text-neonRed');
+    const actionTitle = qualified ? '' : 'title="Candidate must pass complete evaluation before deployment"';
+    const actionDisabled = qualified ? '' : 'disabled';
+    const rankBadge = index === 0 ? '#1 ALPHA GENOME' : `#${rank} BLUEPRINT`;
+    const badgeColor = index === 0
+        ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
+        : 'bg-slate-800 text-slate-300 border-slate-700';
+    const safeMetricClass = (value) => value !== null && value >= 0 ? 'text-neonGreen' : 'text-neonRed';
+    const safeSubMetricClass = (value) => value !== null && value >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80';
+    const safeParamStr = escapeHTML(paramStr);
+
+    const card = document.createElement('article');
+    card.className = `glass-card rounded-2xl border p-6 transition-all duration-300 hover:scale-[1.01] ${index === 0 ? 'border-amber-500/40 bg-gradient-to-br from-amber-500/5 to-transparent' : 'border-slate-800 hover:border-slate-700'}`;
+    card.innerHTML = `
+        <div class="mb-4 flex flex-col items-start justify-between gap-4 border-b border-slate-800/80 pb-4 md:flex-row md:items-center">
+            <div>
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="rounded-full border px-3 py-1 text-xs font-extrabold uppercase tracking-wider ${badgeColor}">${escapeHTML(rankBadge)}</span>
+                    <h3 class="text-lg font-extrabold tracking-wide text-white">${escapeHTML(name)}</h3>
+                </div>
+                <span class="mt-2 inline-block rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${qualified ? 'border-neonGreen/30 bg-neonGreen/10 text-neonGreen' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}">${qualified ? 'QUALIFIED FOR REVIEW' : 'NOT READY FOR DEPLOYMENT'}</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button type="button" data-lab-action="paper" ${actionDisabled} ${actionTitle} class="rounded-xl border border-blue-500/40 bg-gradient-to-r from-blue-500/20 to-blue-400/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-blue-400 transition-all hover:bg-blue-500/30 disabled:cursor-not-allowed disabled:opacity-40">Stage Paper Review</button>
+                <button type="button" data-lab-action="live" ${actionDisabled} ${actionTitle} class="rounded-xl border border-red-500/40 bg-gradient-to-r from-red-500/20 to-orange-500/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-red-400 transition-all hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-40">Request Live Canary</button>
+                <button type="button" data-lab-action="copy" class="rounded-xl border border-slate-600 bg-slate-800/60 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-300 transition-all hover:bg-slate-700">Copy DNA</button>
+            </div>
+        </div>
+        <div class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">1M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit1m)}">${escapeHTML(formatLabPercent(netProfit1m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit1m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_1m_dollar))}</span></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">3M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit3m)}">${escapeHTML(formatLabPercent(netProfit3m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit3m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_3m_dollar))}</span></div>
+            <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">6M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit6m)}">${escapeHTML(formatLabPercent(netProfit6m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit6m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_6m_dollar))}</span></div>
+            <div class="rounded-xl border p-3 ${index === 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800 bg-slate-900/60'}"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">1Y Annualized</span><span class="text-xl font-extrabold ${safeMetricClass(netProfit1y)}">${escapeHTML(formatLabPercent(netProfit1y))}</span><span class="block font-mono text-[11px] font-bold ${safeSubMetricClass(netProfit1y)}">${escapeHTML(formatLabCurrency(netProfit1yDollar))}</span></div>
+        </div>
+        <div class="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-800/60 bg-black/30 p-3 text-xs sm:grid-cols-5">
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Win Rate</span><span class="text-sm font-extrabold text-white">${escapeHTML(formatLabPercent(strategy.win_rate_1y))}</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Max Drawdown</span><span class="text-sm font-extrabold text-neonRed">${escapeHTML(formatLabDrawdown(strategy.max_dd))}</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Trade Activity</span><span class="text-sm font-extrabold text-neonCyan">${escapeHTML(formatLabCount(totalTrades))}</span><span class="block text-[10px] text-slate-400">~${escapeHTML(formatLabNumber(strategy.avg_trades_month === undefined ? totalTrades / 12 : strategy.avg_trades_month, 1))}/mo | ~${escapeHTML(formatLabNumber(strategy.avg_trades_day === undefined ? totalTrades / 365 : strategy.avg_trades_day, 1))}/day</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Avg Profit / Trade</span><span class="text-sm font-extrabold ${averageClass}">${escapeHTML(formatLabCurrency(averageProfitDollar))}</span><span class="block text-[10px] text-slate-400">${escapeHTML(formatLabPercent(averageProfitPercent))}</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Moonshots (&gt;30%)</span><span class="text-sm font-extrabold text-amber-400">${escapeHTML(formatLabCount(strategy.moonshots_1y))}</span></div>
+        </div>
+        <div class="mb-4 grid grid-cols-2 gap-3 rounded-xl border ${qualified ? 'border-neonGreen/30 bg-neonGreen/5' : 'border-amber-500/30 bg-amber-500/5'} p-3 text-xs sm:grid-cols-4">
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS 1Y Return</span><span class="text-sm font-extrabold ${oosProfit !== null && oosProfit > 0 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabPercent(oosProfit))}</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Profit Factor</span><span class="text-sm font-extrabold ${oosProfitFactor !== null && oosProfitFactor >= 1.1 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabNumber(oosProfitFactor, 2))}</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Trades</span><span class="text-sm font-extrabold text-white">${escapeHTML(formatLabCount(oosTrades))}</span><span class="block text-[10px] text-slate-500">minimum 30</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Drawdown</span><span class="text-sm font-extrabold ${oosDrawdown !== null && oosDrawdown <= 15 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabDrawdown(oosDrawdown))}</span><span class="block text-[10px] text-slate-500">maximum 15%</span></div>
+        </div>
+        <div class="mb-4 rounded-xl border border-slate-800/80 bg-black/40 p-3 text-xs font-mono text-slate-300">
+            <span class="mb-1 block text-[10px] font-bold uppercase text-slate-500">Genome DNA Parameters</span>
+            <pre class="overflow-x-auto text-[11px] text-neonCyan/90">${safeParamStr}</pre>
+        </div>
+        <p class="text-[11px] leading-relaxed text-slate-500">${qualified ? 'Candidate passed the lab qualification gate. Paper review and server-side deployment governance still apply.' : 'Deployment actions stay disabled until the candidate passes the complete evaluation and qualification gates.'}</p>
+    `;
+
+    appendStrategyAction(card.querySelector('[data-lab-action="paper"]'), 'PAPER', rank, candidateId, artifactHash, name, paramStr);
+    appendStrategyAction(card.querySelector('[data-lab-action="live"]'), 'LIVE', rank, candidateId, artifactHash, name, paramStr);
+    appendStrategyAction(card.querySelector('[data-lab-action="copy"]'), 'copy', rank, candidateId, artifactHash, name, paramStr);
+    return card;
 }
 
 async function fetchLeaderboard() {
     const container = document.getElementById('leaderboard-cards-container');
     if (!container) return;
-    
+
     if (!window.currentLeaderboardStrategies || window.currentLeaderboardStrategies.length === 0) {
         container.innerHTML = `
-            <div class="glass-card p-8 rounded-2xl text-center text-slate-400">
-                <p class="animate-pulse text-neonCyan font-bold">🧬 Synthesizing & Fetching Alpha Leaderboard...</p>
+            <div class="glass-card rounded-2xl p-8 text-center text-slate-400">
+                <p class="animate-pulse font-bold text-neonCyan">Synthesizing and fetching alpha leaderboard...</p>
             </div>
         `;
     }
-    
+
     try {
-        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
-        const res = await fetch('/api/lab/leaderboard', {
+        const token = getLabToken();
+        const response = await fetch('/api/lab/leaderboard', {
             headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
-        const data = await res.json();
-        const strategies = data.strategies || [];
-        
-        if (JSON.stringify(window.currentLeaderboardStrategies) === JSON.stringify(strategies)) {
-            return;
-        }
-        
+        if (!response.ok) throw new Error('Leaderboard request failed');
+        const payload = await response.json();
+        const strategies = payload && Array.isArray(payload.strategies) ? payload.strategies : [];
+
+        if (JSON.stringify(window.currentLeaderboardStrategies) === JSON.stringify(strategies)) return;
+        window.currentLeaderboardStrategies = strategies;
+
         if (strategies.length === 0) {
             container.innerHTML = `
-                <div class="glass-card p-8 rounded-2xl text-center text-slate-400 border border-slate-700">
-                    <p class="text-base font-bold text-white mb-2">No Synthesized Strategies Found Yet</p>
-                    <p class="text-xs">Run <code class="text-neonCyan">python bot_strategy_synthesizer.py</code> locally on your PC to evolve blueprints across 20 symbols!</p>
+                <div class="glass-card rounded-2xl border border-slate-700 p-8 text-center text-slate-400">
+                    <p class="mb-2 text-base font-bold text-white">No synthesized strategies found yet</p>
+                    <p class="text-xs">Run the local strategy lab, then refresh this page after results are uploaded.</p>
                 </div>
             `;
             return;
         }
-        
-        container.innerHTML = "";
-        window.currentLeaderboardStrategies = strategies;
-        strategies.forEach((strat, idx) => {
-            const rankBadge = idx === 0 ? "🏆 #1 ALPHA GENOME" : `#${strat.rank} BLUEPRINT`;
-            const badgeColor = idx === 0 ? "bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.3)]" : "bg-slate-800 text-slate-300 border-slate-700";
-            
-            const params = strat.parameters || {};
-            const paramStr = JSON.stringify(params, null, 2);
-            
-            const card = document.createElement('div');
-            card.className = `glass-card p-6 rounded-2xl border transition-all duration-300 hover:scale-[1.01] ${idx === 0 ? 'border-amber-500/40 bg-gradient-to-br from-amber-500/5 to-transparent' : 'border-slate-800 hover:border-slate-700'}`;
-            
-            card.innerHTML = `
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800/80 pb-4 mb-4">
-                    <div>
-                        <div class="flex items-center gap-3">
-                            <span class="px-3 py-1 rounded-full text-xs font-extrabold border tracking-wider uppercase ${badgeColor}">
-                                ${rankBadge}
-                            </span>
-                            <h3 class="text-lg font-extrabold text-white tracking-wide">${escapeHTML(strat.name || 'Blueprint')}</h3>
-                        </div>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="deployStrategy(${strat.rank}, 'PAPER')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-blue-500/20 to-blue-400/10 text-blue-400 font-bold text-[10px] uppercase tracking-widest border border-blue-500/40 hover:bg-blue-500/30 transition-all shadow-[0_0_10px_rgba(59,130,246,0.2)] flex items-center gap-2">
-                            <span>🧪</span> Stage for Paper Review
-                        </button>
-                        <button onclick="deployStrategy(${strat.rank}, 'LIVE')" class="px-3 py-2 rounded-xl bg-gradient-to-r from-red-500/20 to-orange-500/10 text-red-400 font-bold text-[10px] uppercase tracking-widest border border-red-500/40 hover:bg-red-500/30 transition-all shadow-[0_0_10px_rgba(239,68,68,0.2)] flex items-center gap-2">
-                            <span>🔥</span> Request Live Canary
-                        </button>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">1M Return</span>
-                        <span class="text-lg font-extrabold ${strat.net_profit_1m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_1m >= 0 ? '+' : ''}${strat.net_profit_1m}%</span>
-                        <span class="text-[11px] block ${strat.net_profit_1m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_1m_dollar !== undefined ? (strat.net_profit_1m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_1m_dollar) : '$' + (strat.net_profit_1m * 10).toFixed(2)})</span>
-                    </div>
-                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">3M Return</span>
-                        <span class="text-lg font-extrabold ${strat.net_profit_3m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_3m >= 0 ? '+' : ''}${strat.net_profit_3m}%</span>
-                        <span class="text-[11px] block ${strat.net_profit_3m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_3m_dollar !== undefined ? (strat.net_profit_3m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_3m_dollar) : '$' + (strat.net_profit_3m * 10).toFixed(2)})</span>
-                    </div>
-                    <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">6M Return</span>
-                        <span class="text-lg font-extrabold ${strat.net_profit_6m >= 0 ? 'text-neonGreen' : 'text-neonRed'}">${strat.net_profit_6m >= 0 ? '+' : ''}${strat.net_profit_6m}%</span>
-                        <span class="text-[11px] block ${strat.net_profit_6m >= 0 ? 'text-neonGreen/80' : 'text-neonRed/80'} font-mono">(${strat.net_profit_6m_dollar !== undefined ? (strat.net_profit_6m_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_6m_dollar) : '$' + (strat.net_profit_6m * 10).toFixed(2)})</span>
-                    </div>
-                    <div class="bg-slate-900/60 p-3 rounded-xl border ${idx === 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800'}">
-                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">1Y Annualized</span>
-                        <span class="text-xl font-extrabold ${strat.net_profit_1y >= 0 ? 'text-neonGreen text-glow-green' : 'text-neonRed'}">${strat.net_profit_1y >= 0 ? '+' : ''}${strat.net_profit_1y}%</span>
-                        <span class="text-[11px] block ${strat.net_profit_1y >= 0 ? 'text-neonGreen text-glow-green' : 'text-neonRed'} font-mono font-bold">(${strat.net_profit_1y_dollar !== undefined ? (strat.net_profit_1y_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.net_profit_1y_dollar) : '$' + (strat.net_profit_1y * 10).toFixed(2)})</span>
-                    </div>
-                </div>
-                <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4 text-xs bg-black/30 p-3 rounded-xl border border-slate-800/60">
-                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Win Rate:</span> <span class="text-white font-extrabold text-sm">${strat.win_rate_1y}%</span></div>
-                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Max Drawdown:</span> <span class="text-neonRed font-extrabold text-sm">-${strat.max_dd}%</span></div>
-                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Trade Activity:</span> <span class="text-neonCyan font-extrabold text-sm">${strat.total_trades_1y} ไม้</span> <span class="text-[10px] text-slate-400 block">(~${strat.avg_trades_month || (strat.total_trades_1y/12).toFixed(1)} ไม้/เดือน | ~${strat.avg_trades_day || (strat.total_trades_1y/365).toFixed(1)} ไม้/วัน)</span></div>
-                    <div>
-                        <span class="text-slate-400 block text-[10px] uppercase font-bold">Avg Profit / Trade:</span>
-                        <span class="font-extrabold text-sm ${(strat.avg_profit_per_trade_dollar >= 1.00 || (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)) >= 1.00) ? 'text-neonGreen text-glow-green' : ((strat.avg_profit_per_trade_dollar >= 0.30 || (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)) >= 0.30) ? 'text-amber-400' : 'text-neonRed')}">
-                            ${strat.avg_profit_per_trade_dollar !== undefined ? (strat.avg_profit_per_trade_dollar >= 0 ? '+$' : '-$') + Math.abs(strat.avg_profit_per_trade_dollar) : (strat.net_profit_1y_dollar ? '+$' + (strat.net_profit_1y_dollar / Math.max(1, strat.total_trades_1y)).toFixed(2) : '$0.00')}
-                        </span>
-                        <span class="text-[10px] text-slate-400 block">(${strat.avg_profit_per_trade_pct !== undefined ? (strat.avg_profit_per_trade_pct >= 0 ? '+' : '') + strat.avg_profit_per_trade_pct : (strat.net_profit_1y ? (strat.net_profit_1y / Math.max(1, strat.total_trades_1y)).toFixed(3) : '0.000')}%)</span>
-                    </div>
-                    <div><span class="text-slate-400 block text-[10px] uppercase font-bold">Moonshots (>30%):</span> <span class="text-amber-400 font-extrabold text-sm">${strat.moonshots_1y} 🚀</span></div>
-                </div>
-                <div class="bg-black/40 rounded-xl p-3 border border-slate-800/80 font-mono text-xs text-slate-300">
-                    <span class="text-slate-500 text-[10px] uppercase block mb-1 font-bold">🧬 Genome DNA Parameters:</span>
-                    <pre class="overflow-x-auto text-[11px] text-neonCyan/90">${escapeHTML(paramStr)}</pre>
-                </div>
-            `;
-            container.appendChild(card);
-        });
-    } catch (err) {
-        container.innerHTML = `
-            <div class="glass-card p-8 rounded-2xl text-center text-neonRed border border-neonRed/30">
-                <p class="font-bold">Error loading Leaderboard: ${escapeHTML(err.message)}</p>
-            </div>
-        `;
+
+        const fragment = document.createDocumentFragment();
+        strategies.forEach((strategy, index) => fragment.appendChild(buildStrategyCard(strategy || {}, index)));
+        container.replaceChildren(fragment);
+    } catch (error) {
+        console.error('Failed to fetch leaderboard:', error);
+        renderLeaderboardError('Unable to load the strategy leaderboard. Please refresh and try again.');
     }
 }
 
 function copyAICommand(rank, name, paramStr) {
-    const cmd = `Antigravity อัปเกรดระบบเทรดใน bot/strategy.py ให้ใช้กลยุทธ์ Blueprint #${rank} (${name}) ตามที่ห้องแล็บค้นพบเลย!\nพารามิเตอร์ DNA:\n${paramStr}`;
-    navigator.clipboard.writeText(cmd).then(() => {
-        alert("✅ Copied AI Upgrade Command to clipboard!\n\nPaste it into chat to have AI deploy Blueprint #" + rank + "!");
-    }).catch(err => {
-        prompt("Copy this AI Command:", cmd);
-    });
+    const command = `Review Blueprint #${rank} (${name}) from the AI Strategy Lab.\nDNA parameters:\n${paramStr}`;
+    const copyPromise = navigator.clipboard && navigator.clipboard.writeText
+        ? navigator.clipboard.writeText(command)
+        : Promise.reject(new Error('Clipboard unavailable'));
+    copyPromise
+        .then(() => showToast('Strategy DNA copied to the clipboard.', 'success'))
+        .catch(() => window.prompt('Copy this strategy DNA:', command));
 }
 
-window.deployStrategy = async function(rank, stage) {
-    let msg = `Are you sure you want to stage Strategy Rank #${rank} for ${stage === 'LIVE' ? 'Live Canary' : 'Paper Review'}?`;
-    if (stage === 'LIVE') {
-        msg += "\n\n🚨 DANGER: LIVE DEPLOYMENT 🚨\n\nThis will request a LIVE CANARY deployment using REAL MONEY.\nAre you absolutely sure you want to proceed?";
+window.deployStrategy = async function(rank, stage, candidateId, artifactHash) {
+    if (stage !== 'PAPER' && stage !== 'LIVE') {
+        showToast('Unsupported deployment stage.', 'error');
+        return;
     }
-    if (!confirm(msg)) return;
-    
+    if (typeof candidateId !== 'string' || !candidateId || typeof artifactHash !== 'string' || !artifactHash) {
+        showToast('This leaderboard entry is missing deployment evidence.', 'error');
+        return;
+    }
+
+    let directLive = false;
+    let liveConfirmation = null;
+    let message = `Stage strategy rank #${rank} for ${stage === 'LIVE' ? 'a live canary request' : 'paper review'}?`;
+    if (stage === 'LIVE') {
+        message += '\n\nWARNING: A live canary uses real money. The server will still require live execution to be explicitly unlocked, the bot to be paused, and the candidate to pass governance checks. Continue?';
+    }
+    if (!window.confirm(message)) return;
+
+    if (stage === 'LIVE') {
+        directLive = window.confirm('Skip the PAPER stage and deploy this candidate directly to LIVE?');
+        if (directLive) {
+            liveConfirmation = window.prompt('Type exactly: I UNDERSTAND LIVE RISK');
+            if (liveConfirmation !== 'I UNDERSTAND LIVE RISK') {
+                showToast('Direct LIVE cancelled: confirmation phrase did not match.', 'error');
+                return;
+            }
+        }
+    }
+
     try {
-        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
-        const response = await fetch(`/api/strategy/promote`, {
+        const token = getLabToken();
+        const response = await fetch('/api/strategy/promote', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
             },
-            body: JSON.stringify({ rank, stage })
+            body: JSON.stringify({ rank, stage, candidate_id: candidateId, artifact_hash: artifactHash, direct_live: directLive, live_confirmation: liveConfirmation })
         });
-        const result = await response.json();
-        if (response.ok) {
-            showToast(`Strategy successfully deployed to ${stage}!`, "success");
-        } else {
-            showToast(result.detail || result.message || "Failed to deploy strategy", "error");
+        let result = {};
+        try {
+            result = await response.json();
+        } catch (error) {
+            result = {};
         }
-    } catch (e) {
-        console.error(e);
-        showToast("Error communicating with server", "error");
+        if (!response.ok) {
+            showToast(typeof result.detail === 'string' ? result.detail : 'Deployment request was rejected.', 'error');
+            return;
+        }
+        showToast(typeof result.message === 'string' ? result.message : `Strategy staged for ${stage}.`, 'success');
+        await fetchLeaderboard();
+    } catch (error) {
+        console.error('Failed to promote strategy:', error);
+        showToast('Error communicating with the server.', 'error');
     }
-}
+};
 
+document.addEventListener('DOMContentLoaded', () => {
+    const refreshButton = document.getElementById('refresh-lab-results');
+    if (refreshButton) refreshButton.addEventListener('click', fetchLeaderboard);
+});

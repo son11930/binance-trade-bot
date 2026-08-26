@@ -12,20 +12,34 @@ window.onerror = function(msg, url, lineNo, columnNo, error) {
 };
 
 // Global State
-let currentMarket = localStorage.getItem('selectedMarket') || 'spot';
+const supportedMarkets = ['spot', 'futures', 'lab'];
+const pageMarket = document.body && document.body.dataset ? document.body.dataset.market : '';
+const storedMarket = localStorage.getItem('selectedMarket');
+let currentMarket = supportedMarkets.includes(pageMarket)
+    ? pageMarket
+    : (supportedMarkets.includes(storedMarket) ? storedMarket : 'spot');
 let ws = null;
 let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
 let reconnectTimeout = 1000;
+let shouldReconnect = true;
 let dataStore = {
     spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
-    futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
+    futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
+    lab: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
 };
 let isSpotPaused = false;
 let isFuturesPaused = false;
 let selectedTimeframe = "ALL";
-let viewMode = localStorage.getItem('viewMode') || 'PAPER'; // Default to PAPER
+const storedViewMode = localStorage.getItem('viewMode');
+let viewMode = storedViewMode === 'LIVE' ? 'LIVE' : 'PAPER'; // Default to PAPER
+
+function getTradingMarket() {
+    return currentMarket === 'futures' ? 'futures' : (currentMarket === 'spot' ? 'spot' : null);
+}
 
 function setViewMode(mode) {
+    if (mode !== 'PAPER' && mode !== 'LIVE') return;
+
     viewMode = mode;
     localStorage.setItem('viewMode', mode);
     
@@ -41,20 +55,26 @@ function setViewMode(mode) {
         if (liveBtn) liveBtn.className = "px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 transition-colors";
     }
 
+    if (paperBtn) paperBtn.setAttribute('aria-pressed', String(mode === 'PAPER'));
+    if (liveBtn) liveBtn.setAttribute('aria-pressed', String(mode === 'LIVE'));
+
     // Re-render UIs based on new filter
-    if (dataStore[currentMarket].status) {
+    const marketData = dataStore[currentMarket];
+    if (!marketData) return;
+
+    if (marketData.status) {
         if (typeof updateStatusUI === 'function') {
-            updateStatusUI(dataStore[currentMarket].status, dataStore[currentMarket].globalConfig);
+            updateStatusUI(marketData.status, marketData.globalConfig);
         }
     }
-    if (dataStore[currentMarket].trades) {
+    if (marketData.trades) {
         if (typeof updateTradesUI === 'function') {
-            updateTradesUI(dataStore[currentMarket].trades);
+            updateTradesUI(marketData.trades);
         }
     }
-    if (dataStore[currentMarket].stats) {
+    if (marketData.stats) {
         if (typeof renderStatsUI === 'function') {
-            renderStatsUI(dataStore[currentMarket].stats);
+            renderStatsUI(marketData.stats);
         }
     }
 }

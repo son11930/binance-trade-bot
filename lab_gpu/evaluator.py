@@ -4,11 +4,188 @@ evaluator.py — Orchestrates CUDA kernels and CPU fallbacks for evaluating geno
 import numpy as np
 from typing import Dict, List, Any
 
-from .config import logger, CUDA_THREADS_PER_BLOCK, _STRAT_MAP_MB, _MACRO_MAP_MB
+from .config import (
+    logger,
+    CUDA_THREADS_PER_BLOCK,
+    SCREENING_TOP_K,
+    SCREENING_MIN_1M_PROFIT,
+    SCREENING_MIN_3M_PROFIT,
+    SCREENING_FITNESS_BASE,
+    _STRAT_MAP_MB,
+    _MACRO_MAP_MB,
+)
 from .gpu_kernel import GPU_AVAILABLE, _backtest_kernel, _mega_backtest_kernel
 from .cpu_kernel import _cpu_mega_batch_fallback
 from .data_loader import _GPU_FLAT_DATA, _GPU_DEVICE_ARRAYS, _build_symbol_arrays_for_cpu
-from .fitness import _pack_genomes_to_flat, _vectorized_batch_compute_fitness, _apply_four_pillar_fitness
+from .fitness import (
+    _pack_genomes_to_flat,
+    _vectorized_batch_compute_fitness,
+    _apply_four_pillar_fitness,
+    MIN_TOTAL_TRADES,
+    MIN_OOS_TRADES,
+    MIN_OOS_PROFIT_FACTOR,
+    MAX_OOS_DRAWDOWN,
+)
+from bot.strategy_contract import canonical_macro_regime, strategy_id
+
+
+_FULL_METRIC_KEYS = (
+    "net_profit_1m",
+    "net_profit_3m",
+    "net_profit_6m",
+    "net_profit_1y",
+    "win_rate_1y",
+    "max_dd",
+    "total_trades_1y",
+    "oos_profit_1y",
+    "oos_trades_1y",
+    "oos_max_dd",
+    "oos_profit_factor",
+    "oos_expectancy",
+)
+
+
+def _reshape_horizon_major_results(
+    raw_flat: np.ndarray,
+    n_genomes: int,
+    n_horizons: int,
+) -> np.ndarray:
+    """Unpack kernel output written as [horizon, genome, metric]."""
+    expected = int(n_genomes) * int(n_horizons) * 16
+    flat = np.asarray(raw_flat).reshape(-1)
+    if flat.size < expected:
+        raise ValueError(f"Kernel output is truncated: expected {expected}, got {flat.size}")
+    horizon_major = flat[:expected].reshape(int(n_horizons), int(n_genomes), 16)
+    return np.transpose(horizon_major, (1, 0, 2))
+
+
+def _screening_search_score(avg_p_1m: float, avg_p_3m: float) -> float:
+    """Return a continuous ranking score for the cheap 1M/3M screen."""
+    return float(SCREENING_FITNESS_BASE + (float(avg_p_1m) + float(avg_p_3m)) * 10.0)
+
+
+def _make_screening_result(avg_p_1m: float, avg_p_3m: float, screen_passed: bool) -> Dict[str, Any]:
+    """Create an explicitly incomplete result that cannot be promoted."""
+    screen_score = _screening_search_score(avg_p_1m, avg_p_3m)
+    return {
+        "fitness_score": screen_score,  # Search-only score for Optuna ordering.
+        "search_score": screen_score,
+        "screening_score": screen_score,
+        "evaluation_stage": "screening",
+        "screened": True,
+        "screen_passed": bool(screen_passed),
+        "full_evaluated": False,
+        "qualified": False,
+        "promotion_ready": False,
+        "net_profit_1m": float(avg_p_1m),
+        "net_profit_3m": float(avg_p_3m),
+        "net_profit_6m": None,
+        "net_profit_1y": None,
+        "is_profit_1y": None,
+        "oos_profit_1y": None,
+        "win_rate_1y": None,
+        "max_dd": None,
+        "total_trades_1y": None,
+        "is_trades_1y": None,
+        "oos_trades_1y": None,
+        "is_max_dd": None,
+        "oos_max_dd": None,
+        "oos_profit_factor": None,
+        "oos_expectancy": None,
+        "moonshots_1y": None,
+    }
+
+
+def _select_screening_indices(
+    avg_p_1m: np.ndarray,
+    avg_p_3m: np.ndarray,
+    top_k: int = SCREENING_TOP_K,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rank the best screen results and backfill when no hard-gate survivor exists."""
+    p_1m = np.asarray(avg_p_1m, dtype=np.float32).reshape(-1)
+    p_3m = np.asarray(avg_p_3m, dtype=np.float32).reshape(-1)
+    if p_1m.shape != p_3m.shape:
+        raise ValueError("Screening horizon arrays must have the same shape")
+    if p_1m.size == 0:
+        return np.empty(0, dtype=np.int64), np.zeros(0, dtype=bool)
+
+    survivors = (p_3m > SCREENING_MIN_3M_PROFIT) & (p_1m > SCREENING_MIN_1M_PROFIT)
+    scores = p_1m + p_3m
+    ranked = np.argsort(-scores, kind="stable")
+    eligible = ranked[survivors[ranked]]
+    rescue = ranked[~survivors[ranked]]
+    limit = min(max(1, int(top_k)), p_1m.size)
+    selected = np.concatenate((eligible, rescue))[:limit]
+    return selected.astype(np.int64), survivors
+
+
+def _is_qualified_result(result: Dict[str, Any]) -> bool:
+    """A candidate qualifies only after complete, robust OOS evidence."""
+    if not result.get("full_evaluated", False):
+        return False
+    try:
+        fitness = float(result.get("fitness_score"))
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(fitness) or fitness <= 0.0:
+        return False
+    for key in _FULL_METRIC_KEYS:
+        value = result.get(key)
+        if value is None:
+            return False
+        try:
+            if not np.isfinite(float(value)):
+                return False
+        except (TypeError, ValueError):
+            return False
+    try:
+        total_trades = int(result["total_trades_1y"])
+        oos_trades = int(result["oos_trades_1y"])
+        return (
+            total_trades >= MIN_TOTAL_TRADES
+            and oos_trades >= MIN_OOS_TRADES
+            and float(result["net_profit_1y"]) > 0.0
+            and float(result["oos_profit_1y"]) > 0.0
+            and float(result["oos_profit_factor"]) >= MIN_OOS_PROFIT_FACTOR
+            and float(result["oos_expectancy"]) > 0.0
+            and float(result["oos_max_dd"]) <= MAX_OOS_DRAWDOWN
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
+def _mark_full_evaluation(
+    result: Dict[str, Any],
+    screen_passed: bool = True,
+    screening_score: float | None = None,
+) -> Dict[str, Any]:
+    """Attach the evidence state to a complete fitness result."""
+    marked = dict(result)
+    marked["evaluation_stage"] = "full_evaluated"
+    marked["screened"] = True
+    marked["screen_passed"] = bool(screen_passed)
+    marked["full_evaluated"] = True
+    marked["screening_score"] = screening_score
+    marked["search_score"] = float(marked.get("fitness_score", -1e9))
+    marked["qualified"] = _is_qualified_result(marked)
+    marked["promotion_ready"] = marked["qualified"]
+    return marked
+
+
+def _make_invalid_result(error: Exception | str) -> Dict[str, Any]:
+    """Represent evaluator failure without creating a false positive candidate."""
+    return {
+        "fitness_score": -1e9,
+        "search_score": -1e9,
+        "screening_score": None,
+        "evaluation_stage": "error",
+        "screened": False,
+        "screen_passed": False,
+        "full_evaluated": False,
+        "qualified": False,
+        "promotion_ready": False,
+        "error": str(error),
+    }
 
 def _cpu_eval_from_arrays(arrays: Dict[str, np.ndarray], genome: Dict[str, Any], bars: int) -> Dict[str, float]:
     """CPU fallback evaluation directly from numpy arrays."""
@@ -53,14 +230,14 @@ def _batch_gpu_backtest(
         return []
 
     n = len(genome_batch)
-    sort_order = [_STRAT_MAP_MB.get(gn.get("strategy_type", "rsi_sniper"), 0) for gn in genome_batch]
+    sort_order = [strategy_id(gn.get("strategy_type", "rsi_sniper")) for gn in genome_batch]
     sorted_pairs = sorted(zip(sort_order, range(n), genome_batch), key=lambda x: x[0])
     genome_batch_sorted = [p[2] for p in sorted_pairs]
     original_order = [p[1] for p in sorted_pairs]
 
     def g(key, default=0.0):
         if key == "kelly_fraction_cap":
-            return np.array([max(0.20, min(0.40, float(gn.get(key, default)))) for gn in genome_batch_sorted], dtype=np.float32)
+            return np.array([max(0.15, min(0.40, float(gn.get(key, default)))) for gn in genome_batch_sorted], dtype=np.float32)
         return np.array([float(gn.get(key, default)) for gn in genome_batch_sorted], dtype=np.float32)
 
     is_device = _use_preloaded or hasattr(df_arrays["close"], "copy_to_host")
@@ -148,8 +325,11 @@ def _batch_gpu_backtest(
     d_gntm  = nb_cuda.to_device(g("giant_candle_atr_mult", 2.0))
     use_dual_arr = np.array([1.0 if gn.get("use_dual_trend", True) else 0.0 for gn in genome_batch_sorted], dtype=np.float32)
     req_grn_arr  = np.array([1.0 if gn.get("require_green_candle", False) else 0.0 for gn in genome_batch_sorted], dtype=np.float32)
-    strat_arr    = np.array([float(_STRAT_MAP_MB.get(gn.get("strategy_type", "rsi_sniper"), 0)) for gn in genome_batch_sorted], dtype=np.float32)
-    macro_arr    = np.array([float(_MACRO_MAP_MB.get(gn.get("macro_regime_filter", "sma200_only"), 0)) for gn in genome_batch_sorted], dtype=np.float32)
+    strat_arr    = np.array([float(strategy_id(gn.get("strategy_type", "rsi_sniper"))) for gn in genome_batch_sorted], dtype=np.float32)
+    macro_arr    = np.array([
+        float(_MACRO_MAP_MB[canonical_macro_regime(gn.get("macro_regime_filter", "sma200_only"))])
+        for gn in genome_batch_sorted
+    ], dtype=np.float32)
     d_udual = nb_cuda.to_device(use_dual_arr)
     d_rqgrn = nb_cuda.to_device(req_grn_arr)
     d_strat = nb_cuda.to_device(strat_arr)
@@ -218,10 +398,15 @@ def evaluate_genome_gpu(
     """Evaluate a genome across 4 time horizons on GPU (or CPU fallback) across all symbols."""
     return _mega_batch_gpu_backtest([genome])[0]
 
-def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool = True) -> List[Dict[str, Any]]:
+def _mega_batch_gpu_backtest(
+    genome_batch: List[Dict[str, Any]],
+    screening: bool = True,
+    force_full_indices: List[int] | None = None,
+) -> List[Dict[str, Any]]:
     """Single mega-kernel call: evaluates genome_batch across ALL symbols × ALL horizons simultaneously."""
     if not GPU_AVAILABLE or not _GPU_FLAT_DATA:
-        return _cpu_mega_batch_fallback(genome_batch, screening)
+        cpu_results = _cpu_mega_batch_fallback(genome_batch, screening=False)
+        return [_mark_full_evaluation(result) for result in cpu_results]
 
     from numba import cuda as nb_cuda
 
@@ -254,22 +439,35 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool
         
         if n_h_screen < n_h:
             # CPU FILTERING
-            raw_screen = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h, 16)[:, :n_h_screen, :]
+            raw_screen = _reshape_horizon_major_results(
+                np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0),
+                n_g,
+                n_h_screen,
+            )
             avg_p_1m = raw_screen[:, 0, 0] + raw_screen[:, 0, 8]
             avg_p_3m = raw_screen[:, 1, 0] + raw_screen[:, 1, 8]
             
-            # Require at least break-even on 3m, and not terrible on 1m
-            survivors_mask = (avg_p_3m > -2.0) & (avg_p_1m > -5.0)
-            survivor_indices = np.where(survivors_mask)[0]
+            # Keep a continuous top-K rescue set even when the hard gate is empty.
+            selected_indices, survivors_mask = _select_screening_indices(avg_p_1m, avg_p_3m)
+            forced_indices = np.asarray(force_full_indices or [], dtype=np.int64)
+            forced_indices = forced_indices[(forced_indices >= 0) & (forced_indices < n_g)]
+            full_indices = np.unique(np.concatenate((selected_indices, forced_indices)))
+
+            final_results = [
+                _make_screening_result(
+                    avg_p_1m[i],
+                    avg_p_3m[i],
+                    bool(survivors_mask[i]),
+                )
+                for i in range(n_g)
+            ]
             
-            final_results = [{"fitness_score": float(-999.0 + (avg_p_3m[i] + avg_p_1m[i]) * 10.0), "net_profit_1y": -99.0, "net_profit_6m": -99.0, "net_profit_3m": float(avg_p_3m[i]), "net_profit_1m": float(avg_p_1m[i]), "moonshots_1y": 0, "max_dd": 100.0, "total_trades_1y": 0, "win_rate_1y": 0.0} for i in range(n_g)]
-            
-            if len(survivor_indices) > 0:
+            if len(full_indices) > 0:
                 # -------------------------------------------------------------
-                # STAGE 2: FULL LENGTH FOR SURVIVORS
+                # STAGE 2: FULL LENGTH FOR TOP-K AND FORCED TPE CANDIDATES
                 # -------------------------------------------------------------
-                n_surv = len(survivor_indices)
-                surv_genomes = [genome_batch[i] for i in survivor_indices]
+                n_surv = len(full_indices)
+                surv_genomes = [genome_batch[i] for i in full_indices]
                 surv_mat = _pack_genomes_to_flat(surv_genomes)
                 d_surv_params = nb_cuda.to_device(surv_mat, stream=stream)
                 d_surv_out = nb_cuda.device_array(n_surv * n_h * 16, dtype=np.float32)
@@ -284,21 +482,33 @@ def _mega_batch_gpu_backtest(genome_batch: List[Dict[str, Any]], screening: bool
                 )
                 stream.synchronize()
                 
-                raw_full = np.nan_to_num(d_surv_out.copy_to_host(stream=stream), nan=0.0).reshape(n_surv, n_h, 16)
+                raw_full = _reshape_horizon_major_results(
+                    np.nan_to_num(d_surv_out.copy_to_host(stream=stream), nan=0.0),
+                    n_surv,
+                    n_h,
+                )
                 surv_fitness_results = _vectorized_batch_compute_fitness(raw_full, n_surv)
                 
-                for idx, s_idx in enumerate(survivor_indices):
-                    final_results[s_idx] = surv_fitness_results[idx]
+                for idx, s_idx in enumerate(full_indices):
+                    final_results[s_idx] = _mark_full_evaluation(
+                        surv_fitness_results[idx],
+                        screen_passed=bool(survivors_mask[s_idx]),
+                        screening_score=_screening_search_score(avg_p_1m[s_idx], avg_p_3m[s_idx]),
+                    )
                     
             return final_results
             
         else:
             # NO SCREENING OR STAGE 1 ALREADY DID EVERYTHING
-            raw = np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0).reshape(n_g, n_h, 16)
-            return _vectorized_batch_compute_fitness(raw, n_g)
+            raw = _reshape_horizon_major_results(
+                np.nan_to_num(d_out.copy_to_host(stream=stream), nan=0.0),
+                n_g,
+                n_h,
+            )
+            return [_mark_full_evaluation(result) for result in _vectorized_batch_compute_fitness(raw, n_g)]
             
     except Exception as cuda_err:
         logger.error(f"Mega-kernel CUDA error: {cuda_err}")
-        return [{"fitness_score": 0.0}] * n_g
+        return [_make_invalid_result(cuda_err) for _ in range(n_g)]
     finally:
         del d_genome_params, d_out

@@ -42,7 +42,7 @@ function renderLogsUI(logsData, isDelta = false) {
     
     sortedLogs.forEach(log => {
         if (log.level === 'NEAR_MISS' && !showNearMiss) return;
-        if (!showRoutineEvals && log.message.includes('-> Result: HOLD')) return;
+        if (!showRoutineEvals && String(log.message || '').includes('-> Result: HOLD')) return;
 
         const div = document.createElement('div');
         div.className = 'mb-1';
@@ -84,20 +84,28 @@ function renderStatsUI(statsData) {
     const pnlEl = document.getElementById('cumulative-pnl');
     const pctEl = document.getElementById('pnl-percent');
     
-    if (winRateEl) winRateEl.innerText = `${data.win_rate.toFixed(1)}%`;
-    if (winLossEl) winLossEl.innerText = `${data.wins}W - ${data.losses}L`;
+    const winRate = Number(data.win_rate);
+    const cumulativePnl = Number(data.cumulative_pnl);
+    const pnlPercent = Number(data.pnl_percent);
+    const wins = Number(data.wins || 0);
+    const losses = Number(data.losses || 0);
+
+    if (winRateEl) winRateEl.innerText = `${Number.isFinite(winRate) ? winRate.toFixed(1) : '0.0'}%`;
+    if (winLossEl) winLossEl.innerText = `${wins}W - ${losses}L`;
     
     if (pnlEl) {
-        pnlEl.innerText = `${data.cumulative_pnl >= 0 ? '+' : ''}$${data.cumulative_pnl.toFixed(2)}`;
-        pnlEl.className = data.cumulative_pnl >= 0 ? 'text-sm font-bold text-neonGreen text-glow-green' : 'text-sm font-bold text-neonRed text-glow-red';
+        const displayPnl = Number.isFinite(cumulativePnl) ? cumulativePnl : 0;
+        pnlEl.innerText = `${displayPnl >= 0 ? '+' : ''}$${displayPnl.toFixed(2)}`;
+        pnlEl.className = displayPnl >= 0 ? 'text-sm font-bold text-neonGreen text-glow-green' : 'text-sm font-bold text-neonRed text-glow-red';
     }
     if (pctEl) {
-        pctEl.innerText = `${data.pnl_percent >= 0 ? '+' : ''}${data.pnl_percent.toFixed(2)}%`;
-        pctEl.className = data.pnl_percent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
+        const displayPercent = Number.isFinite(pnlPercent) ? pnlPercent : 0;
+        pctEl.innerText = `${displayPercent >= 0 ? '+' : ''}${displayPercent.toFixed(2)}%`;
+        pctEl.className = displayPercent >= 0 ? 'text-xs font-bold text-neonGreen text-glow-green' : 'text-xs font-bold text-neonRed text-glow-red';
     }
     
     if (modeData['ALL']) {
         const totalTrEl = document.getElementById('total-trades');
-        if (totalTrEl) totalTrEl.innerText = modeData['ALL'].wins + modeData['ALL'].losses;
+        if (totalTrEl) totalTrEl.innerText = Number(modeData['ALL'].wins || 0) + Number(modeData['ALL'].losses || 0);
     }
 }

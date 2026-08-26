@@ -1,9 +1,11 @@
 import os
 import time
 import hashlib
+import math
 import asyncio
 import logging
 import secrets
+import json
 import jwt
 import bcrypt
 from datetime import datetime, timezone, timedelta
@@ -11,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect, Request
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
@@ -20,9 +23,11 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot.control import get_bot_control, set_bot_control
+from bot.strategy_manager import get_active_strategy
 from typing import Dict, Optional, List, Any
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
+from candidate_evidence import CANDIDATE_VERSION, candidate_artifact_hash
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -338,7 +343,10 @@ class ToggleExecutionModeRequest(BaseModel):
 def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization Header")
-    token = auth_header.replace("Bearer ", "")
+    scheme, separator, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not token.strip():
+        raise HTTPException(status_code=401, detail="Invalid Authorization Header")
+    token = token.strip()
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
         if not secrets.compare_digest(payload.get("sub", ""), USER):
@@ -366,7 +374,29 @@ async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(ve
 
 @app.post("/api/toggle_execution_mode")
 async def toggle_execution_mode_endpoint(req: ToggleExecutionModeRequest, auth: bool = Depends(verify_jwt)):
-    set_bot_control(allow_live=req.allow_live, paper_trading=req.paper_trading)
+    current = get_bot_control()
+    if req.paper_trading is False:
+        raise HTTPException(
+            status_code=403,
+            detail="LIVE mode can only be entered through a validated strategy promotion.",
+        )
+    if req.paper_trading is True and (
+        not current.get("spot_paused", False) or not current.get("futures_paused", False)
+    ):
+        raise HTTPException(status_code=400, detail="Pause both engines before changing execution mode.")
+    if req.allow_live is True and (
+        not current.get("spot_paused", False)
+        or not current.get("futures_paused", False)
+        or not get_active_strategy()
+    ):
+        raise HTTPException(status_code=400, detail="Pause both engines and stage a validated strategy before enabling live execution.")
+
+    # This endpoint only arms/disarms the live guard.  The promotion endpoint
+    # is the sole path that can switch paper_trading to LIVE.
+    set_bot_control(
+        allow_live=req.allow_live,
+        paper_trading=True if req.paper_trading is True else None,
+    )
     new_state = get_bot_control()
     
     # Broadcast the updated status immediately
@@ -493,38 +523,98 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
 
 _leaderboard_cache = {"data": None, "expiry": 0}
 
+_LEADERBOARD_META_FIELDS = (
+    "evaluation_stage",
+    "screened",
+    "screen_passed",
+    "full_evaluated",
+    "qualified",
+    "promotion_ready",
+    "candidate_id",
+    "candidate_version",
+    "artifact_hash",
+    "candidate_status",
+    "fitness_score",
+    "profit_factor",
+    "oos_profit_factor",
+    "oos_expectancy",
+    "oos_trades_1y",
+    "oos_max_dd",
+    "avg_profit_per_trade_pct",
+    "avg_profit_per_trade_dollar",
+    "net_profit_1m_dollar",
+    "net_profit_3m_dollar",
+    "net_profit_6m_dollar",
+    "net_profit_1y_dollar",
+)
+
+
+def _read_leaderboard_json() -> List[Dict[str, Any]]:
+    """Read the atomic lab snapshot, preserving candidate evidence metadata."""
+    json_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "dashboard", "data", "strategy_leaderboard.json",
+    )
+    if not os.path.exists(json_path):
+        return []
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        strategies = data.get("strategies", []) if isinstance(data, dict) else []
+        return [item for item in strategies if isinstance(item, dict)][:10]
+    except (OSError, ValueError, TypeError) as exc:
+        logging.warning(f"Error reading JSON fallback leaderboard: {exc}")
+        return []
+
+
+def _format_leaderboard_row(row: Any) -> Dict[str, Any]:
+    """Convert a DB row while retaining evidence stored by newer lab runs."""
+    stored: Dict[str, Any] = {}
+    if getattr(row, "parameters_json", None):
+        try:
+            parsed = json.loads(row.parameters_json)
+            if isinstance(parsed, dict):
+                stored = parsed
+        except (TypeError, ValueError):
+            stored = {}
+    parameters = stored.get("parameters", stored if stored else {})
+    result = {
+        "rank": row.rank,
+        "name": row.name,
+        "net_profit_1m": row.net_profit_1m,
+        "net_profit_3m": row.net_profit_3m,
+        "net_profit_6m": row.net_profit_6m,
+        "net_profit_1y": row.net_profit_1y,
+        "win_rate_1y": row.win_rate_1y,
+        "max_dd": row.max_drawdown,
+        "total_trades_1y": row.total_trades_1y,
+        "moonshots_1y": row.moonshots_1y,
+        "parameters": parameters if isinstance(parameters, dict) else {},
+    }
+    for field in _LEADERBOARD_META_FIELDS:
+        if field in stored:
+            result[field] = stored[field]
+    return result
+
 @app.get("/api/lab/leaderboard")
 def get_strategy_leaderboard(auth: bool = Depends(verify_jwt)):
-    """Returns Top 10 synthesized strategies from Aiven DB or JSON fallback with 15s TTL cache."""
+    """Return the latest candidate snapshot with its promotion evidence intact."""
     now = time.time()
     if _leaderboard_cache["data"] and now < _leaderboard_cache["expiry"]:
         return {"status": "ok", "strategies": _leaderboard_cache["data"]}
+
+    strategies = _read_leaderboard_json()
+    if strategies:
+        _leaderboard_cache["data"] = strategies
+        _leaderboard_cache["expiry"] = now + 15.0
+        return {"status": "ok", "strategies": strategies}
 
     strategies = []
     db = SessionLocalFutures()
     try:
         rows = db.query(StrategyLeaderboard).order_by(StrategyLeaderboard.rank.asc()).limit(10).all()
         for r in rows:
-            params = {}
-            if r.parameters_json:
-                try:
-                    import json
-                    params = json.loads(r.parameters_json)
-                except Exception:
-                    pass
-            strategies.append({
-                "rank": r.rank,
-                "name": r.name,
-                "net_profit_1m": r.net_profit_1m,
-                "net_profit_3m": r.net_profit_3m,
-                "net_profit_6m": r.net_profit_6m,
-                "net_profit_1y": r.net_profit_1y,
-                "win_rate_1y": r.win_rate_1y,
-                "max_dd": r.max_drawdown,
-                "total_trades_1y": r.total_trades_1y,
-                "moonshots_1y": r.moonshots_1y,
-                "parameters": params
-            })
+            strategies.append(_format_leaderboard_row(r))
         if strategies:
             _leaderboard_cache["data"] = strategies
             _leaderboard_cache["expiry"] = now + 15.0
@@ -534,18 +624,10 @@ def get_strategy_leaderboard(auth: bool = Depends(verify_jwt)):
         db.close()
         
     if not strategies:
-        json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
-        if os.path.exists(json_path):
-            try:
-                import json
-                with open(json_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    strategies = data.get("strategies", [])
-                    if strategies:
-                        _leaderboard_cache["data"] = strategies
-                        _leaderboard_cache["expiry"] = now + 15.0
-            except Exception as e:
-                logging.error(f"Error reading JSON fallback leaderboard: {e}")
+        strategies = _read_leaderboard_json()
+        if strategies:
+            _leaderboard_cache["data"] = strategies
+            _leaderboard_cache["expiry"] = now + 15.0
                 
     return {"status": "ok", "strategies": strategies}
 
@@ -599,13 +681,22 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
     strategies = data.get("strategies", [])
     if not strategies:
         return {"status": "error", "message": "No strategies provided"}
+
+    if not isinstance(strategies, list) or any(
+        not isinstance(item, dict) or not _has_valid_candidate_evidence(item)
+        for item in strategies
+    ):
+        raise HTTPException(status_code=400, detail="All uploaded candidates must include valid full-evaluation evidence")
+    strategies = strategies[:10]
         
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     try:
         import json
-        with open(json_path, "w", encoding="utf-8") as f:
+        tmp_json_path = f"{json_path}.tmp"
+        with open(tmp_json_path, "w", encoding="utf-8") as f:
             json.dump({"updated_at": datetime.now(timezone.utc).isoformat(), "strategies": strategies}, f, indent=2)
+        os.replace(tmp_json_path, json_path)
     except Exception as e:
         logging.error(f"Failed to save JSON leaderboard: {e}")
         
@@ -625,7 +716,9 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
                 max_drawdown=float(item.get("max_dd", 0.0)),
                 total_trades_1y=int(item.get("total_trades_1y", 0)),
                 moonshots_1y=int(item.get("moonshots_1y", 0)),
-                parameters_json=json.dumps(item.get("parameters", {}))
+                # Preserve candidate evidence in the legacy text column so a
+                # DB-only read still exposes qualification/promotion state.
+                parameters_json=json.dumps(item)
             )
             db.add(row)
         db.commit()
@@ -637,9 +730,97 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
         
     return {"status": "ok", "message": f"Successfully updated Top {len(strategies[:10])} strategies"}
 
+_PROMOTION_METRIC_KEYS = (
+    "net_profit_1m",
+    "net_profit_3m",
+    "net_profit_6m",
+    "net_profit_1y",
+    "oos_profit_1y",
+    "win_rate_1y",
+    "max_dd",
+    "total_trades_1y",
+    "oos_trades_1y",
+    "oos_max_dd",
+    "oos_profit_factor",
+    "oos_expectancy",
+)
+
+PROMOTION_MIN_TOTAL_TRADES = 100
+PROMOTION_MIN_OOS_TRADES = 30
+
+
+def _is_promotable_candidate(candidate: Dict[str, Any]) -> bool:
+    """Reject screening placeholders and incomplete evidence before deployment."""
+    if candidate.get("evaluation_stage") != "full_evaluated":
+        return False
+    if candidate.get("full_evaluated") is not True or candidate.get("qualified") is not True:
+        return False
+    try:
+        if float(candidate.get("fitness_score")) <= 0.0:
+            return False
+        if int(candidate.get("total_trades_1y")) < PROMOTION_MIN_TOTAL_TRADES:
+            return False
+        if int(candidate.get("oos_trades_1y")) < PROMOTION_MIN_OOS_TRADES:
+            return False
+        for key in _PROMOTION_METRIC_KEYS:
+            if not math.isfinite(float(candidate.get(key))):
+                return False
+        if float(candidate.get("net_profit_1y")) <= 0.0:
+            return False
+        if float(candidate.get("oos_profit_1y")) <= 0.0:
+            return False
+        if float(candidate.get("oos_profit_factor")) < 1.10:
+            return False
+        if float(candidate.get("oos_expectancy")) <= 0.0:
+            return False
+        if float(candidate.get("oos_max_dd")) > 15.0:
+            return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if float(candidate.get("max_dd", 100.0)) >= 100.0:
+        return False
+    if float(candidate.get("net_profit_1y", -99.0)) == -99.0:
+        return False
+    return True
+
+
+def _has_valid_candidate_evidence(candidate: Dict[str, Any]) -> bool:
+    """Validate the immutable identity/hash attached by the strategy lab."""
+    if (
+        candidate.get("candidate_version") != CANDIDATE_VERSION
+        or candidate.get("evaluation_stage") != "full_evaluated"
+        or not candidate.get("full_evaluated", False)
+    ):
+        return False
+    try:
+        if int(candidate.get("total_trades_1y")) <= 0 or int(candidate.get("oos_trades_1y")) <= 0:
+            return False
+        if any(not math.isfinite(float(candidate.get(key))) for key in _PROMOTION_METRIC_KEYS):
+            return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    try:
+        expected_hash = candidate_artifact_hash(candidate)
+    except (TypeError, ValueError):
+        return False
+    candidate_id = str(candidate.get("candidate_id", ""))
+    artifact_hash = str(candidate.get("artifact_hash", ""))
+    return (
+        secrets.compare_digest(artifact_hash, expected_hash)
+        and secrets.compare_digest(candidate_id, f"gpu-{expected_hash[:20]}")
+    )
+
+
 class PromoteRequest(BaseModel):
-    rank: int
+    rank: Optional[int] = None  # Display-only compatibility; never used as identity.
     stage: str
+    candidate_id: str = Field(min_length=24, max_length=64)
+    artifact_hash: str = Field(min_length=64, max_length=64)
+    direct_live: bool = False
+    live_confirmation: Optional[str] = Field(default=None, max_length=80)
+
+
+LIVE_CONFIRMATION_PHRASE = "I UNDERSTAND LIVE RISK"
 
 @app.post("/api/strategy/promote")
 def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
@@ -649,20 +830,24 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     ctrl = get_bot_control()
     if req.stage == "LIVE" and not ctrl.get("allow_live", False):
         raise HTTPException(status_code=403, detail="LIVE deployment is disabled. Enable 'Allow Live Trading' first.")
+    if req.stage == "LIVE" and req.direct_live and req.live_confirmation != LIVE_CONFIRMATION_PHRASE:
+        raise HTTPException(status_code=400, detail=f"Type '{LIVE_CONFIRMATION_PHRASE}' to confirm direct LIVE deployment")
         
     if not ctrl.get("spot_paused", False) or not ctrl.get("futures_paused", False):
         raise HTTPException(status_code=400, detail="Cannot deploy strategy while bot is running. Please PAUSE the bot first.")
         
-    try:
-        from bot.binance_client import client
-        positions_res = client.futures_position_information()
-        open_positions = [p for p in positions_res if float(p['positionAmt']) != 0]
-        if open_positions:
-            raise HTTPException(status_code=400, detail="Cannot deploy strategy while there are open exchange positions.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.warning(f"Could not check open positions: {e}")
+    if req.stage == "LIVE":
+        try:
+            from bot.binance_client import client
+            positions_res = client.futures_position_information()
+            open_positions = [p for p in positions_res if float(p['positionAmt']) != 0]
+            if open_positions:
+                raise HTTPException(status_code=400, detail="Cannot deploy strategy while there are open exchange positions.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.error(f"Could not verify open positions; refusing deployment: {e}")
+            raise HTTPException(status_code=503, detail="Could not verify exchange positions; deployment refused")
         
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
     if not os.path.exists(json_path):
@@ -676,9 +861,26 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error reading leaderboard: {e}")
         
-    target_strat = next((s for s in strategies if s.get("rank") == req.rank), None)
+    target_strat = next((s for s in strategies if s.get("candidate_id") == req.candidate_id), None)
     if not target_strat:
-        raise HTTPException(status_code=404, detail=f"Strategy with rank {req.rank} not found")
+        raise HTTPException(status_code=404, detail="Candidate identity not found in current leaderboard snapshot")
+
+    if not _has_valid_candidate_evidence(target_strat):
+        raise HTTPException(status_code=409, detail="Candidate evidence is missing, stale, or invalid")
+    if not _is_promotable_candidate(target_strat):
+        raise HTTPException(status_code=403, detail="Candidate is not full-evaluated and qualified for deployment")
+
+    try:
+        expected_hash = candidate_artifact_hash(target_strat)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"Candidate evidence is invalid: {e}")
+    if not secrets.compare_digest(expected_hash, req.artifact_hash):
+        raise HTTPException(status_code=409, detail="Candidate evidence hash is stale or does not match")
+    if not secrets.compare_digest(
+        str(target_strat.get("candidate_id", "")),
+        req.candidate_id,
+    ):
+        raise HTTPException(status_code=409, detail="Candidate identity does not match leaderboard evidence")
         
     manifest_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_manifest.json")
     
@@ -687,29 +889,39 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f)
-        except Exception:
-            pass
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Invalid strategy manifest; deployment refused: {e}")
+
+    if not isinstance(manifest_data, dict) or not isinstance(manifest_data.get("history", []), list):
+        raise HTTPException(status_code=500, detail="Invalid strategy manifest; deployment refused")
             
     active_strat = manifest_data.get("active_strategy", {})
     
-    if req.stage in ["CANARY", "LIVE"]:
-        if active_strat.get("rank") != req.rank:
-            raise HTTPException(status_code=403, detail="Governance Violation: Strategy must be deployed to PAPER first before promoting to LIVE/CANARY.")
-        if active_strat.get("stage") not in ["PAPER", "CANARY"]:
-            raise HTTPException(status_code=403, detail="Governance Violation: Strategy must currently be in PAPER stage to be promoted.")
+    if req.stage == "LIVE" and not req.direct_live:
+        if active_strat.get("candidate_id") != req.candidate_id:
+            raise HTTPException(status_code=403, detail="Strategy must be staged to PAPER before LIVE promotion unless direct LIVE is explicitly confirmed.")
+        if active_strat.get("stage") not in ["PAPER"]:
+            raise HTTPException(status_code=403, detail="Strategy must currently be in PAPER stage to be promoted.")
             
     if manifest_data.get("active_strategy", {}).get("name"):
         manifest_data["history"].append(manifest_data["active_strategy"])
         manifest_data["history"] = manifest_data["history"][-10:]
         
     new_strategy = {
-        "version": "1.0.0",
-        "id": f"strat_{req.rank}_{int(time.time())}",
+        "version": target_strat.get("candidate_version", CANDIDATE_VERSION),
+        "candidate_version": target_strat.get("candidate_version", CANDIDATE_VERSION),
+        "id": req.candidate_id,
+        "candidate_id": req.candidate_id,
+        "artifact_hash": req.artifact_hash,
         "name": target_strat.get("name", "Unknown"),
         "stage": req.stage,
         "promoted_at": datetime.now(timezone.utc).isoformat(),
         "promoted_by": USER,
-        "parameters": target_strat.get("parameters", {})
+        "parameters": target_strat.get("parameters", {}),
+        "candidate_status": target_strat.get("candidate_status", "qualified"),
+        # Keep the exact hashable lab snapshot with the manifest so the
+        # bot can revalidate provenance before every execution cycle.
+        "evidence": dict(target_strat),
     }
     manifest_data["active_strategy"] = new_strategy
     
@@ -720,6 +932,15 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
         os.replace(tmp_manifest, manifest_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write manifest: {e}")
+
+    # The manifest and execution mode must agree before the bot can resume.
+    # Keep the bot paused from the precondition above; the operator explicitly
+    # resumes it after reviewing the resulting mode banner.
+    set_bot_control(paper_trading=req.stage == "PAPER")
+    effective_control = get_bot_control()
+    expected_paper_mode = req.stage == "PAPER"
+    if effective_control.get("paper_trading") is not expected_paper_mode:
+        raise HTTPException(status_code=503, detail="Execution mode could not be updated; deployment remains paused")
         
     return {"status": "success", "message": f"Successfully promoted {new_strategy['name']} to {req.stage}", "data": new_strategy}
 
@@ -830,4 +1051,19 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         manager.disconnect(websocket)
         
-app.mount("/", StaticFiles(directory="dashboard", html=True), name="dashboard")
+class _DashboardStaticFiles(StaticFiles):
+    """Serve UI assets while keeping lab evidence and local DBs private."""
+
+    async def get_response(self, path: str, scope: dict):
+        normalized = path.replace("\\", "/").lstrip("/").lower()
+        if (
+            normalized == "data"
+            or normalized.startswith("data/")
+            or normalized.endswith((".db", ".sqlite", ".sqlite3"))
+        ):
+            return PlainTextResponse("Not found", status_code=404)
+        return await super().get_response(path, scope)
+
+
+_dashboard_directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard")
+app.mount("/", _DashboardStaticFiles(directory=_dashboard_directory, html=True), name="dashboard")

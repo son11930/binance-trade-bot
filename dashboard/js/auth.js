@@ -3,8 +3,17 @@
 function logout() {
     localStorage.removeItem('bot_token');
     sessionStorage.removeItem('bot_token');
+    authToken = null;
+    shouldReconnect = false;
     if (ws) ws.close();
     window.location.reload();
+}
+
+function setLoginError(message) {
+    const errorEl = document.getElementById('login-error');
+    if (!errorEl) return;
+    errorEl.classList.remove('hidden');
+    errorEl.innerText = message;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -12,9 +21,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const u = document.getElementById('username').value;
-            const p = document.getElementById('password').value;
-            const r = document.getElementById('remember').checked;
+            const usernameEl = document.getElementById('username');
+            const passwordEl = document.getElementById('password');
+            const rememberEl = document.getElementById('remember');
+            if (!usernameEl || !passwordEl || !rememberEl) return;
+
+            const u = usernameEl.value;
+            const p = passwordEl.value;
+            const r = rememberEl.checked;
             
             try {
                 const res = await fetch('/api/login', {
@@ -29,17 +43,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (r) localStorage.setItem('bot_token', authToken);
                     else sessionStorage.setItem('bot_token', authToken);
                     
-                    document.getElementById('login-error').classList.add('hidden');
+                    const loginError = document.getElementById('login-error');
+                    if (loginError) loginError.classList.add('hidden');
+                    shouldReconnect = true;
                     if (typeof startApp === 'function') {
                         startApp();
                     }
                 } else {
-                    document.getElementById('login-error').classList.remove('hidden');
-                    document.getElementById('login-error').innerText = "Invalid credentials. Access Denied.";
+                    setLoginError("Invalid credentials. Access Denied.");
                 }
             } catch (err) {
-                document.getElementById('login-error').classList.remove('hidden');
-                document.getElementById('login-error').innerText = "Network Error. Is the backend running?";
+                setLoginError("Network Error. Is the backend running?");
             }
         });
     }

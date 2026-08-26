@@ -8,13 +8,26 @@ import json
 import random
 import threading
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Any
 
-from .config import logger, SYMBOLS, N_CPU_WORKERS, GENOME_BATCH_SIZE, DASHBOARD_DATA_DIR, BENCHMARK_MODE
+from .config import (
+    logger,
+    SYMBOLS,
+    N_CPU_WORKERS,
+    GENOME_BATCH_SIZE,
+    DASHBOARD_DATA_DIR,
+    BENCHMARK_MODE,
+    GENOME_PARAM_ORDER,
+    GENOME_SEARCH_SPACE,
+    _STRAT_MAP_MB,
+    _MACRO_MAP_MB,
+)
 from .gpu_kernel import GPU_AVAILABLE
 from .data_loader import _load_and_cache_symbol, _df_to_arrays, preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA
-from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu
+from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu, _is_qualified_result
 from .leaderboard_sync import save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu, get_deduplicated_top10_gpu, flush_sync_worker
+from bot.strategy_contract import canonical_macro_regime, canonical_strategy_type
 
 try:
     import optuna
@@ -24,78 +37,94 @@ except ImportError:
     OPTUNA_AVAILABLE = False
     logger.warning("Optuna not installed. Running in standalone CPU mode without TPE optimization.")
 
-def _build_genome_from_trial(trial: optuna.Trial) -> dict:
-    genome = {
-        "strategy_type": trial.suggest_categorical("strategy_type", ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_mean_rev", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]),
-        "adx_trend_thresh":   trial.suggest_float("adx_trend_thresh", 15.0, 35.0, step=1.0),
-        "use_dual_trend":     trial.suggest_categorical("use_dual_trend", [True, False]),
-        "vol_surge_mult":     trial.suggest_float("vol_surge_mult", 1.1, 3.0, step=0.1),
-        "sl_atr_mult":        trial.suggest_float("sl_atr_mult", 1.0, 3.0, step=0.1),
-        "tp_rr_mult":         trial.suggest_float("tp_rr_mult", 1.5, 4.5, step=0.2),
-        "gear1_rsi_sniper":   trial.suggest_float("gear1_rsi_sniper", 68.0, 86.0, step=1.0),
-        "stoch_k_thresh":     trial.suggest_float("stoch_k_thresh", 65.0, 88.0, step=1.0),
-        "mfi_bull_thresh":    trial.suggest_float("mfi_bull_thresh", 30.0, 60.0, step=2.0),
-        "cci_trend_thresh":   trial.suggest_float("cci_trend_thresh", -50.0, 100.0, step=10.0),
-        "williams_r_thresh":  trial.suggest_float("williams_r_thresh", -90.0, -66.0, step=2.0),
-        "gear2_moonshot_trigger_pct": trial.suggest_float("gear2_moonshot_trigger_pct", 0.015, 0.04, step=0.005),
-        "gear2_moonshot_gap_pct":     trial.suggest_float("gear2_moonshot_gap_pct", 0.003, 0.01, step=0.001),
-        "gear3_trailing_trigger_pct": trial.suggest_float("gear3_trailing_trigger_pct", 0.008, 0.024, step=0.002),
-        "gear3_trailing_gap_pct":     trial.suggest_float("gear3_trailing_gap_pct", 0.005, 0.015, step=0.001),
-        "gear4_breakeven_trigger_pct":trial.suggest_float("gear4_breakeven_trigger_pct", 0.004, 0.012, step=0.001),
-        "gear4_breakeven_buffer_pct": trial.suggest_float("gear4_breakeven_buffer_pct", 0.0005, 0.003, step=0.0005),
-        "max_hold_bars":      trial.suggest_int("max_hold_bars", 12, 72, step=6),
-        "vol_exhaustion_mult":trial.suggest_float("vol_exhaustion_mult", 0.3, 0.8, step=0.1),
-        "sma200_buffer_pct":  trial.suggest_float("sma200_buffer_pct", 0.985, 1.015, step=0.005),
-        "adx_slope_check":    trial.suggest_categorical("adx_slope_check", [True, False]),
-        "volume_floor_mult":  trial.suggest_float("volume_floor_mult", 0.5, 1.2, step=0.1),
-        "rsi_surge_ceiling":  trial.suggest_float("rsi_surge_ceiling", 76.0, 90.0, step=2.0),
-        "rsi_hook_oversold":  trial.suggest_float("rsi_hook_oversold", 26.0, 48.0, step=2.0),
-        "rsi_reversal_exit_thresh": trial.suggest_float("rsi_reversal_exit_thresh", 56.0, 74.0, step=2.0),
-        "bb_lower_buffer":    trial.suggest_float("bb_lower_buffer", 0.99, 1.04, step=0.01),
-        "bb_upper_buffer":    trial.suggest_float("bb_upper_buffer", 0.97, 1.01, step=0.01),
-        "macd_cross_lookback":trial.suggest_int("macd_cross_lookback", 3, 15, step=2),
-        "mfi_bear_thresh":    trial.suggest_float("mfi_bear_thresh", 70.0, 90.0, step=5.0),
-        "momentum_req_pos_hist": trial.suggest_categorical("momentum_req_pos_hist", [True, False]),
-        "supertrend_mult":    trial.suggest_float("supertrend_mult", 2.0, 4.5, step=0.5),
-        "ichi_cloud_buffer":  trial.suggest_float("ichi_cloud_buffer", 0.996, 1.004, step=0.002),
-        "keltner_mult":       trial.suggest_float("keltner_mult", 1.5, 3.0, step=0.5),
-        "cci_extreme_exit":   trial.suggest_float("cci_extreme_exit", 150.0, 250.0, step=25.0),
-        "williams_r_exit":    trial.suggest_float("williams_r_exit", -25.0, -5.0, step=5.0),
-        "giant_candle_atr_mult": trial.suggest_float("giant_candle_atr_mult", 1.5, 3.5, step=0.5),
-        "rejection_wick_ratio":  trial.suggest_float("rejection_wick_ratio", 0.25, 0.55, step=0.05),
-        "vol_cap_rejection":  trial.suggest_float("vol_cap_rejection", 3.0, 6.0, step=0.5),
-        "vol_cap_normal":     trial.suggest_float("vol_cap_normal", 2.0, 3.5, step=0.5),
-        "body_min_atr_pct":   trial.suggest_float("body_min_atr_pct", 0.1, 0.5, step=0.1),
-        "require_green_candle": trial.suggest_categorical("require_green_candle", [True, False]),
-        "high_low_spread_cap":trial.suggest_float("high_low_spread_cap", 3.0, 6.0, step=0.5),
-        "sl_hard_cap_pct":    trial.suggest_float("sl_hard_cap_pct", 0.02, 0.06, step=0.01),
-        "tp_hard_cap_pct":    trial.suggest_float("tp_hard_cap_pct", 0.05, 0.15, step=0.02),
-        "spot_step_trigger1": trial.suggest_float("spot_step_trigger1", 0.015, 0.03, step=0.005),
-        "spot_step_lock1":    trial.suggest_float("spot_step_lock1", 0.005, 0.015, step=0.005),
-        "spot_step_trigger2": trial.suggest_float("spot_step_trigger2", 0.035, 0.055, step=0.01),
-        "spot_step_lock2":    trial.suggest_float("spot_step_lock2", 0.02, 0.035, step=0.005),
-        "spot_step_trigger3": trial.suggest_float("spot_step_trigger3", 0.06, 0.09, step=0.01),
-        "spot_step_lock3":    trial.suggest_float("spot_step_lock3", 0.045, 0.07, step=0.005),
-        "gear1_sniper_slope": trial.suggest_float("gear1_sniper_slope", 1.0, 2.5, step=0.5),
-        "gear1_sniper_max_rsi": trial.suggest_float("gear1_sniper_max_rsi", 80.0, 92.0, step=2.0),
-        "gear1_sniper_min_rsi": trial.suggest_float("gear1_sniper_min_rsi", 10.0, 22.0, step=3.0),
-        "gear2_moonshot_atr_mult": trial.suggest_float("gear2_moonshot_atr_mult", 1.5, 3.0, step=0.5),
-        "gear3_trailing_atr_mult": trial.suggest_float("gear3_trailing_atr_mult", 1.0, 2.0, step=0.2),
-        "mom_tp_roe_thresh":  trial.suggest_float("mom_tp_roe_thresh", 0.025, 0.05, step=0.005),
-        "mom_tp_rsi_thresh":  trial.suggest_float("mom_tp_rsi_thresh", 72.0, 84.0, step=2.0),
-        "mom_tp_drop_pct":    trial.suggest_float("mom_tp_drop_pct", 0.0015, 0.0045, step=0.001),
-        "kelly_fraction_cap": trial.suggest_float("kelly_fraction_cap", 0.15, 0.40, step=0.05),
-        "max_pos_alloc_pct":  trial.suggest_float("max_pos_alloc_pct", 0.10, 0.25, step=0.05),
-        "min_trade_notional": trial.suggest_float("min_trade_notional", 5.0, 15.0, step=2.5),
-        "cooldown_bars_after_sl": trial.suggest_int("cooldown_bars_after_sl", 0, 6, step=2),
-        "pyramid_scaling_mult": trial.suggest_float("pyramid_scaling_mult", 0.5, 1.0, step=0.1),
-        "trend_strength_min_adx": trial.suggest_float("trend_strength_min_adx", 20.0, 35.0, step=2.5),
-        "sideways_max_adx":   trial.suggest_float("sideways_max_adx", 15.0, 25.0, step=2.5),
-        "macro_regime_filter":trial.suggest_categorical("macro_regime_filter", [0, 1, 2])
-    }
-    
-    # Inject fixed canonical lookback windows for Live Strategy compatibility
-    # These match the pre-calculated constants in `lab_gpu/data_loader.py`
+def _schema_default(name: str) -> Any:
+    spec = GENOME_SEARCH_SPACE[name]
+    return spec[1][0] if spec[0] == "categorical" else (int(spec[1]) if spec[0] == "int" else float(spec[1]))
+
+
+def _coerce_gene_value(name: str, value: Any) -> Any:
+    """Normalize one genome value to the same type/range used by Optuna."""
+    spec = GENOME_SEARCH_SPACE[name]
+    kind = spec[0]
+    if kind == "categorical":
+        choices = spec[1]
+        if value in choices:
+            return value
+        if name == "strategy_type":
+            return canonical_strategy_type(value)
+        if name == "macro_regime_filter":
+            return canonical_macro_regime(value)
+        raise ValueError(f"Unknown categorical gene {name}: {value!r}")
+
+    low, high, step = spec[1], spec[2], float(spec[3])
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = float(low)
+    if not np.isfinite(numeric):
+        numeric = float(low)
+    numeric = min(float(high), max(float(low), numeric))
+    numeric = float(low) + round((numeric - float(low)) / step) * step
+    numeric = min(float(high), max(float(low), numeric))
+    return int(round(numeric)) if kind == "int" else round(numeric, 10)
+
+
+def _mutate_genome(
+    parent: Dict[str, Any],
+    target_strategy: str,
+    rng: Any = random,
+    exploration: bool = False,
+    defaults: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Create a bounded mutant without mutating the parent or fixed genes."""
+    base = dict(defaults or {})
+    base.update(parent or {})
+    mutant = dict(base)
+
+    for name in GENOME_PARAM_ORDER:
+        mutant[name] = _coerce_gene_value(name, mutant.get(name, _schema_default(name)))
+
+    float_rate = 0.30 if exploration else 0.10
+    bool_rate = 0.20 if exploration else 0.05
+    for name in GENOME_PARAM_ORDER:
+        kind = GENOME_SEARCH_SPACE[name][0]
+        if name in {"strategy_type", "macro_regime_filter"}:
+            continue
+        if kind in {"float", "int"} and rng.random() < float_rate:
+            current = float(mutant[name])
+            scale = rng.uniform(0.5, 1.5) if exploration else rng.uniform(0.9, 1.1)
+            mutant[name] = _coerce_gene_value(name, current * scale)
+        elif kind == "categorical" and rng.random() < bool_rate:
+            choices = GENOME_SEARCH_SPACE[name][1]
+            mutant[name] = not bool(mutant[name]) if set(choices) == {True, False} else choices[0]
+
+    mutant["strategy_type"] = _coerce_gene_value("strategy_type", target_strategy)
+    return mutant
+
+
+def _is_usable_parent(result: Dict[str, Any]) -> bool:
+    """Only complete, positive candidates may seed evolutionary mutations."""
+    return (
+        isinstance(result, dict)
+        and isinstance(result.get("parameters"), dict)
+        and _is_qualified_result(result)
+    )
+
+
+def _build_genome_from_trial(trial: Any) -> dict:
+    """Build a genome from the same schema used by mutation and packing."""
+    genome = {}
+    for name in GENOME_PARAM_ORDER:
+        spec = GENOME_SEARCH_SPACE[name]
+        kind = spec[0]
+        if kind == "categorical":
+            genome[name] = trial.suggest_categorical(name, list(spec[1]))
+        elif kind == "int":
+            genome[name] = trial.suggest_int(name, int(spec[1]), int(spec[2]), step=int(spec[3]))
+        else:
+            genome[name] = trial.suggest_float(name, float(spec[1]), float(spec[2]), step=float(spec[3]))
+
+    # Inject fixed canonical lookback windows for Live Strategy compatibility.
     genome.update({
         "macro_sma_fast_win": 50,
         "macro_sma_slow_win": 200,
@@ -112,8 +141,8 @@ def _build_genome_from_trial(trial: optuna.Trial) -> dict:
         "cci_win": 20,
         "williams_win": 14,
     })
-    
     return genome
+
 
 def run_gpu_synthesizer_lab(n_trials: int = 30):
     """Main entry: Runs the GPU-accelerated Evolutionary Strategy Lab."""
@@ -186,30 +215,38 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     leaderboard_map: Dict[str, Any] = {}
     lb_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
     historical_champions = []
+    historical_candidates = []
     if os.path.exists(lb_path):
         try:
             with open(lb_path, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             historical_champions = saved.get("strategies", [])
-            valid_champs = [champ["parameters"] for champ in historical_champions if "parameters" in champ and isinstance(champ["parameters"], dict)]
+            historical_candidates = [champ for champ in historical_champions if _is_usable_parent(champ)]
+            valid_champs = [champ["parameters"] for champ in historical_candidates]
             if valid_champs:
-                logger.info(f"⚡ Re-evaluating {len(valid_champs)} historical champions against active Phase 31 profit hurdles...")
+                logger.info(f"⚡ Re-evaluating {len(valid_champs)} qualified historical champions against active Phase 31 profit hurdles...")
                 reeval_results = _mega_batch_gpu_backtest(valid_champs)
                 for idx, res in enumerate(reeval_results):
-                    if res.get("fitness_score", -9999) > 0.0:
-                        champ_copy = historical_champions[idx].copy()
-                        champ_copy["fitness_score"] = res["fitness_score"]
-                        champ_copy.update({k: res[k] for k in ["net_profit_1y", "net_profit_6m", "net_profit_3m", "net_profit_1m", "win_rate_1y", "max_dd_1y", "total_trades_1y"] if k in res})
+                    if res.get("full_evaluated", False):
+                        champ_copy = historical_candidates[idx].copy()
+                        champ_copy.update(res)
                         leaderboard_map[f"hist_{idx}"] = champ_copy
                 logger.info(f"🧠 {len(leaderboard_map)}/{len(valid_champs)} historical Alpha champions survived Phase 31 rules!")
+            else:
+                logger.info("🧠 No qualified historical candidates available; starting from the active search schema.")
         except Exception as e:
             logger.warning(f"Could not load historical leaderboard: {e}")
 
-    best_so_far_score = max([v.get("fitness_score", -9999.0) for v in leaderboard_map.values()] or [-99999.0])
+    best_so_far_score = max(
+        [v.get("fitness_score", -1e9) for v in leaderboard_map.values() if v.get("full_evaluated", False)]
+        or [-1e9]
+    )
     best_so_far_name  = "Historical Champion"
+    best_screen_score = -1e9
+    best_screen_name = "No complete evaluation yet"
 
     enqueued = 0
-    for champ in historical_champions:
+    for champ in historical_candidates:
         params = champ.get("parameters")
         if params and isinstance(params, dict) and len(params) >= 70:
             try:
@@ -232,6 +269,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     completed = 0
     batch_idx = 0
     validated_winners = 0
+    screened_count = 0
+    full_evaluated_count = 0
     try:
         while True:
             if n_trials and completed >= n_trials:
@@ -254,16 +293,13 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                     if n_mutants > 0:
                         elites_by_strat = {}
                         for res in leaderboard_map.values():
-                            if isinstance(res, dict) and "parameters" in res:
+                            if _is_usable_parent(res):
                                 p = res["parameters"]
                                 st = p.get("strategy_type", "rsi_sniper")
                                 elites_by_strat.setdefault(st, []).append(p)
                         
                         fallback_parent = genomes[0]
-                        float_keys = [k for k, v in genomes[0].items() if isinstance(v, float)]
-                        int_keys   = [k for k, v in genomes[0].items() if isinstance(v, int) and not isinstance(v, bool)]
-                        bool_keys  = [k for k, v in genomes[0].items() if isinstance(v, bool)]
-                        STRATEGY_TYPES = ["rsi_sniper", "ema_cross", "supertrend_momentum", "ichi_cloud", "keltner_bounce", "stoch_mfi_diverge", "williams_mean_rev", "donchian_breakout", "macd_momentum", "bb_squeeze", "adx_trend_rider", "fibo_pullback"]
+                        STRATEGY_TYPES = list(_STRAT_MAP_MB.keys())
 
                         for m_idx in range(n_mutants):
                             is_exploration = random.random() < 0.25
@@ -271,28 +307,15 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                             
                             if is_exploration or target_strat not in elites_by_strat:
                                 parent = fallback_parent
-                                mutant = parent.copy()
-                                mutant["strategy_type"] = target_strat
                             else:
                                 parent = random.choice(elites_by_strat[target_strat])
-                                mutant = parent.copy()
-
-                            for k in float_keys:
-                                if random.random() < (0.30 if is_exploration else 0.10):
-                                    scale = random.uniform(0.5, 1.5) if is_exploration else random.uniform(0.9, 1.1)
-                                    val = parent[k] * scale
-                                    if k == "kelly_fraction_cap": val = max(0.20, min(0.40, val))
-                                    elif "thresh" in k or "rsi" in k or "stoch" in k or "mfi" in k:
-                                        if "williams" in k or "cci" in k: val = max(-300.0, min(300.0, val))
-                                        else: val = max(5.0, min(95.0, val))
-                                    mutant[k] = round(val, 5)
-                            for k in int_keys:
-                                if random.random() < (0.30 if is_exploration else 0.10):
-                                    scale = random.uniform(0.5, 1.5) if is_exploration else random.uniform(0.9, 1.1)
-                                    mutant[k] = max(1, int(parent[k] * scale))
-                            for k in bool_keys:
-                                if random.random() < (0.20 if is_exploration else 0.05):
-                                    mutant[k] = not parent[k]
+                            mutant = _mutate_genome(
+                                parent,
+                                target_strategy=target_strat,
+                                rng=random,
+                                exploration=is_exploration,
+                                defaults=fallback_parent,
+                            )
                             genomes.append(mutant)
 
                 paired_tpe = [(t, g) for t, g in zip(optuna_trials, genomes[:n_tpe])]
@@ -301,56 +324,87 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 all_paired.sort(key=lambda pair: str(pair[1].get("strategy_type", "")))
                 
                 sorted_genomes = [pair[1] for pair in all_paired]
-                batch_results = _mega_batch_gpu_backtest(sorted_genomes)
+                force_full_indices = [
+                    idx for idx, pair in enumerate(all_paired) if pair[0] is not None
+                ]
+                batch_results = _mega_batch_gpu_backtest(
+                    sorted_genomes,
+                    force_full_indices=force_full_indices,
+                )
 
                 with lock:
                     m_idx = 0
                     for (trial, genome), res in zip(all_paired, batch_results):
                         st_name = str(genome.get("strategy_type", "rsi")).upper()
-                        res["parameters"] = genome
+                        res = {**res, "parameters": genome}
                         
                         if trial is not None:
                             res["name"] = f"[{st_name}] Evolved Alpha TPE #{trial.number}"
                             leaderboard_map[f"trial_{trial.number}"] = res
-                            study.tell(trial, res["fitness_score"])
+                            study.tell(trial, float(res.get("search_score", res.get("fitness_score", -1e9))))
                         else:
                             mut_id = completed + n_tpe + m_idx + 1
                             m_idx += 1
                             res["name"] = f"[{st_name}] Evolved Alpha Mutant #{mut_id}"
                             leaderboard_map[f"mutant_{mut_id}"] = res
                             
-                        if res["fitness_score"] > best_so_far_score:
+                        screen_value = res.get("screening_score")
+                        screen_score = float(screen_value) if screen_value is not None else float(res.get("search_score", -1e9))
+                        if screen_score > best_screen_score:
+                            best_screen_score = screen_score
+                            best_screen_name = res["name"]
+
+                        if res.get("full_evaluated", False) and res.get("fitness_score", -1e9) > best_so_far_score:
                             best_so_far_score = res["fitness_score"]
                             best_so_far_name  = res["name"]
-                            
-                        # KPI for Phase 4: Validated Winners / Hour
-                        if res["fitness_score"] > 0.0:
+                        if res.get("full_evaluated", False):
+                            full_evaluated_count += 1
+
+                        # KPI: only complete, finite candidates with positive fitness qualify.
+                        if _is_qualified_result(res):
                             validated_winners += 1
 
                     if len(leaderboard_map) > 50:
-                        top_keys = sorted(leaderboard_map.keys(), key=lambda k: leaderboard_map[k].get("fitness_score", 0.0), reverse=True)[:50]
+                        top_keys = sorted(
+                            leaderboard_map.keys(),
+                            key=lambda k: (
+                                int(leaderboard_map[k].get("full_evaluated", False)),
+                                int(leaderboard_map[k].get("qualified", False)),
+                                leaderboard_map[k].get("fitness_score", -1e9),
+                            ),
+                            reverse=True,
+                        )[:50]
                         leaderboard_map = {k: leaderboard_map[k] for k in top_keys}
 
                 completed += batch_size
                 batch_idx += 1
+                screened_count += batch_size
                 elapsed = int(time.time() - start_time)
                 elapsed_hrs = elapsed / 3600.0 if elapsed > 0 else 0.0001
                 rate = validated_winners / elapsed_hrs
                 
                 logger.info(
                     f"[Batch {batch_idx}] {completed} genomes | "
-                    f"Winners: {validated_winners} ({rate:.1f} win/hr) | "
-                    f"Best: {best_so_far_score:.2f} | "
+                    f"Screened: {screened_count} | Full: {full_evaluated_count} | "
+                    f"Qualified: {validated_winners} ({rate:.1f}/hr) | "
+                    f"Best full: {best_so_far_score:.2f} | Best screen: {best_screen_score:.2f} | "
                     f"Elapsed: {elapsed//60}m{elapsed%60}s"
                 )
                 if not BENCHMARK_MODE:
                     save_lab_progress_gpu(
                         "running", completed, n_trials or 0,
-                        best_so_far_score, best_so_far_name, elapsed,
-                        total_db_trials=completed
+                        best_so_far_score if full_evaluated_count else best_screen_score,
+                        best_so_far_name if full_evaluated_count else best_screen_name,
+                        elapsed,
+                        total_db_trials=completed,
+                        best_full_score=best_so_far_score,
+                        best_screen_score=best_screen_score,
+                        screened_count=screened_count,
+                        full_evaluated_count=full_evaluated_count,
+                        qualified_count=validated_winners,
                     )
 
-                if batch_idx % 5 == 0 or best_so_far_score > (batch_idx - 1) * 0:
+                if batch_idx % 5 == 0:
                     try:
                         with lock:
                             top_10 = get_deduplicated_top10_gpu(leaderboard_map)
@@ -361,7 +415,8 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
             else:
                 def objective(trial):
-                    nonlocal best_so_far_score, best_so_far_name
+                    nonlocal best_so_far_score, best_so_far_name, best_screen_score, best_screen_name
+                    nonlocal validated_winners, screened_count, full_evaluated_count
                     cur_step = max(1, (trial.number - session_start_id) + 1)
                     genome = _build_genome_from_trial(trial)
 
@@ -369,21 +424,41 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
                     full_res = evaluate_genome_gpu(symbol_arrays, genome)
                     st_name = str(genome.get("strategy_type", "rsi")).upper()
-                    full_res["name"] = f"[{st_name}] Evolved Alpha TPE #{trial.number}"
-                    full_res["parameters"] = genome
+                    full_res = {
+                        **full_res,
+                        "name": f"[{st_name}] Evolved Alpha TPE #{trial.number}",
+                        "parameters": genome,
+                    }
 
                     with lock:
                         leaderboard_map[f"trial_{trial.number}"] = full_res
-                        is_new_best = full_res["fitness_score"] > best_so_far_score
+                        screen_value = full_res.get("screening_score")
+                        screen_score = float(screen_value) if screen_value is not None else float(full_res.get("search_score", -1e9))
+                        best_screen_is_new = screen_score > best_screen_score
+                        if best_screen_is_new:
+                            best_screen_score = screen_score
+                            best_screen_name = full_res["name"]
+                        full_evaluated_count += int(full_res.get("full_evaluated", False))
+                        screened_count += 1
+                        is_new_best = full_res.get("full_evaluated", False) and full_res["fitness_score"] > best_so_far_score
                         if is_new_best:
                             best_so_far_score = full_res["fitness_score"]
                             best_so_far_name  = full_res["name"]
+                        if _is_qualified_result(full_res):
+                            validated_winners += 1
 
                     elapsed = int(time.time() - start_time)
                     if not BENCHMARK_MODE:
                         save_lab_progress_gpu("running", cur_step, n_trials or 0,
-                                              best_so_far_score, best_so_far_name, elapsed,
-                                              total_db_trials=trial.number + 1)
+                                              best_so_far_score if full_evaluated_count else best_screen_score,
+                                              best_so_far_name if full_evaluated_count else best_screen_name,
+                                              elapsed,
+                                              total_db_trials=trial.number + 1,
+                                              best_full_score=best_so_far_score,
+                                              best_screen_score=best_screen_score,
+                                              screened_count=screened_count,
+                                              full_evaluated_count=full_evaluated_count,
+                                              qualified_count=validated_winners)
                     if trial.number % 10 == 0 or is_new_best:
                         try:
                             with lock:
@@ -414,15 +489,18 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         push_leaderboard_to_db_and_json_gpu(top_10, force=True)
     elapsed = int(time.time() - start_time)
     best_item = top_10[0] if top_10 else {}
-    try:
-        best_val = study.best_value
-    except Exception:
-        best_val = best_item.get("fitness_score", 0.0)
+    best_val = best_so_far_score if full_evaluated_count else best_screen_score
+    best_display_name = best_so_far_name if full_evaluated_count else best_screen_name
     final_status = "stopped" if not n_trials else "completed"
     if not BENCHMARK_MODE:
         save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
-                               best_val, best_item.get("name", "N/A"), elapsed)
+                               best_val, best_display_name, elapsed,
+                               best_full_score=best_so_far_score,
+                               best_screen_score=best_screen_score,
+                               screened_count=screened_count,
+                               full_evaluated_count=full_evaluated_count,
+                               qualified_count=validated_winners)
         flush_sync_worker()
     logger.info(f"GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
-    logger.info(f"Best: {best_item.get('name', 'N/A')} | Score: {best_val:.2f}")
+    logger.info(f"Best full: {best_display_name} | Score: {best_val:.2f}")
     return top_10

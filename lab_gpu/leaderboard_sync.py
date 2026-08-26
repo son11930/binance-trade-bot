@@ -13,6 +13,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import logger, DASHBOARD_DATA_DIR, DATABASE_URL_FUTURES, DATABASE_URL_SPOT
 from .gpu_kernel import GPU_AVAILABLE
+from candidate_evidence import attach_candidate_identity
+from bot.strategy_contract import strategy_id
 
 Base = declarative_base()
 
@@ -149,7 +151,7 @@ def _sync_worker_loop():
                                     max_drawdown=float(item["max_dd"]),
                                     total_trades_1y=int(item["total_trades_1y"]),
                                     moonshots_1y=int(item["moonshots_1y"]),
-                                    parameters_json=json.dumps(item["parameters"])
+                                     parameters_json=json.dumps(item)
                                 ))
                             sess.commit()
                         last_leaderboard_db_write = now_ts
@@ -170,7 +172,12 @@ _worker_thread.start()
 
 def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
                            best_score: float, best_name: str, elapsed_sec: int,
-                           total_db_trials: int = 0):
+                           total_db_trials: int = 0,
+                           best_full_score: float | None = None,
+                           best_screen_score: float | None = None,
+                           screened_count: int = 0,
+                           full_evaluated_count: int = 0,
+                           qualified_count: int = 0):
     """Puts progress data into the background async queue."""
     pct = round(min(100.0, (current_trial / total_trials) * 100.0), 1) if total_trials and total_trials > 0 else 100.0
     data = {
@@ -181,6 +188,11 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
         "progress_pct":  pct,
         "best_score":    round(float(best_score), 2),
         "best_strategy_name": str(best_name),
+        "best_full_score": round(float(best_full_score), 2) if best_full_score is not None else None,
+        "best_screen_score": round(float(best_screen_score), 2) if best_screen_score is not None else None,
+        "screened_count": int(screened_count),
+        "full_evaluated_count": int(full_evaluated_count),
+        "qualified_count": int(qualified_count),
         "elapsed_seconds": int(elapsed_sec),
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "engine": "GPU" if GPU_AVAILABLE else "CPU-MultiCore",
@@ -270,7 +282,7 @@ def flush_sync_worker():
                         max_drawdown=float(item["max_dd"]),
                         total_trades_1y=int(item["total_trades_1y"]),
                         moonshots_1y=int(item["moonshots_1y"]),
-                        parameters_json=json.dumps(item["parameters"])
+                         parameters_json=json.dumps(item)
                     ))
                 sess.commit()
         except Exception as e:
@@ -280,37 +292,44 @@ def flush_sync_worker():
 def get_deduplicated_top10_gpu(lb_map: dict) -> list:
     from .config import REVERSE_STRAT_MAP
     
-    all_items = sorted(lb_map.values(), key=lambda x: x.get("fitness_score", -9999), reverse=True)
+    # Screening-only placeholders are progress telemetry, not leaderboard or
+    # promotion artifacts. Keep only candidates with complete metrics here.
+    all_items = sorted(
+        [item for item in lb_map.values() if item.get("full_evaluated", False)],
+        key=lambda x: (bool(x.get("qualified", False)), float(x.get("fitness_score", -1e9))),
+        reverse=True,
+    )
     unique, seen = [], set()
     strat_counts = {}  # Niche preservation: max 2 phenotypes per strategy
     
-    for item in all_items:
+    for source_item in all_items:
+        item = dict(source_item)
         params = item.get("parameters", {})
         key = tuple(sorted([(k, round(v, 4) if isinstance(v, float) else v) for k, v in params.items()]))
         
         strat_val = params.get("strategy_type", 0)
-        if isinstance(strat_val, str):
-            from .config import _STRAT_MAP_MB
-            strat_id = _STRAT_MAP_MB.get(strat_val, 0)
-        else:
-            strat_id = int(strat_val)
-        
-        if key not in seen and strat_counts.get(strat_id, 0) < 2:
+        try:
+            strat_key = strategy_id(strat_val)
+        except (TypeError, ValueError):
+            # Malformed historical candidates must never silently become RSI
+            # strategy 0 or reach the deployment UI.
+            continue
+
+        if key not in seen and strat_counts.get(strat_key, 0) < 2:
             seen.add(key)
-            unique.append(item)
-            strat_counts[strat_id] = strat_counts.get(strat_id, 0) + 1
+            unique.append(attach_candidate_identity(item))
+            strat_counts[strat_key] = strat_counts.get(strat_key, 0) + 1
             if len(unique) >= 10:
                 break
                 
     for idx, item in enumerate(unique, 1):
         item["rank"] = idx
         strat_val = item.get("parameters", {}).get("strategy_type", 0)
-        if isinstance(strat_val, str):
-            from .config import _STRAT_MAP_MB
-            strat_id = _STRAT_MAP_MB.get(strat_val, 0)
-        else:
-            strat_id = int(strat_val)
-        strat_name = REVERSE_STRAT_MAP.get(strat_id, f"Strat-{strat_id}")
+        try:
+            strat_numeric_id = strategy_id(strat_val)
+        except (TypeError, ValueError):
+            strat_numeric_id = -1
+        strat_name = REVERSE_STRAT_MAP.get(strat_numeric_id, f"Strat-{strat_numeric_id}")
         
         item["name"] = f"🏆 #{idx} [{strat_name}] ALPHA GENOME" if idx == 1 else f"#{idx} [{strat_name}] BLUEPRINT"
         
@@ -322,4 +341,3 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
         if "avg_profit_per_trade_dollar" not in item:
             item["avg_profit_per_trade_dollar"] = round(np_1y_dollar / t, 2) if t > 0 else 0.0
     return unique
-

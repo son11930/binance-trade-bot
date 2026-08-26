@@ -1,168 +1,176 @@
-// bot_control.js — Bot Pause/Resume Controls, Market Navigation, and Startup
+// bot_control.js — Bot controls, page navigation, and application startup
+
+function getAuthHeader() {
+    const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+function asBoolean(value) {
+    return value === true || value === 'true' || value === 'True' || value === 1;
+}
 
 async function fetchBotControl() {
     try {
-        const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
-        const response = await fetch('/api/bot_control', {
-            headers: {'Authorization': token ? `Bearer ${token}` : ''}
-        });
+        const response = await fetch('/api/bot_control', { headers: getAuthHeader() });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         updatePauseUI(data);
-    } catch (e) {
-        console.error("Error fetching bot control:", e);
+    } catch (error) {
+        console.error('Error fetching bot control:', error);
     }
 }
 
-function updatePauseUI(data) {
-    isSpotPaused = data.spot_paused;
-    isFuturesPaused = data.futures_paused;
-    
+function updatePauseUI(data = {}) {
+    if (Object.prototype.hasOwnProperty.call(data, 'spot_paused')) {
+        isSpotPaused = asBoolean(data.spot_paused);
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'futures_paused')) {
+        isFuturesPaused = asBoolean(data.futures_paused);
+    }
+
+    const liveToggle = document.getElementById('toggle-allow-live');
+    if (liveToggle && Object.prototype.hasOwnProperty.call(data, 'allow_live')) {
+        liveToggle.checked = asBoolean(data.allow_live);
+    }
+
+    const market = getTradingMarket();
     const btn = document.getElementById('toggle-pause-btn');
     const textSpan = document.getElementById('pause-text');
-    if (!btn || !textSpan) return;
-    
-    const isPaused = currentMarket === 'spot' ? isSpotPaused : isFuturesPaused;
-    
-    const liveToggle = document.getElementById('toggle-allow-live');
-    if (liveToggle && data.hasOwnProperty('allow_live')) {
-        liveToggle.checked = data.allow_live;
-    }
-    
+    if (!market || !btn || !textSpan) return;
+
+    const isPaused = market === 'spot' ? isSpotPaused : isFuturesPaused;
     if (isPaused) {
-        btn.className = "px-4 py-1.5 rounded-full bg-neonRed/20 text-neonRed text-sm font-bold border border-neonRed/50 uppercase tracking-widest hover:bg-neonRed/30 transition-colors animate-pulse";
-        textSpan.innerText = "RESUME " + currentMarket.toUpperCase();
+        btn.className = 'px-4 py-1.5 rounded-full bg-neonRed/20 text-neonRed text-sm font-bold border border-neonRed/50 uppercase tracking-widest hover:bg-neonRed/30 transition-colors animate-pulse';
+        textSpan.innerText = `RESUME ${market.toUpperCase()}`;
     } else {
-        btn.className = "px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors";
-        textSpan.innerText = "PAUSE " + currentMarket.toUpperCase();
+        btn.className = 'px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors';
+        textSpan.innerText = `PAUSE ${market.toUpperCase()}`;
     }
 }
 
 async function togglePause() {
-    const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
-    const targetMarket = currentMarket;
+    const targetMarket = getTradingMarket();
+    if (!targetMarket) return;
+
     const newStatus = targetMarket === 'spot' ? !isSpotPaused : !isFuturesPaused;
     try {
-        await fetch('/api/toggle_pause', {
+        const response = await fetch('/api/toggle_pause', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
-            body: JSON.stringify({market: targetMarket, paused: newStatus})
+            headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+            body: JSON.stringify({ market: targetMarket, paused: newStatus })
         });
-    } catch (e) {
-        console.error(e);
+        if (!response.ok) await fetchBotControl();
+    } catch (error) {
+        console.error('Error toggling bot pause state:', error);
+        await fetchBotControl();
     }
 }
 
 async function toggleExecutionMode(key, value) {
-    const token = localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
-    const payload = {};
-    payload[key] = value;
+    if (key !== 'allow_live') return;
+
     try {
         const response = await fetch('/api/toggle_execution_mode', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
-            body: JSON.stringify(payload)
+            headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+            body: JSON.stringify({ [key]: Boolean(value) })
         });
         if (!response.ok) {
-            const err = await response.json();
-            alert(`Error: ${err.detail}`);
-            // Revert UI on failure
-            fetchBotControl();
+            let detail = 'Unable to change live execution guard.';
+            try {
+                const errorData = await response.json();
+                if (typeof errorData.detail === 'string') detail = errorData.detail;
+            } catch (error) {
+                // Keep the generic message when the server does not return JSON.
+            }
+            if (typeof showToast === 'function') showToast(detail, 'error');
+            else window.alert(detail);
+            await fetchBotControl();
         }
-    } catch (e) {
-        console.error(e);
-        fetchBotControl();
+    } catch (error) {
+        console.error('Error changing execution mode:', error);
+        await fetchBotControl();
     }
 }
 
 function setMarket(market) {
-    currentMarket = market;
+    const routes = { spot: 'spot.html', futures: 'futures.html', lab: 'lab.html' };
+    const route = routes[market];
+    if (!route) return;
+
     localStorage.setItem('selectedMarket', market);
-    
-    const spotTab = document.getElementById('tab-spot');
-    const futuresTab = document.getElementById('tab-futures');
-    const labTab = document.getElementById('tab-lab');
-    const monitorView = document.getElementById('trading-monitor-view');
-    const labView = document.getElementById('ai-lab-view');
-    
-    const activeClass = "tab-active px-6 py-2 rounded-lg text-sm font-bold uppercase tracking-widest transition-all";
-    const inactiveClass = "px-6 py-2 rounded-lg text-slate-400 text-sm font-bold uppercase tracking-widest transition-all hover:text-white border border-transparent";
-    
-    if (spotTab) spotTab.className = (market === 'spot') ? activeClass : inactiveClass;
-    if (futuresTab) futuresTab.className = (market === 'futures') ? activeClass : inactiveClass;
-    if (labTab) labTab.className = (market === 'lab') ? activeClass : inactiveClass;
-    
-    if (window.labProgressInterval) {
-        clearInterval(window.labProgressInterval);
-        window.labProgressInterval = null;
+    if (!window.location.pathname.endsWith(`/${route}`) && !window.location.pathname.endsWith(route)) {
+        window.location.assign(route);
     }
-    if (market === 'lab') {
-        if (monitorView) monitorView.classList.add('hidden');
-        if (labView) labView.classList.remove('hidden');
-        if (typeof fetchLeaderboard === 'function') fetchLeaderboard();
+}
+
+function initializeLabPage() {
+    if (window.labProgressInterval) clearInterval(window.labProgressInterval);
+    if (typeof fetchLeaderboard === 'function') fetchLeaderboard();
+    if (typeof fetchLabProgress === 'function') fetchLabProgress();
+
+    window.labProgressInterval = window.setInterval(() => {
         if (typeof fetchLabProgress === 'function') fetchLabProgress();
-        window.labProgressInterval = setInterval(() => {
-            if (typeof fetchLabProgress === 'function') fetchLabProgress();
-            if (document.visibilityState === 'visible' && typeof fetchLeaderboard === 'function') fetchLeaderboard();
-        }, 5000);
-        return;
-    } else {
-        if (monitorView) monitorView.classList.remove('hidden');
-        if (labView) labView.classList.add('hidden');
+        if (document.visibilityState === 'visible' && typeof fetchLeaderboard === 'function') fetchLeaderboard();
+    }, 5000);
+}
+
+function initializeMarketPage() {
+    const market = getTradingMarket();
+    if (!market) return;
+
+    localStorage.setItem('selectedMarket', market);
+    updatePauseUI({ spot_paused: isSpotPaused, futures_paused: isFuturesPaused });
+    setViewMode(viewMode);
+
+    const marketData = dataStore[market];
+    if (!marketData) return;
+    if (marketData.status && typeof updateStatusUI === 'function') {
+        updateStatusUI(marketData.status, marketData.globalConfig);
     }
-    
-    const posHeader = document.getElementById('positions-header');
-    const trdHeader = document.getElementById('trades-header');
-    const logHeader = document.getElementById('logs-header');
-    const balHeader = document.getElementById('live-balance-header');
-    
-    if (posHeader) posHeader.innerText = `Live Positions (${market === 'spot' ? 'Spot' : 'Futures'})`;
-    if (trdHeader) trdHeader.innerText = `Execution Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
-    if (logHeader) logHeader.innerText = `System Debug Log (${market === 'spot' ? 'Spot' : 'Futures'})`;
-    if (balHeader) balHeader.innerText = `Live Balance (${market === 'spot' ? 'Spot' : 'Futures'})`;
-    
-    updatePauseUI({spot_paused: isSpotPaused, futures_paused: isFuturesPaused});
-    
-    const futBadge = document.getElementById('futures-badge');
-    const posThead = document.getElementById('positions-thead');
-    
-    if (market === 'futures') {
-        if (futBadge) futBadge.classList.remove('hidden');
-        if (posThead) posThead.innerHTML = `
-            <tr class="bg-slate-900/40">
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Size (Side)</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Entry / Mark</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Risk (Liq/SL/TP)</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Funding / Hold</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Margin</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
-            </tr>
-        `;
-    } else {
-        if (futBadge) futBadge.classList.add('hidden');
-        if (posThead) posThead.innerHTML = `
-            <tr class="bg-slate-900/40">
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Asset</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Quantity</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Avg Buy Price</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Current Price</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL ($)</th>
-                <th class="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">PNL (%)</th>
-            </tr>
-        `;
+    if (marketData.trades && typeof updateTradesUI === 'function') {
+        updateTradesUI(marketData.trades);
     }
-    
-    if (dataStore[market] && dataStore[market].status && typeof updateStatusUI === 'function') updateStatusUI(dataStore[market].status, dataStore[market].globalConfig);
-    if (dataStore[market] && dataStore[market].trades && typeof updateTradesUI === 'function') updateTradesUI(dataStore[market].trades);
-    if (dataStore[market] && dataStore[market].logs && typeof renderLogsUI === 'function') renderLogsUI(dataStore[market].logs);
-    if (dataStore[market] && dataStore[market].stats && typeof renderStatsUI === 'function') renderStatsUI(dataStore[market].stats);
+    if (marketData.logs && typeof renderLogsUI === 'function') {
+        renderLogsUI(marketData.logs);
+    }
+    if (marketData.stats && typeof renderStatsUI === 'function') {
+        renderStatsUI(marketData.stats);
+    }
+}
+
+function bindDashboardActions() {
+    const pauseButton = document.getElementById('toggle-pause-btn');
+    if (pauseButton && !pauseButton.dataset.bound) {
+        pauseButton.addEventListener('click', togglePause);
+        pauseButton.dataset.bound = 'true';
+    }
+
+    const liveToggle = document.getElementById('toggle-allow-live');
+    if (liveToggle && !liveToggle.dataset.bound) {
+        liveToggle.addEventListener('change', (event) => {
+            toggleExecutionMode('allow_live', event.target.checked);
+        });
+        liveToggle.dataset.bound = 'true';
+    }
+
+    const paperButton = document.getElementById('view-paper-btn');
+    if (paperButton && !paperButton.dataset.bound) {
+        paperButton.addEventListener('click', () => setViewMode('PAPER'));
+        paperButton.dataset.bound = 'true';
+    }
+
+    const liveButton = document.getElementById('view-live-btn');
+    if (liveButton && !liveButton.dataset.bound) {
+        liveButton.addEventListener('click', () => setViewMode('LIVE'));
+        liveButton.dataset.bound = 'true';
+    }
+
+    document.querySelectorAll('[data-action="logout"]').forEach((logoutButton) => {
+        if (logoutButton.dataset.bound) return;
+        logoutButton.addEventListener('click', logout);
+        logoutButton.dataset.bound = 'true';
+    });
 }
 
 function startApp() {
@@ -170,8 +178,15 @@ function startApp() {
     const appCont = document.getElementById('app-container');
     if (loginModal) loginModal.classList.add('hidden');
     if (appCont) appCont.classList.remove('hidden');
-    
-    fetchBotControl();
-    setMarket(currentMarket);
+
+    bindDashboardActions();
+    if (currentMarket === 'lab') {
+        initializeLabPage();
+    } else {
+        fetchBotControl();
+        initializeMarketPage();
+    }
     if (typeof connectWebSocket === 'function') connectWebSocket();
 }
+
+document.addEventListener('DOMContentLoaded', bindDashboardActions);

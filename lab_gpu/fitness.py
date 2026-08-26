@@ -4,15 +4,24 @@ fitness.py — The 4-Pillar Practical Fitness Framework grading and vectorized b
 import numpy as np
 from typing import Dict, List, Any
 from .config import GENOME_PARAM_ORDER, N_GENOME_PARAMS, _STRAT_MAP_MB, _MACRO_MAP_MB
+from bot.strategy_contract import canonical_macro_regime, strategy_id
+
+# Qualification is deliberately stricter than search ranking.  A candidate
+# must have enough independent OOS observations to make promotion meaningful.
+MIN_TOTAL_TRADES = 100
+MIN_OOS_TRADES = 30
+MIN_OOS_PROFIT_FACTOR = 1.10
+MAX_OOS_DRAWDOWN = 15.0
 
 def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[str, Any]:
     """Applies the 4-Pillar Practical Fitness Framework to an evaluated results dictionary."""
+    res = dict(res)
     FEE_PER_TRADE_PCT = 0.10
     horizon_divisors = {"1y": 1.0, "6m": 2.0, "3m": 4.0, "1m": 12.0}
     
     total_trades_1y = res.get("total_trades_1y", 0)
     win_rate = res.get("win_rate_1y", 0.0)
-    max_dd = res.get("max_dd", 0.0)
+    max_dd = abs(float(res.get("max_dd", 0.0) or 0.0))
     
     # ── 0. Average Profit per Trade Metric ──
     net_p_1y = res.get("net_profit_1y", 0.0)
@@ -65,7 +74,7 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
 
 def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
     """
-    Convert a list of genome dicts into a [n_genomes, N_GENOME_PARAMS=29] float32 matrix.
+    Convert a list of genome dicts into a [n_genomes, N_GENOME_PARAMS=66] float32 matrix.
     Parameter order matches GENOME_PARAM_ORDER and the mega-kernel's indexing.
     """
     n = len(genome_batch)
@@ -77,11 +86,11 @@ def _pack_genomes_to_flat(genome_batch: List[Dict[str, Any]]) -> np.ndarray:
             elif p_name == "require_green_candle":
                 mat[gi, pi] = 1.0 if gn.get(p_name, False) else 0.0
             elif p_name == "strategy_type":
-                mat[gi, pi] = float(_STRAT_MAP_MB.get(gn.get("strategy_type", "rsi_sniper"), 0))
+                mat[gi, pi] = float(strategy_id(gn.get("strategy_type", "rsi_sniper")))
             elif p_name == "macro_regime_filter":
-                mat[gi, pi] = float(_MACRO_MAP_MB.get(gn.get("macro_regime_filter", "sma200_only"), 0))
+                mat[gi, pi] = float(_MACRO_MAP_MB[canonical_macro_regime(gn.get("macro_regime_filter", "sma200_only"))])
             elif p_name == "kelly_fraction_cap":
-                mat[gi, pi] = max(0.20, min(0.40, float(gn.get(p_name, 0.25))))
+                mat[gi, pi] = max(0.15, min(0.40, float(gn.get(p_name, 0.25))))
             else:
                 mat[gi, pi] = float(gn.get(p_name, 0.0))
     return mat
@@ -96,6 +105,7 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     Replaces the slow 4096x Python loop.
     raw shape is [n_g, n_h, 4]
     """
+    raw = np.nan_to_num(np.asarray(raw), nan=0.0, posinf=0.0, neginf=0.0)
     is_p_1m = raw[:, 0, 0]
     is_p_3m = raw[:, 1, 0]
     is_p_6m = raw[:, 2, 0]
@@ -129,6 +139,7 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     oos_gross_profit_1y = raw[:, 3, 12]
     is_gross_loss_1y = raw[:, 3, 5]
     oos_gross_loss_1y = raw[:, 3, 13]
+    oos_trades_1y = oos_trades_1y.astype(np.float32, copy=False)
     is_max_streak_1y = raw[:, 3, 6]
     oos_max_streak_1y = raw[:, 3, 14]
     
@@ -225,6 +236,10 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
             "win_rate_1y": round(float(win_rate_1y[gi]), 2),
             "max_dd": round(float(max_dd_1y[gi]), 2),
             "total_trades_1y": t,
+            "is_trades_1y": int(is_trades_1y[gi]),
+            "oos_trades_1y": int(oos_trades_1y[gi]),
+            "is_max_dd": round(float(is_max_dd_1y[gi]), 2),
+            "oos_max_dd": round(float(oos_max_dd_1y[gi]), 2),
             "moonshots_1y": int(moonshots_1y[gi]),
             "avg_trades_month": round(t / 12.0, 1),
             "avg_trades_day": round(t / 365.0, 1),

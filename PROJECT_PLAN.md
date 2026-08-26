@@ -408,3 +408,60 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
 - **Immediate Priority**: Luna ต้องเริ่ม Phase 0A เพื่อปิด direct LIVE activation, รวม execution mode ให้เป็น single source of truth และเพิ่ม cross-mode safety tests ก่อน Phase 0 performance baseline
 - **Scope Boundary**: planning/documentation only; ไม่มีการแก้ kernel, optimizer, live bot, configuration, process หรือ order ในรอบนี้
 - **Status**: **Plan refreshed for Luna; Phase 0A implementation not started**
+
+---
+
+### Phase 35: Scoring Gradient and Qualified Strategy Recovery
+
+- **Objective**: แก้กรณี GPU Strategy Lab ประเมิน genomes ต่อเนื่องแต่ `Best` ติดลบและ `Winners = 0` โดยทำให้ screening เป็นสัญญาณต่อเนื่อง, full evaluation ตรวจสอบได้ และ candidate ที่จะนำไป promotion มีหลักฐานจริง
+- **Scope**: `lab_gpu/evaluator.py`, `lab_gpu/evolution_engine.py`, `lab_gpu/fitness.py`, `lab_gpu/config.py`, kernel parity, leaderboard/promotion evidence และ regression tests ที่เกี่ยวข้อง; ไม่เปลี่ยน execution-mode/risk controls ที่ทำเสร็จแล้ว
+- **Required behavior**:
+  1. ผล screening ต้องไม่ถูกแสดงเป็น full 1Y result และต้องแยก `screened`, `full_evaluated`, `qualified` อย่างชัดเจน
+  2. Screening ต้องเก็บ top-K/continuous score เพื่อไม่ให้ optimizer เจอ zero-gradient เมื่อไม่มี candidate ผ่าน hard gate
+  3. Mutation ต้อง clamp ด้วย typed per-gene bounds เดียวกับ search schema และห้ามใช้ failed-screen placeholder เป็น elite parent โดยไม่มีสถานะรองรับ
+  4. Full evaluation ต้องทำกับ candidate ที่คัดเลือกตาม policy และต้องมี raw metrics/fitness ครบก่อนนับเป็น winner
+  5. Promotion evidence ต้องอ้างอิง candidate identity/version/hash ไม่ใช่คะแนน placeholder หรือ rank ที่เปลี่ยนได้
+  6. Historical rows ที่ไม่ qualified ต้องไม่ถูก enqueue หรือใช้เป็น parent ของ mutation รอบใหม่
+- **TDD/verification**:
+  - unit tests สำหรับ screening fallback, top-K retention, mutation bounds และ candidate status transitions
+  - regression test ยืนยันว่า `Best` ที่มาจาก screening ไม่ถูกส่งออกเป็น full 1Y champion
+  - integration test ยืนยันว่า full-evaluated candidate มี 1Y metrics/trade count ก่อนถูกนับเป็น qualified
+  - benchmark แยก generated/screened/full-evaluated/qualified และตรวจ CPU/GPU raw-metric parity
+- **Exit gates**:
+  - ไม่มี placeholder candidate ถูกนับเป็น qualified หรือ promotion-ready
+  - มี qualified-candidate rate และ score quantiles ที่วัดได้ แม้รอบหนึ่งยังไม่มี winner
+  - mutation ทุก gene อยู่ใน schema bounds
+  - regression suite ผ่านและ coverage ของส่วนที่แก้ไม่น้อยกว่า 80%
+  - strategy ที่จะนำไปเทรดจริงต้องผ่าน validation/promotion gates เดิมครบ ไม่ใช้คะแนน search อย่างเดียว
+- **Status**: **Implemented — focused verification passed; unrelated network-bound repository tests remain environment-blocked**
+
+---
+
+### Phase 36: Correct Backtest Signal Parity and Separated Trading Dashboard
+
+- **Objective**: Restore non-zero, causally correct strategy evaluation and make any promoted strategy execute the same signal contract in paper/live modes.
+- **Scope**: GPU/CPU kernel correctness, shared strategy-parameter normalization, realistic fee/slippage accounting, candidate validation metadata, promotion flow, and separate Spot/Futures/Lab dashboard pages.
+- **Required behavior**:
+  1. Volume, candle, spread, ATR, and trend filters must use the units implied by their schema and must not silently suppress every entry.
+  2. CPU and GPU simulators must use the same feature indexes, stop/target ordering, position sizing, and end-of-window liquidation behavior.
+  3. Lab-generated parameters must map to the live evaluator without strategy-name or threshold semantic drift.
+  4. Search ranking must reward robust out-of-sample net returns after costs, but promotion must require complete evidence, minimum trades, bounded drawdown, and walk-forward checks.
+  5. Paper promotion remains available; direct LIVE promotion is available only when explicit live permission, pause/open-position checks, and candidate evidence gates pass.
+  6. Dashboard navigation must use separate routes/pages for Spot, Futures, and AI Lab instead of rendering all large views behind one tabbed page.
+- **TDD/verification**:
+  - regression tests for entry-filter liveness, ATR cost column, strategy parameter parity, and closed-trade metrics
+  - API tests for candidate evidence and paper/direct-live promotion guards
+  - dashboard structure tests for separate pages and route links
+  - CPU/GPU parity test when CUDA is available and deterministic CPU smoke tests otherwise
+- **Exit gates**:
+  - default genomes produce diagnosable non-zero trade counts on valid fixture data, or an explicit no-signal reason is reported
+  - no candidate with incomplete or stale evidence can reach paper/live promotion
+  - tests pass for the changed modules and no secrets are added
+- **Status**: **Completed — implementation and focused verification passed; full repository collection remains blocked by pre-existing network/database-dependent tests**
+
+### Phase 37: Deployment and Runtime Verification
+
+- **Objective**: Push the completed Phase 36 changes, restart the server through the approved project workflow, and verify the deployed dashboard and local GPU lab without enabling live orders.
+- **Checks**: Git status/diff audit, `run_strategy_lab_gpu.bat`, dashboard route/API smoke checks, `restart_bot.bat`, and post-restart dashboard checks.
+- **Safety**: Keep execution in PAPER/paused mode; do not place live orders during verification.
+- **Status**: **In progress**

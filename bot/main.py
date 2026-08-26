@@ -20,6 +20,25 @@ setup_logging()
 
 def main():
     log_msg("INFO", "Starting Multi-Coin Dual-Engine Bot (Spot & Futures)...")
+
+    # A live process may start only when the operator has explicitly unlocked
+    # live execution and the manifest carries validated lab evidence.  Without
+    # this guard, a missing/corrupt manifest could fall back to the legacy
+    # default strategy while the global mode was LIVE.
+    startup_control = get_bot_control()
+    startup_strategy = get_active_strategy()
+    if not startup_control.get("paper_trading", True) and (
+        not startup_control.get("allow_live", False) or not startup_strategy
+    ):
+        log_msg("ERROR", "LIVE startup refused: valid promotion evidence and live unlock are required.")
+        set_bot_control(
+            spot_paused=True,
+            futures_paused=True,
+            allow_live=False,
+            paper_trading=True,
+            pause_reason="LIVE startup refused: invalid strategy manifest or live unlock",
+        )
+        return
     
     # Configure Futures settings on real account
     if not is_paper_trading():
@@ -206,6 +225,12 @@ def main():
                 if strat:
                     manifest_stage = strat.get("stage", "PAPER")
                     exec_mode = "PAPER" if is_paper_trading() else "LIVE"
+
+                    if exec_mode == "LIVE" and not ctrl.get("allow_live", False):
+                        log_msg("ERROR", "LIVE execution is not unlocked. Failsafe triggered: PAUSING bot.")
+                        set_bot_control(spot_paused=True, futures_paused=True)
+                        time.sleep(2)
+                        continue
                     
                     if manifest_stage != exec_mode:
                         log_msg("ERROR", f"CRITICAL SECURITY ALERT: Config execution mode ({exec_mode}) does not match Manifest stage ({manifest_stage}). Failsafe triggered: PAUSING bot.")
@@ -221,6 +246,11 @@ def main():
                     )
                 else:
                     exec_mode = "PAPER" if is_paper_trading() else "LIVE"
+                    if exec_mode == "LIVE":
+                        log_msg("ERROR", "LIVE execution refused because no validated strategy manifest is active.")
+                        set_bot_control(spot_paused=True, futures_paused=True, allow_live=False, paper_trading=True, pause_reason="No validated strategy manifest")
+                        time.sleep(2)
+                        continue
                     context = ExecutionContext(
                         execution_mode=exec_mode,
                         deployment_id="default_deployment",

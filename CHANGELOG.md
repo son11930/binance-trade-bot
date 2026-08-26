@@ -1,3 +1,23 @@
+## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
+
+### Phase 36 — Causal Lab/Live Parity and Separated Dashboard
+
+### Fixed
+- Corrected the contradictory volume-exhaustion gate and ATR feature index that could reject every lab entry; CPU/GPU parity now uses the same causal next-bar-open fill, walk-forward liquidation, fees, and ATR-based slippage model.
+- Unified lab parameters with the paper/live evaluator and rejected unknown strategy or regime values instead of silently selecting a fallback strategy.
+- Added strict full-evaluation/OOS evidence gates, stable candidate identity, fail-closed manifest validation, and guarded paper/direct-live promotion controls.
+- Split the dashboard into separate Spot, Futures, and AI Lab pages and surfaced OOS trades, profit factor, expectancy, and drawdown in candidate review.
+
+### Verification
+- Changed-module regression suite: 46 passed, 1 skipped; CPU/GPU golden parity: 1 passed; GPU smoke run completed on the local RTX 3070 with one real evaluated genome.
+- Full repository pytest collection remains blocked by pre-existing network/database-dependent tests and unrelated skill test import paths; no trading code failure was observed in the targeted suite.
+
+### Fixed
+- Separated continuous 1M/3M screening scores from complete 1Y fitness and added a top-K rescue set so zero hard-gate survivors no longer stop full evaluation.
+- Prevented screening placeholders, evaluator errors, and unqualified historical rows from becoming elite parents or qualified winners; incomplete evidence cannot enter promotion/upload paths.
+- Centralized typed genome bounds for Optuna and mutation, fixed macro-regime categorical encoding, and aligned Kelly/breakeven parameter handling with the search schema.
+- Added stable candidate identity/artifact hashes and fail-closed promotion/upload checks for incomplete or stale evidence.
+
 ## [2.3.1] - 2026-08-06 (Security & Execution Consistency Fixes)
 
 ### Fixed

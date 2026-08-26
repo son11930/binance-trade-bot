@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Engine — Strategy Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { fontFamily: { sans: ['Outfit', 'sans-serif'] }, colors: { deepBg: '#020617', glassBg: 'rgba(15, 23, 42, 0.65)', neonCyan: '#00F0FF', neonGreen: '#39FF14', neonRed: '#FF003C', neonPink: '#FF00FF' } } }
+        };
+    </script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body data-market="lab" data-dashboard-market="lab" class="min-h-screen p-4 md:p-8">
+    <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+        <div class="glass-card relative w-full max-w-sm overflow-hidden rounded-3xl border-glow p-10">
+            <div class="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-neonPink/20 blur-3xl"></div>
+            <h2 class="mb-8 text-center text-3xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink">SYSTEM ACCESS</h2>
+            <form id="login-form" class="relative z-10 space-y-6">
+                <div><label for="username" class="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">Username</label><input type="text" id="username" name="username" autocomplete="username" class="w-full rounded-xl border border-slate-700/50 bg-slate-900/50 p-3 text-white focus:border-neonCyan focus:outline-none" required></div>
+                <div><label for="password" class="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">Password</label><input type="password" id="password" name="password" autocomplete="current-password" class="w-full rounded-xl border border-slate-700/50 bg-slate-900/50 p-3 text-white focus:border-neonCyan focus:outline-none" required></div>
+                <div class="flex items-center gap-3"><input type="checkbox" id="remember" class="h-5 w-5 rounded border-slate-700 bg-slate-900 accent-neonCyan"><label for="remember" class="text-sm font-semibold tracking-wide text-slate-300">Remember me</label></div>
+                <p id="login-error" class="hidden text-center text-sm font-bold text-neonRed">Invalid credentials. Access Denied.</p>
+                <button type="submit" class="w-full rounded-xl border border-neonCyan/50 bg-gradient-to-r from-neonCyan/20 to-neonPink/20 px-4 py-4 font-extrabold tracking-widest text-neonCyan transition-all hover:from-neonCyan/40 hover:to-neonPink/40">AUTHENTICATE</button>
+            </form>
+        </div>
+    </div>
+
+    <main id="app-container" class="dashboard-shell relative z-10 mx-auto hidden max-w-7xl space-y-8">
+        <header class="dashboard-header glass-card rounded-2xl p-5 md:p-6">
+            <div class="dashboard-brand"><p class="text-xs font-bold uppercase tracking-[0.3em] text-neonCyan">AI Trading Engine</p><h1 class="mt-1 text-3xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink md:text-4xl">AI Strategy Lab</h1><p class="mt-1 text-sm font-light tracking-wide text-slate-400">Research, qualification, and controlled promotion</p></div>
+            <nav class="dashboard-nav" aria-label="Primary navigation"><a href="spot.html" class="dashboard-nav-link">Spot Engine</a><a href="futures.html" class="dashboard-nav-link">Futures Engine</a><a href="lab.html" class="dashboard-nav-link is-active" aria-current="page">AI Strategy Lab</a></nav>
+            <div class="dashboard-actions"><div class="health-strip" aria-label="System health"><span id="health-bot" class="text-neonGreen">BOT</span><span class="text-slate-600">|</span><span id="health-api" class="text-neonGreen">API</span><span class="text-slate-600">|</span><span id="health-db" class="text-neonGreen">DB</span></div><span id="connection-status" class="status-pill status-pill--neutral">LAB OBSERVER</span><span class="status-pill status-pill--neutral" title="This page has no order controls.">READ-ONLY LAB</span><button type="button" data-action="logout" class="text-xs font-bold uppercase tracking-widest text-slate-400 transition-colors hover:text-white">Logout</button></div>
+        </header>
+
+        <section class="page-intro glass-card rounded-2xl border border-neonCyan/30 p-5 md:p-6"><div><p class="text-xs font-bold uppercase tracking-[0.25em] text-neonCyan">AI STRATEGY LAB</p><h2 class="mt-2 text-2xl font-extrabold tracking-wide text-white">Strategy synthesizer and alpha qualification</h2><p class="mt-2 max-w-4xl text-sm leading-relaxed text-slate-400">This page is for research and governance. It has no order controls. Promotion actions stay disabled until a candidate passes the complete evaluation and qualification gates; the server still enforces pause, evidence, and live-unlock checks.</p></div><button id="refresh-lab-results" type="button" class="rounded-xl border border-neonCyan/40 bg-gradient-to-r from-neonCyan/20 to-blue-500/20 px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-neonCyan transition-all hover:bg-neonCyan/30">Refresh lab results</button></section>
+
+        <div id="ai-lab-view" class="space-y-6">
+            <div id="lab-progress-banner" class="hidden"></div>
+            <div id="leaderboard-cards-container" class="grid grid-cols-1 gap-6"><div class="glass-card rounded-2xl p-8 text-center text-slate-400"><p class="animate-pulse font-bold text-neonCyan">Loading AI strategy leaderboard...</p></div></div>
+        </div>
+    </main>
+    <div id="toast-region" class="fixed right-4 top-4 z-[60] flex max-w-sm flex-col gap-2" aria-live="polite"></div>
+
+    <script src="js/config_utils.js"></script><script src="js/auth.js"></script><script src="js/websocket.js"></script><script src="js/ui_status.js"></script><script src="js/ui_trades.js"></script><script src="js/ui_logs.js"></script><script src="js/ui_lab.js"></script><script src="js/bot_control.js"></script><script src="app.js"></script>
+</body>
+</html>

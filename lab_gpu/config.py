@@ -26,6 +26,7 @@ except Exception:
     pass
 
 from bot.config import SYMBOLS, DATABASE_URL_FUTURES, DATABASE_URL_SPOT
+from bot.strategy_contract import STRATEGY_MAP, MACRO_REGIME_MAP
 
 # Check if running in benchmark mode (disables Aiven DB writes and records timings)
 BENCHMARK_MODE = os.environ.get("BENCHMARK_MODE", "false").lower() == "true"
@@ -51,6 +52,13 @@ CUDA_THREADS_PER_BLOCK = 128
 
 # Mega-Batch Kernel Constants
 GENOME_BATCH_SIZE = 4096
+
+# Cheap-screen policy. The screen is a ranking signal only; candidates in the
+# rescue set are still evaluated on all horizons before they can qualify.
+SCREENING_TOP_K = 64
+SCREENING_MIN_1M_PROFIT = -5.0
+SCREENING_MIN_3M_PROFIT = -2.0
+SCREENING_FITNESS_BASE = -999.0
 
 # Horizon bars for 1M, 3M, 6M, 1Y at 30-min candles (48 bars/day)
 HORIZON_BARS = [30 * 48, 90 * 48, 180 * 48, 365 * 48]  # [1440, 4320, 8640, 17520]
@@ -96,14 +104,87 @@ GENOME_PARAM_ORDER = [
     "adx_slope_check", "vol_exhaustion_mult"
 ]
 
-_STRAT_MAP_MB  = {"rsi_sniper": 0, "ema_cross": 1, "supertrend_momentum": 2,
-                  "ichi_cloud": 3, "keltner_bounce": 4, "stoch_mfi_diverge": 5,
-                  "williams_mean_rev": 6, "donchian_breakout": 7, "macd_momentum": 8,
-                  "bb_squeeze": 9, "adx_trend_rider": 10, "fibo_pullback": 11}
+_STRAT_MAP_MB = dict(STRATEGY_MAP)
 
 # Canonical Mapping for JSON export (Lab -> Live/Paper Engine)
 REVERSE_STRAT_MAP = {v: k for k, v in _STRAT_MAP_MB.items()}
 
-_MACRO_MAP_MB  = {"sma200_only": 0, "sma200_and_adx": 1, "none": 2}
+_MACRO_MAP_MB = dict(MACRO_REGIME_MAP)
+
+# Single typed source of truth for the active Optuna schema and evolutionary
+# mutation bounds. Tuple formats are:
+#   ("float"|"int", low, high, step)
+#   ("categorical", (value, ...))
+GENOME_SEARCH_SPACE = {
+    "adx_trend_thresh": ("float", 15.0, 35.0, 1.0),
+    "vol_surge_mult": ("float", 1.1, 3.0, 0.1),
+    "sl_atr_mult": ("float", 1.0, 3.0, 0.1),
+    "tp_rr_mult": ("float", 1.5, 4.5, 0.2),
+    "gear1_rsi_sniper": ("float", 68.0, 86.0, 1.0),
+    "stoch_k_thresh": ("float", 65.0, 88.0, 1.0),
+    "mfi_bull_thresh": ("float", 30.0, 60.0, 2.0),
+    "cci_trend_thresh": ("float", -50.0, 100.0, 10.0),
+    "williams_r_thresh": ("float", -90.0, -66.0, 2.0),
+    "gear2_moonshot_trigger_pct": ("float", 0.015, 0.04, 0.005),
+    "gear2_moonshot_gap_pct": ("float", 0.003, 0.01, 0.001),
+    "gear3_trailing_trigger_pct": ("float", 0.008, 0.024, 0.002),
+    "gear3_trailing_gap_pct": ("float", 0.005, 0.015, 0.001),
+    "gear4_breakeven_trigger_pct": ("float", 0.004, 0.012, 0.001),
+    "gear4_breakeven_buffer_pct": ("float", 0.0005, 0.003, 0.0005),
+    "max_hold_bars": ("int", 12, 72, 6),
+    "sma200_buffer_pct": ("float", 0.985, 1.015, 0.005),
+    "volume_floor_mult": ("float", 0.5, 1.2, 0.1),
+    "rsi_surge_ceiling": ("float", 76.0, 90.0, 2.0),
+    "sl_hard_cap_pct": ("float", 0.02, 0.06, 0.01),
+    "tp_hard_cap_pct": ("float", 0.05, 0.15, 0.02),
+    "cooldown_bars_after_sl": ("int", 0, 6, 2),
+    "kelly_fraction_cap": ("float", 0.15, 0.40, 0.05),
+    "giant_candle_atr_mult": ("float", 1.5, 3.5, 0.5),
+    "use_dual_trend": ("categorical", (True, False)),
+    "require_green_candle": ("categorical", (True, False)),
+    "strategy_type": ("categorical", tuple(_STRAT_MAP_MB.keys())),
+    "macro_regime_filter": ("categorical", tuple(_MACRO_MAP_MB.keys())),
+    "trend_strength_min_adx": ("float", 20.0, 35.0, 2.5),
+    "rsi_hook_oversold": ("float", 26.0, 48.0, 2.0),
+    "rsi_reversal_exit_thresh": ("float", 56.0, 74.0, 2.0),
+    "bb_lower_buffer": ("float", 0.99, 1.04, 0.01),
+    "bb_upper_buffer": ("float", 0.97, 1.01, 0.01),
+    "macd_cross_lookback": ("int", 3, 15, 2),
+    "mfi_bear_thresh": ("float", 70.0, 90.0, 5.0),
+    "momentum_req_pos_hist": ("categorical", (True, False)),
+    "supertrend_mult": ("float", 2.0, 4.5, 0.5),
+    "ichi_cloud_buffer": ("float", 0.996, 1.004, 0.002),
+    "keltner_mult": ("float", 1.5, 3.0, 0.5),
+    "cci_extreme_exit": ("float", 150.0, 250.0, 25.0),
+    "williams_r_exit": ("float", -25.0, -5.0, 5.0),
+    "rejection_wick_ratio": ("float", 0.25, 0.55, 0.05),
+    "vol_cap_rejection": ("float", 3.0, 6.0, 0.5),
+    "vol_cap_normal": ("float", 2.0, 3.5, 0.5),
+    "body_min_atr_pct": ("float", 0.1, 0.5, 0.1),
+    "high_low_spread_cap": ("float", 3.0, 6.0, 0.5),
+    "spot_step_trigger1": ("float", 0.015, 0.03, 0.005),
+    "spot_step_lock1": ("float", 0.005, 0.015, 0.005),
+    "spot_step_trigger2": ("float", 0.035, 0.055, 0.01),
+    "spot_step_lock2": ("float", 0.02, 0.035, 0.005),
+    "spot_step_trigger3": ("float", 0.06, 0.09, 0.01),
+    "spot_step_lock3": ("float", 0.045, 0.07, 0.005),
+    "gear1_sniper_slope": ("float", 1.0, 2.5, 0.5),
+    "gear1_sniper_max_rsi": ("float", 80.0, 92.0, 2.0),
+    "gear1_sniper_min_rsi": ("float", 10.0, 22.0, 3.0),
+    "gear2_moonshot_atr_mult": ("float", 1.5, 3.0, 0.5),
+    "gear3_trailing_atr_mult": ("float", 1.0, 2.0, 0.2),
+    "mom_tp_roe_thresh": ("float", 0.025, 0.05, 0.005),
+    "mom_tp_rsi_thresh": ("float", 72.0, 84.0, 2.0),
+    "mom_tp_drop_pct": ("float", 0.0015, 0.0045, 0.001),
+    "max_pos_alloc_pct": ("float", 0.10, 0.25, 0.05),
+    "min_trade_notional": ("float", 5.0, 15.0, 2.5),
+    "pyramid_scaling_mult": ("float", 0.5, 1.0, 0.1),
+    "sideways_max_adx": ("float", 15.0, 25.0, 2.5),
+    "adx_slope_check": ("categorical", (True, False)),
+    "vol_exhaustion_mult": ("float", 0.3, 0.8, 0.1),
+}
+
+if set(GENOME_SEARCH_SPACE) != set(GENOME_PARAM_ORDER):
+    raise ValueError("GENOME_SEARCH_SPACE must exactly match GENOME_PARAM_ORDER")
 
 BARSPERDAY = 48  # Named constant — 30m candles per day (24h × 2)

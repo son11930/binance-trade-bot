@@ -7,22 +7,27 @@ function updateStatusUI(aiStatus, globalConfig) {
     const stDisp = document.getElementById('status-display');
     const recDisp = document.getElementById('reconciliation-display');
     
-    if (symDisp) symDisp.innerText = globalConfig.symbols ? globalConfig.symbols.map(s => s.replace('USDT', '')).join(' • ') : 'None';
+    if (symDisp) symDisp.innerText = Array.isArray(globalConfig.symbols)
+        ? globalConfig.symbols.map(symbol => String(symbol).replace('USDT', '')).join(' • ')
+        : 'None';
     if (fgDisp && globalConfig.fear_greed_index !== undefined && globalConfig.fear_greed_index !== null) {
         fgDisp.innerText = globalConfig.fear_greed_index;
     }
-    if (recDisp && globalConfig.reconciliation_status) {
-        recDisp.innerText = globalConfig.reconciliation_status;
-        if (globalConfig.reconciliation_status.includes("MISMATCH") || globalConfig.reconciliation_status.includes("diff")) {
+    const reconciliationStatus = String(globalConfig.reconciliation_status || '');
+    if (recDisp && reconciliationStatus) {
+        recDisp.innerText = reconciliationStatus;
+        if (reconciliationStatus.includes('MISMATCH') || reconciliationStatus.includes('diff')) {
             recDisp.className = "text-xs font-bold text-red-400";
-        } else if (globalConfig.reconciliation_status.includes("OK")) {
+        } else if (reconciliationStatus.includes('OK')) {
             recDisp.className = "text-xs font-bold text-green-400";
         }
     }
     
     const serverExecutionMode = (globalConfig.paper_trading === "True" || globalConfig.paper_trading === true) ? "PAPER" : "LIVE";
     const manifestStage = globalConfig.active_stage || "PAPER";
-    const isPaused = globalConfig.spot_paused === "True" || globalConfig.spot_paused === true || globalConfig.futures_paused === "True" || globalConfig.futures_paused === true;
+    const isPaused = currentMarket === 'futures'
+        ? (globalConfig.futures_paused === 'True' || globalConfig.futures_paused === true)
+        : (globalConfig.spot_paused === 'True' || globalConfig.spot_paused === true);
     
     let execStatus = manifestStage;
     let badgeClass = "badge-outline";
@@ -45,7 +50,7 @@ function updateStatusUI(aiStatus, globalConfig) {
     }
     
     if (stDisp) {
-        stDisp.innerHTML = `<span class="px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${badgeClass}" title="${titleMsg}">${execStatus}</span>`;
+        stDisp.innerHTML = `<span class="px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${badgeClass}" title="${escapeHTML(titleMsg)}">${escapeHTML(execStatus)}</span>`;
     }
     
     const modeBadge = document.getElementById('mode-badge');
@@ -61,7 +66,8 @@ function updateStatusUI(aiStatus, globalConfig) {
             liveUsdt.innerText = "SIMULATED";
             liveUsdt.classList.add('text-lg', 'text-slate-400');
         } else {
-            liveUsdt.innerText = (aiStatus.live_usdt || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const liveBalance = Number(aiStatus.live_usdt);
+            liveUsdt.innerText = (Number.isFinite(liveBalance) ? liveBalance : 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
             liveUsdt.classList.remove('text-lg', 'text-slate-400');
         }
     }
@@ -169,8 +175,10 @@ function updateStatusUI(aiStatus, globalConfig) {
             const tr = document.createElement('tr');
             tr.className = 'hover:bg-slate-800/30 transition-colors';
             
-            const pnlAmtColor = pos.pnl_amount > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_amount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
-            const pnlPctColor = pos.pnl_percent > 0 ? 'text-neonGreen text-glow-green' : (pos.pnl_percent < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
+            const pnlAmount = Number(pos.pnl_amount);
+            const pnlPercent = Number(pos.pnl_percent);
+            const pnlAmtColor = pnlAmount > 0 ? 'text-neonGreen text-glow-green' : (pnlAmount < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
+            const pnlPctColor = pnlPercent > 0 ? 'text-neonGreen text-glow-green' : (pnlPercent < 0 ? 'text-neonRed text-glow-red' : 'text-slate-300');
             
             if (currentMarket === 'futures') {
                 const sideColor = pos.position_side === 'LONG' ? 'text-neonGreen' : 'text-neonRed';
@@ -203,24 +211,27 @@ function updateStatusUI(aiStatus, globalConfig) {
                     <td class="p-4 text-right text-slate-300 font-mono text-xs"><div class="mb-1">E: ${Number(pos.buy_price).toFixed(4)}</div><div>M: ${Number(pos.current_price).toFixed(4)}</div></td>
                     <td class="p-4 text-right font-mono text-xs">${riskHtml}</td>
                     <td class="p-4 text-right text-slate-300 font-mono text-xs"><div class="mb-1">FR: <span class="${frColor}">${escapeHTML(formattedFundingRate)}</span></div><div class="text-slate-400">Hold: ${escapeHTML(holdTime)}</div></td>
-                    <td class="p-4 text-right text-slate-300 font-mono">${pos.margin ? Number(pos.margin).toFixed(2) : '--'}</td>
-                    <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${Number(pos.pnl_amount).toFixed(2)}</td>
-                    <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${Number(pos.pnl_percent).toFixed(2)}%</td>
+                    <td class="p-4 text-right text-slate-300 font-mono">${Number.isFinite(Number(pos.margin)) ? Number(pos.margin).toFixed(2) : '--'}</td>
+                    <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pnlAmount > 0 ? '+' : ''}${Number.isFinite(pnlAmount) ? pnlAmount.toFixed(2) : '--'}</td>
+                    <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pnlPercent > 0 ? '+' : ''}${Number.isFinite(pnlPercent) ? pnlPercent.toFixed(2) : '--'}%</td>
                 `;
             } else {
+                const quantity = Number(pos.quantity);
+                const buyPrice = Number(pos.buy_price);
+                const currentPrice = Number(pos.current_price);
                 tr.innerHTML = `
                     <td class="p-4 font-medium text-slate-200">${escapeHTML(pos.symbol)}</td>
-                    <td class="p-4 text-right text-slate-300 font-mono">${pos.quantity.toFixed(4)}</td>
-                    <td class="p-4 text-right text-slate-300 font-mono">${pos.buy_price.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6})}</td>
-                    <td class="p-4 text-right text-slate-300 font-mono">${pos.current_price.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6})}</td>
-                    <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pos.pnl_amount > 0 ? '+' : ''}${pos.pnl_amount.toFixed(2)}</td>
-                    <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pos.pnl_percent > 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%</td>
+                    <td class="p-4 text-right text-slate-300 font-mono">${Number.isFinite(quantity) ? quantity.toFixed(4) : '--'}</td>
+                    <td class="p-4 text-right text-slate-300 font-mono">${Number.isFinite(buyPrice) ? buyPrice.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6}) : '--'}</td>
+                    <td class="p-4 text-right text-slate-300 font-mono">${Number.isFinite(currentPrice) ? currentPrice.toLocaleString(undefined, {minimumFractionDigits: 4, maximumFractionDigits: 6}) : '--'}</td>
+                    <td class="p-4 text-right font-mono font-bold ${pnlAmtColor}">${pnlAmount > 0 ? '+' : ''}${Number.isFinite(pnlAmount) ? pnlAmount.toFixed(2) : '--'}</td>
+                    <td class="p-4 text-right font-mono font-bold ${pnlPctColor}">${pnlPercent > 0 ? '+' : ''}${Number.isFinite(pnlPercent) ? pnlPercent.toFixed(2) : '--'}%</td>
                 `;
             }
             positionsBody.appendChild(tr);
         });
     } else {
-        const cols = currentMarket === 'futures' ? 7 : 6;
+        const cols = currentMarket === 'futures' ? 8 : 6;
         positionsBody.innerHTML = `<tr><td colspan="${cols}" class="p-8 text-center text-slate-500 italic">No active positions.</td></tr>`;
     }
 }

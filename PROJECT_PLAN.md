@@ -480,4 +480,4 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - dashboard structure regression tests for the Home route, navigation, auth markers, and cache-busted assets
   - JavaScript syntax checks and focused existing dashboard/API tests
   - deployed HTTP smoke checks for all routes/assets and unauthenticated API protection
-- **Status**: **In progress**
+- **Status**: **Completed — Home route, navigation/auth shell, focused tests, GPU run, push, restart, and deployed HTTP smoke verification passed**

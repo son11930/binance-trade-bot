@@ -8,6 +8,7 @@ from .logger import log_msg
 from .binance_client import get_historical_klines, futures_get_klines, twm, futures_set_leverage, futures_set_margin_type, futures_set_position_mode
 from .market_context_worker import market_context_updater_loop
 from .websocket_manager import WebSocketManager
+from .websocket_paths import start_unique_multiplex_socket
 from .webhook_notifier import update_bot_state
 from .risk_manager import calculate_pnl
 from .opportunity_tracker import track_opportunities
@@ -303,7 +304,7 @@ def main():
         ws_manager_spot_live.process_ticker_message(msg)
         ws_manager_spot_live.process_kline_message(msg)
         
-    twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
+    start_unique_multiplex_socket(twm, route_spot_message, spot_streams, "spot")
     
     # Start Futures Multiplex Streams
     def route_futures_message(msg):
@@ -313,10 +314,7 @@ def main():
         ws_manager_futures_live.process_kline_message(msg)
         
     try:
-        if hasattr(twm, 'start_futures_multiplex_socket'):
-            twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
-        else:
-            log_msg("ERROR", "python-binance ThreadedWebsocketManager does not support start_futures_multiplex_socket", market_type='futures')
+        start_unique_multiplex_socket(twm, route_futures_message, futures_streams, "futures")
     except Exception as e:
         log_msg("ERROR", f"Failed to start futures multiplex socket: {e}", market_type='futures')
         
@@ -370,9 +368,8 @@ def main():
                 new_twm = ThreadedWebsocketManager()
                 bc.twm = new_twm
                 new_twm.start()
-                new_twm.start_multiplex_socket(callback=route_spot_message, streams=spot_streams)
-                if hasattr(new_twm, 'start_futures_multiplex_socket'):
-                    new_twm.start_futures_multiplex_socket(callback=route_futures_message, streams=futures_streams)
+                start_unique_multiplex_socket(new_twm, route_spot_message, spot_streams, "spot")
+                start_unique_multiplex_socket(new_twm, route_futures_message, futures_streams, "futures")
                 reconnect_time = time.time()
                 log_msg("INFO", "WebSocket re-connected cleanly.")
             except Exception as e:

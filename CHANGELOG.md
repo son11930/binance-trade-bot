@@ -15,6 +15,7 @@
 ### Phase 37 — Deployment Verification
 - Pushed the Phase 36 implementation to `main`, restarted the server service, verified the deployed commit is active, and confirmed the dashboard pages/assets return successfully.
 - Verified the GPU launcher with 100 genomes, 20/20 cached symbols, GPU execution, and successful result synchronization; corrected the completion log to report processed genomes separately from retained leaderboard rows.
+- Fixed the Spot/Futures websocket listener registry collision that produced a startup `KeyError` when both markets used identical multiplex stream names.
 
 ### Fixed
 - Separated continuous 1M/3M screening scores from complete 1Y fitness and added a top-K rescue set so zero hard-gate survivors no longer stop full evaluation.

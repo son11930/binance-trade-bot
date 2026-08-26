@@ -501,6 +501,6 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                                full_evaluated_count=full_evaluated_count,
                                qualified_count=validated_winners)
         flush_sync_worker()
-    logger.info(f"GPU Lab finished! {len(leaderboard_map)} genomes evaluated in {elapsed//60}m {elapsed%60}s")
+    logger.info(f"GPU Lab finished! {completed} genomes evaluated in {elapsed//60}m {elapsed%60}s ({len(leaderboard_map)} retained)")
     logger.info(f"Best full: {best_display_name} | Score: {best_val:.2f}")
     return top_10

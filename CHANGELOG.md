@@ -12,6 +12,10 @@
 - Changed-module regression suite: 46 passed, 1 skipped; CPU/GPU golden parity: 1 passed; GPU smoke run completed on the local RTX 3070 with one real evaluated genome.
 - Full repository pytest collection remains blocked by pre-existing network/database-dependent tests and unrelated skill test import paths; no trading code failure was observed in the targeted suite.
 
+### Phase 37 — Deployment Verification
+- Pushed the Phase 36 implementation to `main`, restarted the server service, verified the deployed commit is active, and confirmed the dashboard pages/assets return successfully.
+- Verified the GPU launcher with 100 genomes, 20/20 cached symbols, GPU execution, and successful result synchronization; corrected the completion log to report processed genomes separately from retained leaderboard rows.
+
 ### Fixed
 - Separated continuous 1M/3M screening scores from complete 1Y fitness and added a top-K rescue set so zero hard-gate survivors no longer stop full evaluation.
 - Prevented screening placeholders, evaluator errors, and unqualified historical rows from becoming elite parents or qualified winners; incomplete evidence cannot enter promotion/upload paths.

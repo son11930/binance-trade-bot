@@ -1,5 +1,16 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 38 — Authenticated Home and Clear Dashboard Navigation
+
+### Added
+- Replaced the root redirect with an authenticated Control Center that presents Spot Engine, Futures Engine, and AI Strategy Lab as separate workspace cards.
+- Added a consistent Home / Spot Engine / Futures Engine / AI Strategy Lab navigation bar to every dashboard page.
+- Added a visible Sign in form on the Control Center and a styled Sign out action on every authenticated page; sign out clears both token stores and returns to the login state.
+
+### Fixed
+- Added cache-busted dashboard CSS and JavaScript URLs so deployed navigation/auth changes cannot be hidden by stale browser assets.
+- Added a Home startup branch so the new route does not initialize market-only controls or accidentally select Spot as a fallback.
+
 ### Phase 36 — Causal Lab/Live Parity and Separated Dashboard
 
 ### Fixed

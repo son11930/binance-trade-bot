@@ -1,7 +1,7 @@
 // ui_lab.js — AI Strategy Lab progress, leaderboard rendering, and promotion actions
 
 function getLabToken() {
-    return localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token') || localStorage.getItem('dashboard_token');
+    return localStorage.getItem('bot_token') || sessionStorage.getItem('bot_token');
 }
 
 function toFiniteNumber(value) {

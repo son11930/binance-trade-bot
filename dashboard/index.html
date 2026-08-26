@@ -1,22 +1,115 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="0; url=spot.html">
-    <title>AI Trading Engine</title>
+    <meta name="description" content="AI Trading Engine authenticated control center">
+    <title>AI Trading Engine — Control Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css?v=phase38-1">
 </head>
-<body>
-    <p>Opening the <a href="spot.html">Spot Engine</a>...</p>
-    <script>window.location.replace('spot.html');</script>
-    <script src="js/config_utils.js"></script>
-    <script src="js/auth.js"></script>
-    <script src="js/websocket.js"></script>
-    <script src="js/ui_status.js"></script>
-    <script src="js/ui_trades.js"></script>
-    <script src="js/ui_logs.js"></script>
-    <script src="js/ui_lab.js"></script>
-    <script src="js/bot_control.js"></script>
-    <script src="app.js"></script>
+<body data-market="home" data-dashboard-market="home" class="dashboard-page min-h-screen p-4 md:p-8">
+    <div id="login-modal" class="auth-overlay fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <div class="auth-card glass-card relative w-full max-w-sm overflow-hidden rounded-3xl border-glow p-8 md:p-10">
+            <div class="auth-orb" aria-hidden="true"></div>
+            <div class="auth-heading relative z-10">
+                <span class="auth-mark" aria-hidden="true">✦</span>
+                <p class="auth-eyebrow">AI TRADING ENGINE</p>
+                <h1 id="login-title">Sign in to Control Center</h1>
+                <p>Secure access to market monitors, strategy research, and execution controls.</p>
+            </div>
+            <form id="login-form" class="auth-form relative z-10">
+                <div class="auth-field">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" autocomplete="username" required>
+                </div>
+                <div class="auth-field">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" autocomplete="current-password" required>
+                </div>
+                <label class="auth-remember" for="remember">
+                    <input type="checkbox" id="remember">
+                    <span>Keep me signed in on this device</span>
+                </label>
+                <p id="login-error" class="auth-error hidden" role="alert">Invalid credentials. Access denied.</p>
+                <button type="submit" class="auth-submit">Sign in securely <span aria-hidden="true">→</span></button>
+            </form>
+        </div>
+    </div>
+
+    <main id="app-container" class="dashboard-shell relative z-10 mx-auto hidden max-w-7xl space-y-8">
+        <header class="dashboard-header glass-card rounded-2xl p-5 md:p-6">
+            <a class="dashboard-brand dashboard-brand-link" href="index.html" aria-label="Open dashboard home">
+                <p class="text-xs font-bold uppercase tracking-[0.3em] text-neonCyan">AI Trading Engine</p>
+                <h1 class="mt-1 text-3xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink md:text-4xl">Control Center</h1>
+                <p class="mt-1 text-sm font-light tracking-wide text-slate-400">One secure home for every trading workspace</p>
+            </a>
+            <nav class="dashboard-nav" aria-label="Primary navigation">
+                <a href="index.html" class="dashboard-nav-link is-active" aria-current="page"><span class="nav-link-icon" aria-hidden="true">⌂</span><span class="nav-link-label">Home</span></a>
+                <a href="spot.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">◈</span><span class="nav-link-label">Spot Engine</span></a>
+                <a href="futures.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">⇅</span><span class="nav-link-label">Futures Engine</span></a>
+                <a href="lab.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">🧬</span><span class="nav-link-label">AI Strategy Lab</span></a>
+            </nav>
+            <div class="dashboard-actions">
+                <div class="health-strip" aria-label="System health"><span id="health-bot" class="text-neonGreen">BOT</span><span class="text-slate-600">|</span><span id="health-api" class="text-neonGreen">API</span><span class="text-slate-600">|</span><span id="health-db" class="text-neonGreen">DB</span></div>
+                <span id="connection-status" class="status-pill status-pill--neutral">CONNECTING</span>
+                <span id="mode-badge" class="status-pill status-pill--neutral">SECURE SESSION</span>
+                <button type="button" data-action="logout" class="auth-button auth-button--logout"><span aria-hidden="true">↪</span> Sign out</button>
+            </div>
+        </header>
+
+        <section class="hub-hero glass-card rounded-2xl border border-neonCyan/30 p-6 md:p-8">
+            <div class="hub-hero-copy">
+                <p class="page-eyebrow">COMMAND CENTER</p>
+                <h2>Choose a workspace</h2>
+                <p>Move between execution monitoring and strategy research without losing your place. Each workspace is isolated, readable, and protected by the same authenticated session.</p>
+            </div>
+            <div class="hub-hero-status" aria-label="Execution safety status">
+                <span class="hub-status-dot" aria-hidden="true"></span>
+                <span><strong>Execution protected</strong><small>Paper mode and server-side live gate remain in control.</small></span>
+            </div>
+        </section>
+
+        <section class="hub-grid" aria-label="Trading workspaces">
+            <a href="spot.html" class="hub-card hub-card--spot">
+                <span class="hub-card-icon" aria-hidden="true">◈</span>
+                <span class="hub-card-kicker">EXECUTION MONITOR</span>
+                <h2>Spot Engine</h2>
+                <p>Track spot balances, positions, signals, trades, and system logs in one focused view.</p>
+                <span class="hub-card-link">Open Spot Engine <span aria-hidden="true">→</span></span>
+            </a>
+            <a href="futures.html" class="hub-card hub-card--futures">
+                <span class="hub-card-icon" aria-hidden="true">⇅</span>
+                <span class="hub-card-kicker">RISK MONITOR</span>
+                <h2>Futures Engine</h2>
+                <p>Review leverage, margin, liquidation distance, funding, exposure, and futures PNL.</p>
+                <span class="hub-card-link">Open Futures Engine <span aria-hidden="true">→</span></span>
+            </a>
+            <a href="lab.html" class="hub-card hub-card--lab">
+                <span class="hub-card-icon" aria-hidden="true">🧬</span>
+                <span class="hub-card-kicker">RESEARCH &amp; GOVERNANCE</span>
+                <h2>AI Strategy Lab</h2>
+                <p>Inspect strategy candidates, qualification evidence, walk-forward results, and promotion status.</p>
+                <span class="hub-card-link">Open AI Strategy Lab <span aria-hidden="true">→</span></span>
+            </a>
+        </section>
+
+        <section class="hub-safety-grid" aria-label="Dashboard safeguards">
+            <article class="hub-safety-card"><span class="hub-safety-icon" aria-hidden="true">✓</span><div><h3>Authenticated session</h3><p>Sign out is available from every workspace and returns here to the login screen.</p></div></article>
+            <article class="hub-safety-card"><span class="hub-safety-icon" aria-hidden="true">◎</span><div><h3>Paper-first workflow</h3><p>Live order permission stays off unless the server-side guard and evidence gates allow it.</p></div></article>
+            <article class="hub-safety-card"><span class="hub-safety-icon" aria-hidden="true">↗</span><div><h3>Separate workspaces</h3><p>Large Spot, Futures, and Lab views stay on their own pages for a cleaner workflow.</p></div></article>
+        </section>
+    </main>
+
+    <script src="js/config_utils.js?v=phase38-1"></script>
+    <script src="js/auth.js?v=phase38-1"></script>
+    <script src="js/websocket.js?v=phase38-1"></script>
+    <script src="js/ui_status.js?v=phase38-1"></script>
+    <script src="js/ui_trades.js?v=phase38-1"></script>
+    <script src="js/ui_logs.js?v=phase38-1"></script>
+    <script src="js/ui_lab.js?v=phase38-1"></script>
+    <script src="js/bot_control.js?v=phase38-1"></script>
+    <script src="app.js?v=phase38-1"></script>
 </body>
 </html>

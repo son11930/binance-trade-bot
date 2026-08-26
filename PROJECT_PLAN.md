@@ -465,3 +465,19 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
 - **Checks**: Git status/diff audit, `run_strategy_lab_gpu.bat`, dashboard route/API smoke checks, `restart_bot.bat`, and post-restart dashboard checks.
 - **Safety**: Keep execution in PAPER/paused mode; do not place live orders during verification.
 - **Status**: **Completed — pushed and verified on the server; local GPU launcher and remote service are healthy**
+
+### Phase 38: Authenticated Dashboard Home and Clear Page Navigation
+
+- **Objective**: Replace the root redirect with a real authenticated Home/Control Center so users can sign in, sign out, and reach Spot Engine, Futures Engine, and AI Strategy Lab through clear, consistent navigation.
+- **Scope**: `dashboard/index.html`, shared dashboard header/navigation, authentication affordances, route handling, cache-busted dashboard assets, and responsive styling. Trading execution behavior remains unchanged and verification stays in PAPER/paused mode.
+- **Required behavior**:
+  1. `/index.html` must render a Home/Control Center and must not redirect directly to Spot.
+  2. Every dashboard page must expose the complete primary navigation: Home, Spot Engine, Futures Engine, and AI Strategy Lab.
+  3. Logged-out users must see an obvious sign-in form; logged-in users must see an obvious Sign out action that returns to the sign-in state.
+  4. Home must summarize the available workspaces and keep live execution visibly server-gated.
+  5. Asset URLs must be cache-busted so an older browser stylesheet/script cannot hide the navigation after deployment.
+- **TDD/verification**:
+  - dashboard structure regression tests for the Home route, navigation, auth markers, and cache-busted assets
+  - JavaScript syntax checks and focused existing dashboard/API tests
+  - deployed HTTP smoke checks for all routes/assets and unauthenticated API protection
+- **Status**: **In progress**

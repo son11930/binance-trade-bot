@@ -12,7 +12,7 @@ window.onerror = function(msg, url, lineNo, columnNo, error) {
 };
 
 // Global State
-const supportedMarkets = ['spot', 'futures', 'lab'];
+const supportedMarkets = ['home', 'spot', 'futures', 'lab'];
 const pageMarket = document.body && document.body.dataset ? document.body.dataset.market : '';
 const storedMarket = localStorage.getItem('selectedMarket');
 let currentMarket = supportedMarkets.includes(pageMarket)
@@ -23,6 +23,7 @@ let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot
 let reconnectTimeout = 1000;
 let shouldReconnect = true;
 let dataStore = {
+    home: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
     spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
     futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
     lab: { trades: [], logs: [], stats: null, status: null, globalConfig: null }

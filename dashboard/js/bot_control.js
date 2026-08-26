@@ -94,7 +94,7 @@ async function toggleExecutionMode(key, value) {
 }
 
 function setMarket(market) {
-    const routes = { spot: 'spot.html', futures: 'futures.html', lab: 'lab.html' };
+    const routes = { home: 'index.html', spot: 'spot.html', futures: 'futures.html', lab: 'lab.html' };
     const route = routes[market];
     if (!route) return;
 
@@ -113,6 +113,11 @@ function initializeLabPage() {
         if (typeof fetchLabProgress === 'function') fetchLabProgress();
         if (document.visibilityState === 'visible' && typeof fetchLeaderboard === 'function') fetchLeaderboard();
     }, 5000);
+}
+
+function initializeHomePage() {
+    localStorage.setItem('selectedMarket', 'home');
+    fetchBotControl();
 }
 
 function initializeMarketPage() {
@@ -180,7 +185,9 @@ function startApp() {
     if (appCont) appCont.classList.remove('hidden');
 
     bindDashboardActions();
-    if (currentMarket === 'lab') {
+    if (currentMarket === 'home') {
+        initializeHomePage();
+    } else if (currentMarket === 'lab') {
         initializeLabPage();
     } else {
         fetchBotControl();

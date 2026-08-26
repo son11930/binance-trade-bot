@@ -1,12 +1,18 @@
 // auth.js — Session Authentication and Token Management
 
-function logout() {
+function clearStoredTokens() {
     localStorage.removeItem('bot_token');
+    localStorage.removeItem('dashboard_token');
     sessionStorage.removeItem('bot_token');
+    sessionStorage.removeItem('dashboard_token');
+}
+
+function logout() {
+    clearStoredTokens();
     authToken = null;
     shouldReconnect = false;
     if (ws) ws.close();
-    window.location.reload();
+    window.location.assign('index.html#login');
 }
 
 function setLoginError(message) {
@@ -17,6 +23,11 @@ function setLoginError(message) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (window.location.hash === '#login' && !authToken) {
+        const usernameEl = document.getElementById('username');
+        if (usernameEl) window.setTimeout(() => usernameEl.focus(), 0);
+    }
+
     const loginForm = document.getElementById('login-form');
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
@@ -39,6 +50,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 if (res.ok) {
                     const data = await res.json();
+                    if (!data || typeof data.token !== 'string' || !data.token) {
+                        setLoginError("Login response was invalid. Please try again.");
+                        return;
+                    }
+                    clearStoredTokens();
                     authToken = data.token;
                     if (r) localStorage.setItem('bot_token', authToken);
                     else sessionStorage.setItem('bot_token', authToken);
@@ -57,4 +73,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    document.addEventListener('keydown', (event) => {
+        const modal = document.getElementById('login-modal');
+        if (event.key !== 'Escape' || !modal || modal.classList.contains('hidden')) return;
+        event.preventDefault();
+        const usernameEl = document.getElementById('username');
+        if (usernameEl) usernameEl.focus();
+    });
 });

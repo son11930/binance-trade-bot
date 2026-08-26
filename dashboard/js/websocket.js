@@ -48,7 +48,10 @@ function connectWebSocket() {
             dataStore.spot.status = statusData.spot || null;
             dataStore.futures.status = statusData.futures || null;
 
-            const currentStatus = getTradingMarket() === 'futures' ? statusData.futures : statusData.spot;
+            const tradingMarket = getTradingMarket();
+            const currentStatus = tradingMarket === 'futures'
+                ? statusData.futures
+                : (tradingMarket === 'spot' ? statusData.spot : null);
             if (currentStatus && typeof updateStatusUI === 'function') {
                 updateStatusUI(currentStatus, statusData);
             }

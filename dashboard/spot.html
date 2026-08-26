@@ -24,13 +24,13 @@
             }
         };
     </script>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=phase38-1">
 </head>
 <body data-market="spot" data-dashboard-market="spot" class="min-h-screen p-4 md:p-8">
-    <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
+    <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="login-title">
         <div class="glass-card relative w-full max-w-sm overflow-hidden rounded-3xl border-glow p-10">
             <div class="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-neonPink/20 blur-3xl"></div>
-            <h2 class="mb-8 text-center text-3xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink">SYSTEM ACCESS</h2>
+            <h2 id="login-title" class="mb-8 text-center text-3xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-neonCyan to-neonPink">SYSTEM ACCESS</h2>
             <form id="login-form" class="relative z-10 space-y-6">
                 <div>
                     <label for="username" class="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">Username</label>
@@ -58,9 +58,10 @@
                 <p class="mt-1 text-sm font-light tracking-wide text-slate-400">Paper/live telemetry for spot execution</p>
             </div>
             <nav class="dashboard-nav" aria-label="Primary navigation">
-                <a href="spot.html" class="dashboard-nav-link is-active" aria-current="page">Spot Engine</a>
-                <a href="futures.html" class="dashboard-nav-link">Futures Engine</a>
-                <a href="lab.html" class="dashboard-nav-link">AI Strategy Lab</a>
+                <a href="index.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">⌂</span><span class="nav-link-label">Home</span></a>
+                <a href="spot.html" class="dashboard-nav-link is-active" aria-current="page"><span class="nav-link-icon" aria-hidden="true">◈</span><span class="nav-link-label">Spot Engine</span></a>
+                <a href="futures.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">⇅</span><span class="nav-link-label">Futures Engine</span></a>
+                <a href="lab.html" class="dashboard-nav-link"><span class="nav-link-icon" aria-hidden="true">🧬</span><span class="nav-link-label">AI Strategy Lab</span></a>
             </nav>
             <div class="dashboard-actions">
                 <div class="health-strip" aria-label="System health">
@@ -81,7 +82,7 @@
                     <button id="view-live-btn" type="button" aria-pressed="false" title="Shows live telemetry only; it does not unlock live orders.">LIVE DATA</button>
                 </div>
                 <span id="mode-badge" class="status-pill status-pill--neutral">Loading mode...</span>
-                <button type="button" data-action="logout" class="text-xs font-bold uppercase tracking-widest text-slate-400 transition-colors hover:text-white">Logout</button>
+                <button type="button" data-action="logout" class="auth-button auth-button--logout"><span aria-hidden="true">↪</span> Sign out</button>
             </div>
         </header>
 
@@ -158,14 +159,14 @@
         </div>
     </main>
 
-    <script src="js/config_utils.js"></script>
-    <script src="js/auth.js"></script>
-    <script src="js/websocket.js"></script>
-    <script src="js/ui_status.js"></script>
-    <script src="js/ui_trades.js"></script>
-    <script src="js/ui_logs.js"></script>
-    <script src="js/ui_lab.js"></script>
-    <script src="js/bot_control.js"></script>
-    <script src="app.js"></script>
+    <script src="js/config_utils.js?v=phase38-1"></script>
+    <script src="js/auth.js?v=phase38-1"></script>
+    <script src="js/websocket.js?v=phase38-1"></script>
+    <script src="js/ui_status.js?v=phase38-1"></script>
+    <script src="js/ui_trades.js?v=phase38-1"></script>
+    <script src="js/ui_logs.js?v=phase38-1"></script>
+    <script src="js/ui_lab.js?v=phase38-1"></script>
+    <script src="js/bot_control.js?v=phase38-1"></script>
+    <script src="app.js?v=phase38-1"></script>
 </body>
 </html>

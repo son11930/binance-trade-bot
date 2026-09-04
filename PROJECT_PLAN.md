@@ -621,4 +621,10 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Stage Paper Review succeeds on a clean runtime data directory
   - invalid/stale candidate evidence remains refused
   - Live remains locked and no live order is placed during verification
-- **Status**: **In progress - regression test added; implementation and deployment verification pending**
+- **Verification**:
+  - Missing-directory Paper promotion regression and focused API/evidence/fee/dashboard suite passed: 77 tests passed
+  - Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed
+  - Commit `0614eee` was pushed; the restart workflow completed the server update, remote HEAD and `binance-bot.service` were verified, and all dashboard static pages returned 200
+  - Authenticated browser smoke confirmed the qualified candidate can be staged to PAPER on the deployed server; the manifest is in PAPER stage, the page remained healthy, and no old path-leaking error appeared
+  - Post-test controls remained `paper_trading=true`, `allow_live=false`, and both Live lanes paused; no live order was placed
+- **Status**: **Completed - fresh-deployment manifest storage and safe Paper Review error handling verified; Live remained disarmed**

@@ -2,9 +2,13 @@
 
 ### Phase 44 - Paper Promotion Manifest Storage Bootstrap
 
-### Planned
-- Ensure the Paper Review promotion path creates its ignored runtime manifest directory on a fresh server checkout before attempting the atomic write.
-- Keep storage failures generic in the browser while retaining detailed diagnostics in server logs; no execution or Live safety gate is changed.
+### Fixed
+- Fixed Stage Paper Review on fresh deployments by creating the ignored runtime manifest directory before reading or atomically writing the strategy manifest.
+- Replaced browser-facing manifest read/write exception details with generic messages while retaining diagnostics in server logs; existing candidate, pause, Paper/Live, and Live-unlock gates remain unchanged.
+
+### Verification
+- The new missing-directory regression and the focused promotion/API/evidence/fee/dashboard suite passed: 77 tests passed.
+- Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed. Browser smoke staged the qualified candidate to PAPER on the deployed server; Live remained disarmed and no live order was placed.
 
 ### Phase 43 - Paper Promotion Evidence Parity
 

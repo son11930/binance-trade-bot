@@ -412,17 +412,26 @@ async def get_bot_control_endpoint(auth: bool = Depends(verify_jwt)):
 
 @app.post("/api/toggle_pause")
 async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(verify_jwt)):
-    if req.market == "spot":
-        set_bot_control(spot_paused=req.paused)
-    elif req.market == "futures":
-        set_bot_control(futures_paused=req.paused)
-    else:
+    # This endpoint predates independent Paper/Live lanes.  Keep only the
+    # fail-safe direction for an emergency stop; an ambiguous Resume request
+    # must never be allowed to release both modes, including from an older
+    # cached dashboard.
+    if req.market not in {"spot", "futures"}:
         raise HTTPException(status_code=400, detail="Invalid market. Must be 'spot' or 'futures'")
-    
-    new_state = get_public_bot_control()
+    if not req.paused:
+        raise HTTPException(
+            status_code=409,
+            detail="Legacy market-wide resume is disabled. Use the explicit PAPER or LIVE control.",
+        )
+
     state_key = f"{req.market}_paused"
-    if bool(new_state.get(state_key, not req.paused)) is not bool(req.paused):
-        raise HTTPException(status_code=503, detail="Pause control could not be persisted; state remains fail-closed.")
+    persisted = set_bot_control(**{state_key: True}, pause_reason=f"Emergency stop: {req.market}")
+    if not persisted:
+        raise HTTPException(status_code=503, detail="Emergency stop could not be persisted; execution remains fail-closed.")
+    new_state = get_public_bot_control()
+    if new_state.get(state_key) is not True:
+        raise HTTPException(status_code=503, detail="Emergency stop state could not be verified; execution remains fail-closed.")
+    await manager.broadcast({"type": "status_update", "data": get_bot_status()})
     await manager.broadcast({"type": "bot_control_update", "data": new_state})
     return {"status": "success", "data": new_state}
 
@@ -1452,7 +1461,13 @@ class _DashboardStaticFiles(StaticFiles):
             or normalized.endswith((".db", ".sqlite", ".sqlite3"))
         ):
             return PlainTextResponse("Not found", status_code=404)
-        return await super().get_response(path, scope)
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            if normalized.endswith(".html"):
+                response.headers["Cache-Control"] = "no-store, max-age=0"
+            elif normalized.endswith((".js", ".css")):
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
 
 
 _dashboard_directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard")

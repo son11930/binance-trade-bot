@@ -19,6 +19,52 @@ from .control import get_bot_control, set_bot_control, is_execution_paused
 
 setup_logging()
 
+
+def _eligible_execution_lanes(active_strategy, control, lanes):
+    """Yield only lanes that are explicitly allowed to open new positions.
+
+    Market data and protective reconciliation may still be shared by the
+    market managers, but strategy evaluation must be admitted per mode.  In
+    particular, a Paper resume can never schedule the LIVE evaluator.
+    """
+    strategy = active_strategy if isinstance(active_strategy, dict) else {}
+    active_stage = str(strategy.get("stage", "")).strip().upper()
+    control_state = control if isinstance(control, dict) else {}
+
+    for market, mode, state_manager, evaluator in lanes:
+        normalized_market = str(market).strip().lower()
+        normalized_mode = str(mode).strip().upper()
+        if normalized_mode not in {"PAPER", "LIVE"}:
+            continue
+        if is_execution_paused(normalized_market, normalized_mode, control=control_state):
+            continue
+
+        if normalized_mode == "LIVE":
+            if not strategy or active_stage != "LIVE" or not control_state.get("allow_live", False):
+                log_msg(
+                    "WARNING",
+                    f"Skipping {normalized_market} LIVE lane: validated LIVE strategy and unlock are required.",
+                    market_type=normalized_market,
+                )
+                continue
+        elif strategy and active_stage != "PAPER":
+            log_msg(
+                "WARNING",
+                f"Skipping {normalized_market} PAPER lane: active strategy is staged for {active_stage}.",
+                market_type=normalized_market,
+            )
+            continue
+
+        context = ExecutionContext(
+            execution_mode=normalized_mode,
+            deployment_id=strategy.get("id", "default_deployment") if strategy else "default_deployment",
+            strategy_id=strategy.get("name", "default_strategy") if strategy else "default_strategy",
+            version=strategy.get("version", "1.0.0") if strategy else "1.0.0",
+            artifact_hash=strategy.get("artifact_hash", "") if strategy else "",
+        )
+        yield normalized_market, normalized_mode, state_manager, evaluator, context
+
+
 def main():
     log_msg("INFO", "Starting Multi-Coin Dual-Engine Bot (Spot & Futures)...")
 
@@ -239,24 +285,7 @@ def main():
                     ("spot", "LIVE", state_manager_spot_live, evaluate_all_spot_strategies_single_pass),
                 )
 
-                for market, mode, state_manager, evaluator in lanes:
-                    if is_execution_paused(market, mode, control=ctrl):
-                        continue
-                    if mode == "LIVE":
-                        if not strat or strat.get("stage") != "LIVE" or not ctrl.get("allow_live", False):
-                            log_msg("WARNING", f"Skipping {market} LIVE lane: validated LIVE strategy and unlock are required.", market_type=market)
-                            continue
-                    elif strat and strat.get("stage") != "PAPER":
-                        log_msg("WARNING", f"Skipping {market} PAPER lane: active strategy is staged for {strat.get('stage')}.", market_type=market)
-                        continue
-
-                    context = ExecutionContext(
-                        execution_mode=mode,
-                        deployment_id=strat.get("id", "default_deployment") if strat else "default_deployment",
-                        strategy_id=strat.get("name", "default_strategy") if strat else "default_strategy",
-                        version=strat.get("version", "1.0.0") if strat else "1.0.0",
-                        artifact_hash=strat.get("artifact_hash", "") if strat else "",
-                    )
+                for market, mode, state_manager, evaluator, context in _eligible_execution_lanes(strat, ctrl, lanes):
                     threading.Thread(
                         target=evaluator,
                         args=(state_manager, SYMBOLS, context),

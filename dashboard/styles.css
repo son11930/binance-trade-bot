@@ -212,6 +212,23 @@ body {
     text-transform: none;
 }
 
+.execution-safety-note {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+    border: 1px solid rgba(59, 130, 246, .28);
+    border-radius: .85rem;
+    padding: .7rem .85rem;
+    background: rgba(15, 23, 42, .6);
+    color: #94A3B8;
+    font-size: .72rem;
+    line-height: 1.45;
+}
+
+.execution-safety-note strong {
+    color: #BFDBFE;
+}
+
 .view-switch {
     border: 1px solid rgba(71, 85, 105, .55);
     border-radius: .75rem;

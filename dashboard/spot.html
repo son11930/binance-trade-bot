@@ -24,7 +24,7 @@
             }
         };
     </script>
-    <link rel="stylesheet" href="styles.css?v=phase42-1">
+    <link rel="stylesheet" href="styles.css?v=phase43-1">
 </head>
 <body data-market="spot" data-dashboard-market="spot" class="min-h-screen p-4 md:p-8">
     <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -106,6 +106,12 @@
             <span id="status-display" class="status-pill status-pill--neutral">CONNECTING</span>
         </section>
 
+        <aside class="execution-safety-note" role="note">
+            <strong>Pause new entries:</strong> Paper and Live are separate execution lanes. The active validated strategy stage selects which lane may open new entries. The Telemetry view only changes which lane is displayed; market-data updates and protective exits for an existing position may continue independently.
+            <span>Use the explicit <strong>PAPER</strong> or <strong>LIVE</strong> control above.</span>
+            <span>Live stays locked until a validated LIVE strategy, server-side unlock, and clean reconciliation are all present.</span>
+        </aside>
+
         <div id="trading-monitor-view">
             <section class="grid grid-cols-1 gap-6 md:grid-cols-3" aria-label="AI committee">
                 <article class="glass-card rounded-2xl p-6" id="ui-bull-card">
@@ -170,14 +176,14 @@
         </div>
     </main>
 
-    <script src="js/config_utils.js?v=phase42-1"></script>
-    <script src="js/auth.js?v=phase42-1"></script>
-    <script src="js/websocket.js?v=phase42-1"></script>
-    <script src="js/ui_status.js?v=phase42-1"></script>
-    <script src="js/ui_trades.js?v=phase42-1"></script>
-    <script src="js/ui_logs.js?v=phase42-1"></script>
-    <script src="js/ui_lab.js?v=phase42-1"></script>
-    <script src="js/bot_control.js?v=phase42-1"></script>
-    <script src="app.js?v=phase42-1"></script>
+    <script src="js/config_utils.js?v=phase43-1"></script>
+    <script src="js/auth.js?v=phase43-1"></script>
+    <script src="js/websocket.js?v=phase43-1"></script>
+    <script src="js/ui_status.js?v=phase43-1"></script>
+    <script src="js/ui_trades.js?v=phase43-1"></script>
+    <script src="js/ui_logs.js?v=phase43-1"></script>
+    <script src="js/ui_lab.js?v=phase43-1"></script>
+    <script src="js/bot_control.js?v=phase43-1"></script>
+    <script src="app.js?v=phase43-1"></script>
 </body>
 </html>

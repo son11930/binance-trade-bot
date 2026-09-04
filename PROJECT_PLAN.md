@@ -561,3 +561,22 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - GPU launcher smoke completed 100 genomes in 16 seconds with CUDA, 20/20 symbols, all 12 strategy families represented, schema 2 telemetry, and successful progress/leaderboard flush against the existing shared database schema
   - No live order was placed during verification
 - **Status**: **Completed - execution boundary revalidation, cross-process control safety, promotion post-conditions, and transparent Lab telemetry implemented and verified**
+
+### Phase 42: Explicit Futures Execution Lane Controls
+
+- **Objective**: Remove the ambiguous market-wide Resume/Stop path so Futures Paper and Live execution are visibly and behaviorally separate, including when an older cached dashboard is still open.
+- **Scope**: legacy control endpoint behavior, scheduler lane admission, dashboard control labels, static asset cache policy, regression tests, changelog, and safe deployment verification. No live orders are permitted.
+- **Required behavior**:
+  1. A control request that cannot identify PAPER or LIVE must not mutate execution state.
+  2. Resuming Futures PAPER must admit only the staged, unpaused PAPER lane; LIVE must remain locked/paused unless its own explicit gates pass.
+  3. The dashboard must expose only explicit Paper/Live controls and explain that telemetry and protective reconciliation are distinct from opening new positions; the validated strategy stage selects the lane that may open entries.
+  4. HTML/JavaScript cache policy and asset versioning must prevent an older market-wide Resume button from changing execution state ambiguously after deployment.
+- **TDD/verification**:
+  - API tests for Paper-only resume, legacy endpoint rejection, and staged lane admission
+  - dashboard structure tests for explicit controls, no legacy button/fallback, cache policy, and explanatory labels
+  - Python compilation, JavaScript syntax checks, focused regression suite, web smoke, and paper-only runtime verification
+- **Exit gates**:
+  - no legacy market-wide endpoint can resume or unpause a lane
+  - a Paper resume cannot schedule the Futures LIVE evaluator
+  - no live order is placed during verification
+- **Status**: **Completed - explicit lane admission, fail-safe emergency stop, effective pause handling, cache policy, regression suite, and deployment verification passed**

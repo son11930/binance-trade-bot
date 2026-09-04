@@ -20,10 +20,12 @@ function getExecutionLane(data, market, mode) {
         return { paused: asBoolean(data[modeKey]), effective_paused: asBoolean(data[modeKey]) };
     }
 
-    const legacyKey = `${market}_paused`;
+    // A response without lane-specific state is from an older server/client.
+    // Treat it as paused until the explicit mode state is available.
     return {
-        paused: asBoolean(data[legacyKey]),
-        effective_paused: asBoolean(data[legacyKey])
+        paused: true,
+        effective_paused: true,
+        legacy_state_missing: true,
     };
 }
 
@@ -95,12 +97,6 @@ function updatePauseUI(data = {}) {
     updateExecutionLaneUI('LIVE', getExecutionLane(data, market, 'LIVE'), data);
 }
 
-async function togglePause() {
-    // Compatibility entry point for older cached pages.  New pages always
-    // bind to the explicit Paper/Live buttons below.
-    return toggleExecutionPause('PAPER');
-}
-
 async function toggleExecutionPause(mode) {
     const targetMarket = getTradingMarket();
     const normalizedMode = String(mode || '').toUpperCase();
@@ -119,9 +115,9 @@ async function toggleExecutionPause(mode) {
         return;
     }
 
-    const currentPaused = lane && Object.prototype.hasOwnProperty.call(lane, 'paused')
-        ? asBoolean(lane.paused)
-        : false;
+    const currentPaused = lane && Object.prototype.hasOwnProperty.call(lane, 'effective_paused')
+        ? asBoolean(lane.effective_paused)
+        : asBoolean(lane && lane.paused);
     try {
         const response = await fetch('/api/toggle_execution_pause', {
             method: 'POST',
@@ -143,6 +139,13 @@ async function toggleExecutionPause(mode) {
         console.error(`Error toggling ${normalizedMode} execution state:`, error);
         await fetchBotControl();
     }
+}
+
+// Compatibility shim for a stale page that still calls the old function.
+// It is deliberately scoped to PAPER and never calls the ambiguous
+// market-wide endpoint, so it cannot release a LIVE lane.
+async function togglePause() {
+    return toggleExecutionPause('PAPER');
 }
 
 async function toggleExecutionMode(key, value) {
@@ -225,12 +228,6 @@ function initializeMarketPage() {
 }
 
 function bindDashboardActions() {
-    const pauseButton = document.getElementById('toggle-pause-btn');
-    if (pauseButton && !pauseButton.dataset.bound) {
-        pauseButton.addEventListener('click', togglePause);
-        pauseButton.dataset.bound = 'true';
-    }
-
     ['PAPER', 'LIVE'].forEach((mode) => {
         const button = document.getElementById(`toggle-${mode.toLowerCase()}-pause-btn`);
         if (!button || button.dataset.bound) return;

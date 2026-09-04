@@ -1,5 +1,19 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 42 - Explicit Futures Execution Lane Controls
+
+### Added
+- Added an explicit scheduler admission helper that can schedule only the staged, unpaused execution lane; resuming Paper cannot schedule the Futures LIVE evaluator.
+- Added no-store HTML and revalidation headers for dashboard assets, plus a new asset version, so an older market-wide Resume page cannot change execution state ambiguously after deployment.
+- Added a visible Futures/Spot safety note distinguishing new-entry controls, telemetry view, protective reconciliation, and the validated strategy stage that selects the entry lane.
+
+### Fixed
+- Disabled legacy market-wide Resume through `/api/toggle_pause`; its `paused=true` direction remains available only as a fail-safe emergency stop and never changes lane flags.
+- Replaced the legacy dashboard `togglePause` behavior with a PAPER-only compatibility shim and made missing lane-specific control state appear paused until the new API response is available.
+
+### Verification
+- Added regression coverage for Paper-only resume, legacy endpoint rejection, staged-lane scheduling, explicit dashboard controls, stale HTML prevention, and no live order execution; the focused suite passed 81 tests with 1 skip.
+
 ### Phase 41 - Execution Boundary and Lab Evidence Hardening
 
 ### Added

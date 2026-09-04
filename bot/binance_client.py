@@ -458,46 +458,118 @@ from dataclasses import replace
 import logging
 from bot.database import sanitize_text
 
-def futures_cancel_all_orders(symbol: str, is_paper: bool = True):
+def _validate_live_protective_operation(state_manager, context, symbol: str) -> bool:
+    """Require a live state-manager lane before mutating native orders."""
+    if state_manager is None:
+        log_msg("ERROR", f"Live native-order mutation refused for {symbol}: execution lane is missing", market_type="futures")
+        return False
+    from .context import validate_execution_context
+    allowed, reason = validate_execution_context(
+        state_manager,
+        context,
+        is_paper=False,
+        allow_protective_exit=True,
+    )
+    if not allowed:
+        log_msg("WARNING", f"Live native-order mutation refused for {symbol}: {reason}", market_type="futures")
+    return allowed
+
+
+def _verified_futures_position(symbol: str, positionSide: str) -> dict | None:
+    """Return a non-zero position only when Binance confirms the requested side."""
+    position = futures_get_position(symbol, positionSide=positionSide)
+    if position is None:
+        return None
+    remote_side = str(position.get("positionSide", "")).strip().upper()
+    if remote_side and remote_side != str(positionSide).strip().upper():
+        return None
+    try:
+        if abs(float(position.get("positionAmt", 0))) <= 0:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return position
+
+
+def futures_cancel_all_orders(symbol: str, is_paper: bool = True, state_manager=None, context=None):
     """Cancel all open orders (including TP/SL) for a futures symbol."""
     try:
         if is_paper:
             log_msg("INFO", f"[FUTURES PAPER] Cancelled all orders for {symbol}")
             return True
-            
-        client.futures_cancel_all_open_orders(symbol=symbol)
+
+        from .control import execution_control_lock
+        with execution_control_lock():
+            if not _validate_live_protective_operation(state_manager, context, symbol):
+                return False
+            client.futures_cancel_all_open_orders(symbol=symbol)
         log_msg("INFO", f"Cancelled all open orders for {symbol}", market_type='futures')
         return True
     except Exception as e:
         log_msg("ERROR", f"Failed to cancel orders for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
-def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float, is_paper: bool = True):
+def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float, is_paper: bool = True, state_manager=None, context=None):
     """Set Take Profit and Stop Loss for a specific position using closePosition=True"""
     if is_paper:
         log_msg("INFO", f"[FUTURES PAPER] Set TP={tp_price} SL={sl_price} for {positionSide} {symbol}")
         return True
         
-    # For a LONG position, to close it we SELL. For a SHORT position, we BUY.
-    close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
-    
     try:
-        # Cancel existing orders first
-        futures_cancel_all_orders(symbol, is_paper=is_paper)
+        from .control import execution_control_lock
+        with execution_control_lock():
+            if not _validate_live_protective_operation(state_manager, context, symbol):
+                return False
+            if _verified_futures_position(symbol, positionSide) is None:
+                log_msg("ERROR", f"TP/SL refused for {symbol}: Binance position could not be verified", market_type="futures")
+                return False
+
+            # For a LONG position, to close it we SELL. For a SHORT position,
+            # we BUY. Do not cancel every order on the symbol before placing
+            # protection; an unrelated order must not be removed as a side effect.
+            close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
+            if tp_price > 0:
+                client.futures_create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    positionSide=positionSide,
+                    type='TAKE_PROFIT_MARKET',
+                    stopPrice=str(round(tp_price, 4)),
+                    closePosition=True
+                )
+
+            if sl_price > 0:
+                client.futures_create_order(
+                    symbol=symbol,
+                    side=close_side,
+                    positionSide=positionSide,
+                    type='STOP_MARKET',
+                    stopPrice=str(round(sl_price, 4)),
+                    closePosition=True
+                )
+        return True
+    except Exception as e:
+        log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {sanitize_error(e)}", market_type='futures')
+        return False
+
+def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float, is_paper: bool = True, state_manager=None, context=None) -> bool:
+    """Place a STOP_MARKET reduce-only (closePosition=True) order immediately after entry."""
+    if is_paper:
+        log_msg("INFO", f"[FUTURES PAPER] Native Stop Loss placed at {sl_price} for {positionSide} {symbol}")
+        return True
         
-        # Place Take Profit
-        if tp_price > 0:
-            client.futures_create_order(
-                symbol=symbol,
-                side=close_side,
-                positionSide=positionSide,
-                type='TAKE_PROFIT_MARKET',
-                stopPrice=str(round(tp_price, 4)),
-                closePosition=True
-            )
-            
-        # Place Stop Loss
-        if sl_price > 0:
+    try:
+        from .control import execution_control_lock
+        with execution_control_lock():
+            if not _validate_live_protective_operation(state_manager, context, symbol):
+                return False
+            if _verified_futures_position(symbol, positionSide) is None:
+                log_msg("ERROR", f"Native stop refused for {symbol}: Binance position could not be verified", market_type="futures")
+                return False
+
+            # Never cancel all symbol orders as a prerequisite for a new stop.
+            # A failed protection placement must not also remove unrelated orders.
+            close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
             client.futures_create_order(
                 symbol=symbol,
                 side=close_side,
@@ -506,31 +578,6 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
                 stopPrice=str(round(sl_price, 4)),
                 closePosition=True
             )
-        return True
-    except Exception as e:
-        log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {sanitize_error(e)}", market_type='futures')
-        return False
-
-def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float, is_paper: bool = True) -> bool:
-    """Place a STOP_MARKET reduce-only (closePosition=True) order immediately after entry."""
-    if is_paper:
-        log_msg("INFO", f"[FUTURES PAPER] Native Stop Loss placed at {sl_price} for {positionSide} {symbol}")
-        return True
-        
-    close_side = SIDE_SELL if positionSide == "LONG" else SIDE_BUY
-    
-    try:
-        # Cancel old stops first just in case
-        futures_cancel_all_orders(symbol, is_paper=is_paper)
-        
-        client.futures_create_order(
-            symbol=symbol,
-            side=close_side,
-            positionSide=positionSide,
-            type='STOP_MARKET',
-            stopPrice=str(round(sl_price, 4)),
-            closePosition=True
-        )
         log_msg("INFO", f"✅ Native STOP_MARKET placed at {sl_price} for {symbol}", market_type='futures')
         return True
     except Exception as e:

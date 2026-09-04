@@ -247,11 +247,21 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 
                 # Phase 5: Place Native Stop immediately (closePosition=True)
                 from .binance_client import futures_place_native_stop
-                if not futures_place_native_stop(symbol, position_side, sl_target, is_paper=is_paper):
+                if not futures_place_native_stop(symbol, position_side, sl_target, is_paper=is_paper, state_manager=state_manager, context=context):
                     log_msg("ERROR", f"🚨 Native Stop placement failed for {symbol}. FAILING CLOSED immediately.", market_type="futures")
                     close_signal = "SELL" if position_side == "LONG" else "BUY"
                     close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper, context=context)
                     
+                    if not close_trade:
+                        try:
+                            from .control import set_execution_pause
+                            set_execution_pause("futures", "PAPER" if is_paper else "LIVE", True, reason=f"{symbol} position protection/close could not be verified")
+                        except Exception as pause_error:
+                            log_msg("ERROR", f"Could not persist fail-closed futures pause for {symbol}: {pause_error}", market_type="futures")
+                        state_manager.update_state(symbol, active_strategy="CLOSING")
+                        send_discord_alert(f"⚠️ **[FAIL CLOSED] {symbol}**\nNative stop failed and the position could not be confirmed closed. Trading lane paused.")
+                        return
+
                     if close_trade:
                         profit_amt = (close_trade.get("pnl_amount") if isinstance(close_trade, dict) else getattr(close_trade, "pnl_amount", 0.0)) or 0.0
                         if profit_amt:
@@ -467,7 +477,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper)
                         if trade:
                             from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol, is_paper=is_paper)
+                            futures_cancel_all_orders(symbol, is_paper=is_paper, state_manager=state_manager, context=context)
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:
@@ -553,7 +563,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=is_paper)
                     if trade:
                         from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol, is_paper=is_paper)
+                        futures_cancel_all_orders(symbol, is_paper=is_paper, state_manager=state_manager, context=context)
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -758,7 +768,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=data['is_paper'], context=context)
                     if trade:
                         from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol, is_paper=data['is_paper'])
+                        futures_cancel_all_orders(symbol, is_paper=data['is_paper'], state_manager=state_manager, context=context)
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -776,7 +786,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=data['is_paper'], context=context)
                         if trade:
                             from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol, is_paper=data['is_paper'])
+                            futures_cancel_all_orders(symbol, is_paper=data['is_paper'], state_manager=state_manager, context=context)
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:

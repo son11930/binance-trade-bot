@@ -5,7 +5,34 @@ from .logger import log_msg
 from .risk_manager import calculate_pnl
 from .state import StateManager
 from .context import validate_execution_context
+from .control import ControlPersistenceError, execution_control_lock, set_execution_pause
 from .config import FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
+
+
+def _pause_after_persistence_failure(state_manager: StateManager, market_type: str, is_paper: bool):
+    """Stop one lane when an exchange-confirmed fill cannot be journaled."""
+    execution_mode = "PAPER" if is_paper else "LIVE"
+    reason = f"{market_type} {execution_mode} lane paused: confirmed execution was not persisted"
+    try:
+        set_execution_pause(market_type, execution_mode, True, reason=reason)
+    except Exception as exc:
+        log_msg("ERROR", f"Failed to persist fail-closed pause for {market_type} {execution_mode}: {exc}", market_type=market_type)
+
+
+def _unpersisted_execution(order: dict, avg_price: float, exec_qty: float, commission: float, commission_asset: str, pnl_amount=None, pnl_percent=None) -> dict:
+    """Return a truthy fill marker so callers do not reverse a real fill."""
+    return {
+        **(order if isinstance(order, dict) else {}),
+        "status": "FILLED",
+        "execution_confirmed": True,
+        "trade_persisted": False,
+        "parsed_avg_price": avg_price,
+        "parsed_exec_qty": exec_qty,
+        "parsed_commission": commission,
+        "parsed_commission_asset": commission_asset,
+        "pnl_amount": pnl_amount,
+        "pnl_percent": pnl_percent,
+    }
 
 def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
     state = state_manager.get_state(symbol)
@@ -23,6 +50,9 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
     if side == "SELL" and not is_paper:
         base_asset = symbol.replace("USDT", "")
         actual_balance = get_live_asset_balance(base_asset)
+        if actual_balance is None:
+            log_msg("ERROR", f"Live SELL refused for {symbol}: Binance balance could not be verified")
+            return None
         if actual_balance is not None:
             safe_qty = min(qty, actual_balance)
             if safe_qty < qty:
@@ -49,17 +79,18 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         else:
             # Recheck immediately before the exchange call so a pause or
             # manifest change during AI/queue work invalidates the order.
-            allowed, guard_reason = validate_execution_context(
-                state_manager,
-                context,
-                is_paper,
-                allow_protective_exit=is_protective_exit,
-            )
-            if not allowed:
-                log_msg("WARNING", f"Live order refused for {symbol}: {guard_reason}")
-                return None
-            from .binance_client import place_market_order
-            order = place_market_order(symbol, side, qty, is_paper=False, client_order_id=client_oid)
+            with execution_control_lock():
+                allowed, guard_reason = validate_execution_context(
+                    state_manager,
+                    context,
+                    is_paper,
+                    allow_protective_exit=is_protective_exit,
+                )
+                if not allowed:
+                    log_msg("WARNING", f"Live order refused for {symbol}: {guard_reason}")
+                    return None
+                from .binance_client import place_market_order
+                order = place_market_order(symbol, side, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
         if not avg_price:
             avg_price = price
@@ -74,6 +105,10 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
             commission_asset = "USDT"
         if commission < 0.01 and commission_asset == "USDT" and not is_paper:
             commission = 0.01
+    except ControlPersistenceError as e:
+        _pause_after_persistence_failure(state_manager, "spot", is_paper)
+        log_msg("ERROR", f"Live execution boundary unavailable for {symbol}: {e}")
+        return None
     except Exception as e:
         err_msg = sanitize_error(e)
         log_msg("ERROR", f"⚠️ Exchange Execution Failed for {symbol}: {err_msg}")
@@ -98,6 +133,9 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         deployment_id=context.deployment_id if context else None,
         strategy_id=context.strategy_id if context else None
     )
+    if not trade:
+        _pause_after_persistence_failure(state_manager, "spot", is_paper)
+        return _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
     if trade:
         log_msg("INFO", f"✅ Trade logged: {side} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})")
         return trade
@@ -133,13 +171,26 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
                     try:
                         from .binance_client import futures_get_position
                         live_pos = futures_get_position(symbol, positionSide=positionSide)
+                        if live_pos is None:
+                            log_msg("ERROR", f"Futures exit refused for {symbol}: Binance position could not be verified", market_type="futures")
+                            return None
+                        remote_side = str(live_pos.get("positionSide", "")).strip().upper()
+                        if remote_side and remote_side != str(positionSide).strip().upper():
+                            log_msg("ERROR", f"Futures exit refused for {symbol}: remote position side is {remote_side}, expected {positionSide}", market_type="futures")
+                            return None
                         if live_pos is not None:
                             actual_qty = abs(float(live_pos.get('positionAmt', 0)))
+                            if actual_qty <= 0:
+                                log_msg("INFO", f"Futures position already closed externally for {symbol}; clearing local state.", market_type="futures")
+                                from datetime import datetime, timezone
+                                state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+                                return None
                             if actual_qty < qty:
                                 log_msg("WARNING", f"📉 Adjusted FUTURES EXIT qty for {symbol} from {qty} to {actual_qty} to match Binance.", market_type="futures")
                                 qty = actual_qty
                     except Exception as e:
                         log_msg("ERROR", f"Failed to verify live futures position size before exit: {e}", market_type="futures")
+                        return None
                 
                 # Double check against local state to prevent over-closing in paper trading
                 qty = min(qty, state.position)
@@ -160,17 +211,18 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         else:
             # Recheck immediately before the exchange call so a pause or
             # manifest change during AI/queue work invalidates the order.
-            allowed, guard_reason = validate_execution_context(
-                state_manager,
-                context,
-                is_paper,
-                allow_protective_exit=is_protective_exit,
-            )
-            if not allowed:
-                log_msg("WARNING", f"Live futures order refused for {symbol}: {guard_reason}", market_type="futures")
-                return None
-            from .binance_client import futures_place_order
-            order = futures_place_order(symbol, side, positionSide, qty, is_paper=False, client_order_id=client_oid)
+            with execution_control_lock():
+                allowed, guard_reason = validate_execution_context(
+                    state_manager,
+                    context,
+                    is_paper,
+                    allow_protective_exit=is_protective_exit,
+                )
+                if not allowed:
+                    log_msg("WARNING", f"Live futures order refused for {symbol}: {guard_reason}", market_type="futures")
+                    return None
+                from .binance_client import futures_place_order
+                order = futures_place_order(symbol, side, positionSide, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
         if not avg_price:
             avg_price = price
@@ -195,6 +247,10 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
             commission_asset = "USDT"
         if commission < 0.01 and commission_asset == "USDT" and not is_paper:
             commission = 0.01
+    except ControlPersistenceError as e:
+        _pause_after_persistence_failure(state_manager, "futures", is_paper)
+        log_msg("ERROR", f"Futures execution boundary unavailable for {symbol}: {e}", market_type="futures")
+        return None
     except Exception as e:
         err_msg = sanitize_error(e)
         is_closing = (positionSide == "LONG" and side == "SELL") or (positionSide == "SHORT" and side == "BUY")
@@ -203,7 +259,7 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         if ("-1013" in err_msg or "-2019" in err_msg or "Margin is insufficient" in err_msg) and is_closing:
             log_msg("WARNING", f"🧹 Uncloseable position for {symbol} due to locked margin. Canceling all open orders to attempt close on next tick.", market_type="futures")
             from .binance_client import futures_cancel_all_orders
-            futures_cancel_all_orders(symbol, is_paper=is_paper)
+            futures_cancel_all_orders(symbol, is_paper=is_paper, state_manager=state_manager, context=context)
             return None
             
         if "MarginError" in err_msg or (("-2019" in err_msg or "Margin is insufficient" in err_msg) and is_opening):
@@ -232,6 +288,9 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         deployment_id=context.deployment_id if context else None,
         strategy_id=context.strategy_id if context else None
     )
+    if not trade:
+        _pause_after_persistence_failure(state_manager, "futures", is_paper)
+        return _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
     if trade:
         log_msg("INFO", f"✅ Futures Trade logged: {side} {positionSide} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})", market_type="futures")
         return trade

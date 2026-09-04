@@ -339,6 +339,12 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
         except Exception as e:
             logger.warning(f"Could not load historical leaderboard: {e}")
 
+    # A new run owns a new evidence snapshot. Clear the previous published
+    # rows after seeding historical parents so the dashboard cannot present a
+    # stale leaderboard while this run is still evaluating candidates.
+    if not BENCHMARK_MODE:
+        push_leaderboard_to_db_and_json_gpu([], force=True, run_id=run_id)
+
     best_so_far_score = max(
         [v.get("fitness_score", -1e9) for v in leaderboard_map.values() if v.get("full_evaluated", False)]
         or [-1e9]

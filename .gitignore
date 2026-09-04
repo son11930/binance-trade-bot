@@ -91,3 +91,5 @@ strategy_leaderboard*
 lab_progress*
 gpu_lab.log
 dashboard/data/
+bot_control.json.lock
+bot_control.json.fail_closed.*

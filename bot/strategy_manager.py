@@ -31,7 +31,14 @@ def _validated_active_strategy(active: Any) -> Dict[str, Any]:
             return {}
         if not secrets.compare_digest(candidate_id, f"gpu-{expected_hash[:20]}"):
             return {}
-        parameters = normalize_strategy_parameters(active.get("parameters"))
+        active_parameters = active.get("parameters")
+        evidence_parameters = evidence.get("parameters")
+        if not isinstance(active_parameters, dict) or not isinstance(evidence_parameters, dict):
+            return {}
+        parameters = normalize_strategy_parameters(active_parameters)
+        evidence_normalized = normalize_strategy_parameters(evidence_parameters)
+        if parameters != evidence_normalized:
+            return {}
         strategy_id(parameters["strategy_type"])
     except (TypeError, ValueError, KeyError):
         return {}

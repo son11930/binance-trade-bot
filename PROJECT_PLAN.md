@@ -539,6 +539,8 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   4. Pausing Live blocks new entries but does not suppress emergency exits/reconciliation for an already-open live position.
   5. Promotion verifies all required control post-conditions and leaves Live disarmed on any persistence mismatch.
   6. Lab telemetry initializes every strategy family, distinguishes family selection from exploratory mutation intensity, preserves truthful archive/published counts, and reports partial runs as stopped rather than completed.
+  7. Exchange-confirmed fills cannot be mistaken for failed orders when journaling is unavailable; native protection and cancellation stay behind the same live lane boundary.
+  8. A new Lab run clears the published snapshot and the API refuses unversioned or stale evidence for display and promotion.
 - **TDD/verification**:
   - regression tests for pause/manifest invalidation at the order boundary and cross-process control updates
   - mode-context tests for both evaluator paths and protective-exit behavior
@@ -550,8 +552,9 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Lab counters cannot be mistaken for leaderboard-card count
   - no live order is placed during verification
 - **Verification**:
-  - Focused execution/API/dashboard/fee/GPU hardening suite: 79 passed, 1 skipped
+  - Focused execution/API/dashboard/fee/GPU hardening suite: 66 passed, 1 skipped; phase hardening subset: 15 passed
   - Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed
-  - Boundary regression tests confirm stale Paper/Live orders are refused, protective exits remain available, failed control writes latch fail-closed, and partial Lab runs are reported as stopped
+  - Boundary regression tests confirm stale Paper/Live orders are refused, protective exits remain available, failed control writes latch fail-closed, unjournaled fills pause their lane, native stops require verified exchange positions, and partial Lab runs are reported as stopped
+  - Versioned leaderboard/progress tests confirm old snapshots cannot be served or promoted as current
   - No live order was placed during verification
 - **Status**: **Completed - execution boundary revalidation, cross-process control safety, promotion post-conditions, and transparent Lab telemetry implemented and verified**

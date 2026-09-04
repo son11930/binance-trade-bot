@@ -6,15 +6,18 @@
 - Added an immutable execution-context snapshot with an order-boundary recheck. Queued work is rejected when its Paper/Live manager, pause state, or validated strategy identity no longer matches.
 - Added cross-process locking for the shared control file and a fail-closed safety latch when a circuit-breaker pause cannot be persisted.
 - Added Lab run identifiers, telemetry schema versioning, per-family TPE/mutant/exploratory counters, explicit published-leader counts, and partial-run status handling.
+- Added a shared exchange-boundary lock, exchange-position verification for native Futures protection, and a confirmed-fill marker when journaling fails.
 
 ### Fixed
 - Fixed Futures evaluation paths that could derive the execution mode from a later manifest read instead of the lane's state manager.
 - Kept protective exits available while a lane is paused for new entries, so an existing position can still be flattened safely.
 - Fixed the Lab dashboard from overwriting archive-retention counts with the number of visible leaderboard cards; old snapshots without the new telemetry are no longer presented as measured zeroes.
+- Fixed native stop placement from canceling every symbol order before protection, and keep a lane fail-closed when an exchange-confirmed fill cannot be persisted or a protective close cannot be verified.
+- Fixed manifest validation to require top-level parameters to match the hash-bound evidence, and stopped the API from serving unversioned/old leaderboard or progress snapshots as current.
 
 ### Verification
 - Added regression coverage for order-boundary invalidation, Paper/Live mode mismatch, protective exits, failed control persistence, strategy-family coverage, and partial-run status.
-- Focused execution/API/dashboard/fee/GPU hardening suite: 79 passed, 1 skipped; Python compilation, dashboard JavaScript syntax, and Git whitespace checks passed. No live order was placed.
+- Focused execution/API/dashboard/fee/GPU hardening suite: 66 passed, 1 skipped; the 15-test phase hardening subset also passed. Python compilation and Git whitespace checks passed. No live order was placed.
 
 ### Phase 40 - Independent Paper/Live Controls and GPU Exploration Transparency
 

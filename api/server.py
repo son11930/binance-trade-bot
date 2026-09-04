@@ -621,7 +621,7 @@ async def receive_broadcast(state: BroadcastState, request: Request, auth: bool 
     return {"status": "ok"}
 
 
-_leaderboard_cache = {"data": None, "expiry": 0}
+_leaderboard_cache = {"data": None, "expiry": 0, "snapshot": None}
 
 _LEADERBOARD_META_FIELDS = (
     "evaluation_stage",
@@ -656,11 +656,15 @@ _LEADERBOARD_META_FIELDS = (
     "oos_fee_paid_1y_pct",
     "fee_paid_1y_pct",
     "fee_paid_1y_dollar",
+    "run_id",
+    "telemetry_schema_version",
+    "updated_at",
+    "published_leader_count",
 )
 
 
-def _read_leaderboard_json() -> List[Dict[str, Any]]:
-    """Read the atomic lab snapshot, preserving candidate evidence metadata."""
+def _read_leaderboard_file_snapshot() -> dict | None:
+    """Read the local atomic lab snapshot and preserve its run provenance."""
     json_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "dashboard", "data", "strategy_leaderboard.json",
@@ -670,11 +674,125 @@ def _read_leaderboard_json() -> List[Dict[str, Any]]:
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        strategies = data.get("strategies", []) if isinstance(data, dict) else []
-        return [item for item in strategies if isinstance(item, dict)][:10]
+        if not isinstance(data, dict):
+            return {"strategies": [], "telemetry_schema_version": 0, "run_id": "", "updated_at": ""}
+        strategies = data.get("strategies", [])
+        if not isinstance(strategies, list):
+            strategies = []
+        return {
+            "strategies": [item for item in strategies if isinstance(item, dict)][:10],
+            "telemetry_schema_version": int(data.get("telemetry_schema_version", 0) or 0),
+            "run_id": str(data.get("run_id", "") or ""),
+            "updated_at": str(data.get("updated_at", "") or ""),
+            "published_leader_count": int(data.get("published_leader_count", len(strategies)) or 0),
+        }
     except (OSError, ValueError, TypeError) as exc:
         logging.warning(f"Error reading JSON fallback leaderboard: {exc}")
-        return []
+        return None
+
+
+def _read_leaderboard_json() -> List[Dict[str, Any]]:
+    """Compatibility helper returning only the current snapshot rows."""
+    snapshot = _read_leaderboard_file_snapshot()
+    return snapshot["strategies"] if snapshot else []
+
+
+def _read_lab_progress_run_id() -> str:
+    progress_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "dashboard", "data", "lab_progress.json",
+    )
+    if not os.path.exists(progress_path):
+        return ""
+    try:
+        with open(progress_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            return ""
+        if int(data.get("telemetry_schema_version", 0) or 0) < 2:
+            return ""
+        return str(data.get("run_id", "") or "")
+    except (OSError, ValueError, TypeError):
+        return ""
+
+
+def _read_lab_progress_db_run_id() -> str:
+    """Read the current run id from the shared database when available."""
+    db = SessionLocalFutures()
+    try:
+        from bot.database import LabProgressState
+        row = db.query(LabProgressState).filter_by(id=1).first()
+        if not row or int(getattr(row, "telemetry_schema_version", 0) or 0) < 2:
+            return ""
+        return str(getattr(row, "run_id", "") or "")
+    except Exception:
+        return ""
+    finally:
+        db.close()
+
+
+def _read_leaderboard_db_snapshot() -> dict | None:
+    """Read a current versioned leaderboard from the shared lab database."""
+    db = SessionLocalFutures()
+    try:
+        rows = db.query(StrategyLeaderboard).order_by(StrategyLeaderboard.rank.asc()).limit(10).all()
+        if not rows:
+            return None
+        strategies = [_format_leaderboard_row(row) for row in rows]
+        run_ids = {str(item.get("run_id", "") or "") for item in strategies}
+        schemas = {int(item.get("telemetry_schema_version", 0) or 0) for item in strategies}
+        if len(run_ids) != 1 or not next(iter(run_ids)) or schemas != {2}:
+            logging.warning("Ignoring unversioned or mixed-run DB leaderboard rows")
+            return None
+        first = strategies[0]
+        return {
+            "strategies": strategies,
+            "telemetry_schema_version": 2,
+            "run_id": next(iter(run_ids)),
+            "updated_at": str(first.get("updated_at", "") or ""),
+            "published_leader_count": int(first.get("published_leader_count", len(strategies)) or 0),
+        }
+    except Exception as exc:
+        logging.warning(f"DB Leaderboard query failed: {exc}")
+        return None
+    finally:
+        db.close()
+
+
+def _read_leaderboard_snapshot() -> dict | None:
+    """Read the newest versioned snapshot from shared DB or local JSON."""
+    current_run_id = _read_lab_progress_run_id() or _read_lab_progress_db_run_id()
+    db_snapshot = _read_leaderboard_db_snapshot()
+    if db_snapshot is not None and (
+        not current_run_id or db_snapshot.get("run_id") == current_run_id
+    ):
+        return db_snapshot
+    file_snapshot = _read_leaderboard_file_snapshot()
+    if file_snapshot is None:
+        return None
+    if current_run_id and file_snapshot.get("run_id") != current_run_id:
+        return {
+            **file_snapshot,
+            "strategies": [],
+            "run_id": current_run_id,
+            "telemetry_schema_version": 2,
+            "published_leader_count": 0,
+        }
+    return file_snapshot
+
+
+def _leaderboard_response(snapshot: dict) -> dict:
+    return {
+        "status": "ok",
+        "strategies": snapshot.get("strategies", []),
+        "snapshot": {
+            "available": snapshot.get("telemetry_schema_version", 0) >= 2 and bool(snapshot.get("run_id")),
+            "run_id": snapshot.get("run_id", ""),
+            "updated_at": snapshot.get("updated_at", ""),
+            "telemetry_schema_version": snapshot.get("telemetry_schema_version", 0),
+            "published_leader_count": snapshot.get("published_leader_count", 0),
+        },
+    }
 
 
 def _format_leaderboard_row(row: Any) -> Dict[str, Any]:
@@ -710,36 +828,42 @@ def _format_leaderboard_row(row: Any) -> Dict[str, Any]:
 def get_strategy_leaderboard(auth: bool = Depends(verify_jwt)):
     """Return the latest candidate snapshot with its promotion evidence intact."""
     now = time.time()
-    if _leaderboard_cache["data"] and now < _leaderboard_cache["expiry"]:
+    if _leaderboard_cache["data"] is not None and now < _leaderboard_cache["expiry"]:
+        cached_snapshot = _leaderboard_cache.get("snapshot")
+        if cached_snapshot:
+            return _leaderboard_response(cached_snapshot)
         return {"status": "ok", "strategies": _leaderboard_cache["data"]}
 
-    strategies = _read_leaderboard_json()
-    if strategies:
-        _leaderboard_cache["data"] = strategies
+    # The JSON file is the lab's atomic publication boundary. If it exists,
+    # do not fall back to older DB rows when it is empty or from an old schema.
+    # That would make a new/partial run look like the previous run succeeded.
+    snapshot = _read_leaderboard_snapshot()
+    if snapshot is not None:
+        if snapshot.get("telemetry_schema_version", 0) < 2 or not snapshot.get("run_id"):
+            snapshot = {
+                **snapshot,
+                "strategies": [],
+                "telemetry_schema_version": snapshot.get("telemetry_schema_version", 0),
+                "run_id": snapshot.get("run_id", ""),
+            }
+        _leaderboard_cache["data"] = snapshot.get("strategies", [])
         _leaderboard_cache["expiry"] = now + 15.0
-        return {"status": "ok", "strategies": strategies}
+        _leaderboard_cache["snapshot"] = snapshot
+        return _leaderboard_response(snapshot)
 
-    strategies = []
-    db = SessionLocalFutures()
-    try:
-        rows = db.query(StrategyLeaderboard).order_by(StrategyLeaderboard.rank.asc()).limit(10).all()
-        for r in rows:
-            strategies.append(_format_leaderboard_row(r))
-        if strategies:
-            _leaderboard_cache["data"] = strategies
-            _leaderboard_cache["expiry"] = now + 15.0
-    except Exception as e:
-        logging.warning(f"DB Leaderboard query failed ({e}), checking JSON fallback...")
-    finally:
-        db.close()
-        
-    if not strategies:
-        strategies = _read_leaderboard_json()
-        if strategies:
-            _leaderboard_cache["data"] = strategies
-            _leaderboard_cache["expiry"] = now + 15.0
-                
-    return {"status": "ok", "strategies": strategies}
+    # No atomic lab snapshot exists yet. Keep the endpoint honest instead of
+    # exposing an unversioned legacy DB leaderboard as current evidence.
+    empty_snapshot = {
+        "strategies": [],
+        "telemetry_schema_version": 0,
+        "run_id": "",
+        "updated_at": "",
+        "published_leader_count": 0,
+    }
+    _leaderboard_cache["data"] = []
+    _leaderboard_cache["expiry"] = now + 5.0
+    _leaderboard_cache["snapshot"] = empty_snapshot
+    return _leaderboard_response(empty_snapshot)
 
 
 @app.get("/api/lab/progress")
@@ -804,7 +928,13 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
             import json
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return {"status": "ok", "progress": data}
+                if (
+                    isinstance(data, dict)
+                    and int(data.get("telemetry_schema_version", 0) or 0) >= 2
+                    and str(data.get("run_id", "") or "")
+                ):
+                    return {"status": "ok", "progress": data}
+                logging.warning("Ignoring unversioned or stale lab progress snapshot")
         except Exception as e:
             logging.error(f"Error reading lab progress: {e}")
     return {"status": "ok", "progress": {"status": "idle"}}
@@ -814,17 +944,30 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
 @limiter.limit("120/minute")
 async def upload_strategy_results(data: Dict[str, Any], request: Request):
     """Webhook endpoint for local AI Synthesizer Lab to push Top 10 results."""
-    _leaderboard_cache["expiry"] = 0  # Invalidate cache instantly on new results
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Invalid lab snapshot")
+    try:
+        telemetry_schema_version = int(data.get("telemetry_schema_version", 0) or 0)
+    except (TypeError, ValueError):
+        telemetry_schema_version = 0
+    run_id = str(data.get("run_id", "") or "")
+    if telemetry_schema_version < 2 or not run_id:
+        raise HTTPException(status_code=400, detail="Versioned lab snapshot with run_id is required")
+
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "").strip() if auth_header else ""
     if not token or (token != WEBHOOK_TOKEN and token != os.getenv("BOT_TOKEN", "")):
         raise HTTPException(status_code=401, detail="Unauthorized upload")
+
+    _leaderboard_cache["expiry"] = 0  # Invalidate cache instantly on new results
+    _leaderboard_cache["data"] = None
+    _leaderboard_cache["snapshot"] = None
             
     strategies = data.get("strategies", [])
-    if not strategies:
-        return {"status": "error", "message": "No strategies provided"}
+    if not isinstance(strategies, list):
+        raise HTTPException(status_code=400, detail="strategies must be a list")
 
-    if not isinstance(strategies, list) or any(
+    if any(
         not isinstance(item, dict) or not _has_valid_candidate_evidence(item)
         for item in strategies
     ):
@@ -833,11 +976,18 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
         
     json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
+    published_at = datetime.now(timezone.utc).isoformat()
     try:
         import json
         tmp_json_path = f"{json_path}.tmp"
         with open(tmp_json_path, "w", encoding="utf-8") as f:
-            json.dump({"updated_at": datetime.now(timezone.utc).isoformat(), "strategies": strategies}, f, indent=2)
+            json.dump({
+                "updated_at": published_at,
+                "run_id": run_id,
+                "telemetry_schema_version": telemetry_schema_version,
+                "published_leader_count": len(strategies),
+                "strategies": strategies,
+            }, f, indent=2)
         os.replace(tmp_json_path, json_path)
     except Exception as e:
         logging.error(f"Failed to save JSON leaderboard: {e}")
@@ -847,6 +997,13 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
         db.query(StrategyLeaderboard).delete()
         for idx, item in enumerate(strategies[:10], 1):
             import json
+            stored_item = {
+                **item,
+                "run_id": run_id,
+                "telemetry_schema_version": telemetry_schema_version,
+                "updated_at": published_at,
+                "published_leader_count": len(strategies),
+            }
             row = StrategyLeaderboard(
                 rank=int(idx),
                 name=str(item.get("name", f"Blueprint #{idx}")),
@@ -860,7 +1017,7 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
                 moonshots_1y=int(item.get("moonshots_1y", 0)),
                 # Preserve candidate evidence in the legacy text column so a
                 # DB-only read still exposes qualification/promotion state.
-                parameters_json=json.dumps(item)
+                parameters_json=json.dumps(stored_item)
             )
             db.add(row)
         db.commit()
@@ -999,17 +1156,17 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
             logging.error(f"Could not verify open positions; refusing deployment: {e}")
             raise HTTPException(status_code=503, detail="Could not verify exchange positions; deployment refused")
         
-    json_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_leaderboard.json")
-    if not os.path.exists(json_path):
-        raise HTTPException(status_code=404, detail="Leaderboard not found")
-        
-    try:
-        import json
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            strategies = data.get("strategies", [])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading leaderboard: {e}")
+    snapshot = _read_leaderboard_snapshot()
+    if (
+        snapshot is None
+        or snapshot.get("telemetry_schema_version", 0) < 2
+        or not snapshot.get("run_id")
+    ):
+        raise HTTPException(status_code=409, detail="A current versioned lab leaderboard is required before deployment")
+    progress_run_id = _read_lab_progress_run_id()
+    if progress_run_id and progress_run_id != snapshot.get("run_id"):
+        raise HTTPException(status_code=409, detail="Leaderboard does not match the current lab progress run")
+    strategies = snapshot.get("strategies", [])
         
     target_strat = next((s for s in strategies if s.get("candidate_id") == req.candidate_id), None)
     if not target_strat:

@@ -156,7 +156,12 @@ class WebSocketManager:
                                 from .webhook_notifier import update_bot_state
                                 update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='spot')
                             else:
-                                self.state_manager.update_state(symbol, active_strategy="NONE")
+                                from .control import set_execution_pause
+                                try:
+                                    set_execution_pause(self.market_type, "PAPER" if execution_mode else "LIVE", True, reason=f"{symbol} protective close could not be confirmed")
+                                except Exception as pause_error:
+                                    log_msg("ERROR", f"Could not persist fail-closed pause for {symbol}: {pause_error}", market_type=self.market_type)
+                                self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         _execution_pool.submit(_execute_spot_rm)
             elif self.market_type == 'futures':
                 state = self.state_manager.get_state(symbol)
@@ -186,7 +191,7 @@ class WebSocketManager:
                             trade = execute_futures_trade(self.state_manager, symbol, close_side, state.position_side, state.position, current_price, reason=rm_signal, is_paper=execution_mode)
                             if trade:
                                 from .binance_client import futures_cancel_all_orders
-                                futures_cancel_all_orders(symbol, is_paper=execution_mode)
+                                futures_cancel_all_orders(symbol, is_paper=execution_mode, state_manager=self.state_manager)
                                 _, pnl_amt = _notify_profitable_close(trade, symbol, rm_signal, "futures")
                                 if pnl_amt:
                                     self.state_manager.add_to_balance(pnl_amt)
@@ -195,7 +200,12 @@ class WebSocketManager:
                                 from .webhook_notifier import update_bot_state
                                 update_bot_state(self.state_manager, f"Closed {symbol} via {rm_signal}", symbol=symbol, market_type='futures')
                             else:
-                                self.state_manager.update_state(symbol, active_strategy="NONE")
+                                from .control import set_execution_pause
+                                try:
+                                    set_execution_pause(self.market_type, "PAPER" if execution_mode else "LIVE", True, reason=f"{symbol} protective close could not be confirmed")
+                                except Exception as pause_error:
+                                    log_msg("ERROR", f"Could not persist fail-closed pause for {symbol}: {pause_error}", market_type=self.market_type)
+                                self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         _execution_pool.submit(_execute_futures_rm)
                     
             # 2. Strategy evaluation on candle close is now handled by the Central Trading Loop in main.py

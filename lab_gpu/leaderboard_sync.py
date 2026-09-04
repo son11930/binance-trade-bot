@@ -122,13 +122,14 @@ def _sync_worker_loop():
                         pass # Ignore DB failures silently to avoid spam
 
             # 2. Process Leaderboard Updates
-            if lb_data:
+            if lb_data is not None:
+                published_at = datetime.now(timezone.utc).isoformat()
                 # 2.1 JSON Leaderboard Update (Atomic)
                 lb_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
                 os.makedirs(DASHBOARD_DATA_DIR, exist_ok=True)
                 try:
                     payload = {
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": published_at,
                         "run_id": lb_metadata.get("run_id", ""),
                         "telemetry_schema_version": 2,
                         "published_leader_count": len(lb_data),
@@ -148,6 +149,13 @@ def _sync_worker_loop():
                         with Session() as sess:
                             sess.query(StrategyLeaderboard).delete()
                             for idx, item in enumerate(lb_data, 1):
+                                stored_item = {
+                                    **item,
+                                    "run_id": lb_metadata.get("run_id", ""),
+                                    "telemetry_schema_version": 2,
+                                    "updated_at": published_at,
+                                    "published_leader_count": len(lb_data),
+                                }
                                 sess.add(StrategyLeaderboard(
                                     rank=int(idx), name=str(item["name"]),
                                     net_profit_1m=float(item["net_profit_1m"]),
@@ -158,7 +166,7 @@ def _sync_worker_loop():
                                     max_drawdown=float(item["max_dd"]),
                                     total_trades_1y=int(item["total_trades_1y"]),
                                     moonshots_1y=int(item["moonshots_1y"]),
-                                     parameters_json=json.dumps(item)
+                                     parameters_json=json.dumps(stored_item)
                                 ))
                             sess.commit()
                         last_leaderboard_db_write = now_ts
@@ -273,10 +281,9 @@ def push_leaderboard_to_db_and_json_gpu(
     """Puts leaderboard data into the background async queue only if it's meaningful."""
     global _last_top1_score, _last_lb_push_time
     
-    if not leaderboard:
+    if not leaderboard and not force:
         return
-        
-    current_top1 = float(leaderboard[0].get("fitness_score", -99999.0))
+    current_top1 = float(leaderboard[0].get("fitness_score", -99999.0)) if leaderboard else -99999.0
     now_ts = time.time()
     
     # PREDICATE: Only sync if there is a NEW global best OR 10 seconds have passed, OR if forced
@@ -323,11 +330,12 @@ def flush_sync_worker():
         except Exception as e:
             logger.error(f"Flush failed for progress DB: {e}")
 
-    if lb_data:
+    if lb_data is not None:
         lb_path = os.path.join(DASHBOARD_DATA_DIR, "strategy_leaderboard.json")
+        published_at = datetime.now(timezone.utc).isoformat()
         try:
             payload = {
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": published_at,
                 "run_id": lb_metadata.get("run_id", ""),
                 "telemetry_schema_version": 2,
                 "published_leader_count": len(lb_data),
@@ -343,6 +351,13 @@ def flush_sync_worker():
             with Session() as sess:
                 sess.query(StrategyLeaderboard).delete()
                 for idx, item in enumerate(lb_data, 1):
+                    stored_item = {
+                        **item,
+                        "run_id": lb_metadata.get("run_id", ""),
+                        "telemetry_schema_version": 2,
+                        "updated_at": published_at,
+                        "published_leader_count": len(lb_data),
+                    }
                     sess.add(StrategyLeaderboard(
                         rank=int(idx), name=str(item["name"]),
                         net_profit_1m=float(item["net_profit_1m"]),
@@ -353,7 +368,7 @@ def flush_sync_worker():
                         max_drawdown=float(item["max_dd"]),
                         total_trades_1y=int(item["total_trades_1y"]),
                         moonshots_1y=int(item["moonshots_1y"]),
-                         parameters_json=json.dumps(item)
+                         parameters_json=json.dumps(stored_item)
                     ))
                 sess.commit()
         except Exception as e:

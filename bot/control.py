@@ -111,6 +111,10 @@ def _control_lock_path() -> str:
     return f"{CONTROL_FILE}.lock"
 
 
+def _fail_closed_path(key: str) -> str:
+    return f"{CONTROL_FILE}.fail_closed.{key}"
+
+
 @contextmanager
 def _interprocess_control_lock():
     """Serialize control read/modify/write operations across API and bot processes."""
@@ -119,49 +123,85 @@ def _interprocess_control_lock():
         parent = os.path.dirname(lock_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(lock_path, "a+b") as handle:
-            # msvcrt.locking requires an existing byte and append mode would
-            # otherwise grow the lock file on every control update.
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"0")
-                handle.flush()
-            handle.seek(0)
+        handle = open(lock_path, "a+b")
+    except Exception as exc:
+        raise ControlPersistenceError(f"control lock unavailable: {exc}") from exc
+
+    locked = False
+    try:
+        # msvcrt.locking requires an existing byte and append mode would
+        # otherwise grow the lock file on every control update.
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
             if os.name == "nt":
                 import msvcrt
                 msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
+            locked = True
+        except Exception as exc:
+            raise ControlPersistenceError(f"control lock unavailable: {exc}") from exc
+
+        # Exceptions raised by the protected operation must propagate as-is;
+        # only lock acquisition failures are converted to a persistence error.
+        yield
+    finally:
+        if locked:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    except Exception as exc:
-        raise ControlPersistenceError(f"control lock unavailable: {exc}") from exc
+            finally:
+                handle.close()
+        else:
+            handle.close()
+
+
+@contextmanager
+def execution_control_lock():
+    """Hold the shared control lock across an exchange-boundary operation."""
+    with _interprocess_control_lock():
+        yield
 
 
 def _set_fail_closed_latch(market: str, execution_mode: str):
     key = _execution_pause_key(market, execution_mode)
     with _latch_lock:
         _fail_closed_latches.add(key)
+    try:
+        with open(_fail_closed_path(key), "a", encoding="utf-8"):
+            pass
+    except Exception:
+        # The in-process latch still denies execution when the filesystem is
+        # unavailable; the durable marker is best effort for the other process.
+        pass
 
 
 def _clear_fail_closed_latch(market: str, execution_mode: str):
     key = _execution_pause_key(market, execution_mode)
     with _latch_lock:
         _fail_closed_latches.discard(key)
+    try:
+        os.remove(_fail_closed_path(key))
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
 
 
 def _has_fail_closed_latch(market: str, execution_mode: str) -> bool:
     key = _execution_pause_key(market, execution_mode)
     with _latch_lock:
-        return key in _fail_closed_latches
+        return key in _fail_closed_latches or os.path.exists(_fail_closed_path(key))
 
 
 def _write_state_unlocked(state: dict) -> bool:
@@ -216,8 +256,8 @@ def set_bot_control(
     }
 
     try:
-        with _lock:
-            with _interprocess_control_lock():
+        with _interprocess_control_lock():
+            with _lock:
                 current_state = _read_state_unlocked()
                 next_state = _normalise_state({**current_state, **updates})
                 persisted = _write_state_unlocked(next_state)
@@ -245,8 +285,8 @@ def set_execution_pause(market: str, execution_mode: str, paused: bool, reason=N
         updates["pause_reason"] = str(reason)
 
     try:
-        with _lock:
-            with _interprocess_control_lock():
+        with _interprocess_control_lock():
+            with _lock:
                 current_state = _read_state_unlocked()
                 next_state = _normalise_state({**current_state, **updates})
                 if not _write_state_unlocked(next_state):

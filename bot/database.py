@@ -265,17 +265,78 @@ class LabProgressState(Base):
     run_id = Column(String(100))
     telemetry_schema_version = Column(Integer)
 
+
+LAB_PROGRESS_SCHEMA_COLUMNS = {
+    "generated_count": "INTEGER",
+    "screened_count": "INTEGER",
+    "full_evaluated_count": "INTEGER",
+    "qualified_count": "INTEGER",
+    "rejected_count": "INTEGER",
+    "tpe_sampled_count": "INTEGER",
+    "mutant_count": "INTEGER",
+    "exploration_mutant_count": "INTEGER",
+    "retained_leader_count": "INTEGER",
+    "strategy_generated_counts_json": "TEXT",
+    "strategy_full_evaluated_counts_json": "TEXT",
+    "strategy_qualified_counts_json": "TEXT",
+    "strategy_rejected_counts_json": "TEXT",
+    "strategy_tpe_counts_json": "TEXT",
+    "strategy_mutant_counts_json": "TEXT",
+    "strategy_exploration_counts_json": "TEXT",
+    "published_leader_count": "INTEGER",
+    "historical_re_evaluated_count": "INTEGER",
+    "run_id": "VARCHAR(100)",
+    "telemetry_schema_version": "INTEGER",
+}
+
+
+def ensure_lab_progress_schema(engine) -> bool:
+    """Add known telemetry columns to an existing Lab progress table safely."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        existing = {
+            column["name"]
+            for column in sqlalchemy.inspect(engine).get_columns("lab_progress_state")
+        }
+    except Exception:
+        return False
+
+    for column, sql_type in LAB_PROGRESS_SCHEMA_COLUMNS.items():
+        if column in existing:
+            continue
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    sqlalchemy.text(
+                        f"ALTER TABLE lab_progress_state ADD COLUMN {column} {sql_type}"
+                    )
+                )
+            existing.add(column)
+        except Exception:
+            # Another process may have added the column between inspection and
+            # ALTER. Re-inspect before declaring migration failure.
+            try:
+                existing = {
+                    item["name"]
+                    for item in sqlalchemy.inspect(engine).get_columns("lab_progress_state")
+                }
+            except Exception:
+                return False
+            if column not in existing:
+                return False
+    return True
+
+
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
     Base.metadata.create_all(bind=engine_futures)
     
     # Auto-migrate new columns for Phase 6+
-    from sqlalchemy import text
     for engine in [engine_spot, engine_futures]:
         with engine.connect() as conn:
             for col in ['execution_mode', 'deployment_id', 'strategy_id']:
                 try:
-                    conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} VARCHAR"))
+                    conn.execute(sqlalchemy.text(f"ALTER TABLE trades ADD COLUMN {col} VARCHAR"))
                     try:
                         conn.commit()
                     except Exception:
@@ -287,43 +348,8 @@ def init_db():
                     except Exception:
                         pass
 
-            # Lab progress is written by the local GPU worker and may be read
-            # by a server using an older SQLite/Postgres schema.  Add only the
-            # known telemetry columns; never build SQL from user input.
-            progress_columns = {
-                'generated_count': 'INTEGER',
-                'screened_count': 'INTEGER',
-                'full_evaluated_count': 'INTEGER',
-                'qualified_count': 'INTEGER',
-                'rejected_count': 'INTEGER',
-                'tpe_sampled_count': 'INTEGER',
-                'mutant_count': 'INTEGER',
-                'exploration_mutant_count': 'INTEGER',
-                'retained_leader_count': 'INTEGER',
-                'strategy_generated_counts_json': 'TEXT',
-                'strategy_full_evaluated_counts_json': 'TEXT',
-                'strategy_qualified_counts_json': 'TEXT',
-                'strategy_rejected_counts_json': 'TEXT',
-                'strategy_tpe_counts_json': 'TEXT',
-                'strategy_mutant_counts_json': 'TEXT',
-                'strategy_exploration_counts_json': 'TEXT',
-                'published_leader_count': 'INTEGER',
-                'historical_re_evaluated_count': 'INTEGER',
-                'run_id': 'VARCHAR(100)',
-                'telemetry_schema_version': 'INTEGER',
-            }
-            for col, sql_type in progress_columns.items():
-                try:
-                    conn.execute(text(f"ALTER TABLE lab_progress_state ADD COLUMN {col} {sql_type}"))
-                    try:
-                        conn.commit()
-                    except Exception:
-                        pass
-                except Exception:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
+        if not ensure_lab_progress_schema(engine):
+            logging.warning("Lab progress schema migration was not completed")
 
 def get_db(market_type: str = 'spot'):
     if market_type == 'futures':

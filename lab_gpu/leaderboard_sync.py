@@ -105,9 +105,13 @@ def _sync_worker_loop():
                 # 1.2 DB Progress Update (Slow, throttle to 3.0s)
                 if now_ts - last_progress_db_write >= 3.0 or prog_data["status"] != "running":
                     try:
-                        from bot.database import LabProgressState, Base as BotBase
+                        from bot.database import (
+                            LabProgressState,
+                            ensure_lab_progress_schema,
+                        )
                         engine = _get_db_engine()
-                        BotBase.metadata.create_all(bind=engine)
+                        if not ensure_lab_progress_schema(engine):
+                            raise RuntimeError("lab progress schema migration failed")
                         Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
                         with Session() as sess:
                             row = sess.query(LabProgressState).filter_by(id=1).first()
@@ -327,9 +331,13 @@ def flush_sync_worker():
         except Exception:
             pass
         try:
-            from bot.database import LabProgressState, Base as BotBase
+            from bot.database import (
+                LabProgressState,
+                ensure_lab_progress_schema,
+            )
             engine = _get_db_engine()
-            BotBase.metadata.create_all(bind=engine)
+            if not ensure_lab_progress_schema(engine):
+                raise RuntimeError("lab progress schema migration failed")
             Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
             with Session() as sess:
                 row = sess.query(LabProgressState).filter_by(id=1).first()

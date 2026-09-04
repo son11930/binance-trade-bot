@@ -8,6 +8,7 @@
 - Added Lab run identifiers, telemetry schema versioning, per-family TPE/mutant/exploratory counters, explicit published-leader counts, and partial-run status handling.
 - Added a shared exchange-boundary lock, exchange-position verification for native Futures protection, and a confirmed-fill marker when journaling fails.
 - Added a durable, fsynced execution-recovery journal and a resume gate so a confirmed fill cannot be lost or treated as an unfilled order after a database outage.
+- Added an idempotent migration for existing `lab_progress_state` tables so older shared databases gain the Lab telemetry columns before ORM access.
 
 ### Fixed
 - Fixed Futures evaluation paths that could derive the execution mode from a later manifest read instead of the lane's state manager.
@@ -17,10 +18,12 @@
 - Fixed manifest validation to require top-level parameters to match the hash-bound evidence, and stopped the API from serving unversioned/old leaderboard or progress snapshots as current.
 - Fixed Futures close verification to refresh the remote position inside the final exchange lock, and keep the local position in `CLOSING` when native-order cleanup or flat-position confirmation fails.
 - Fixed Lab snapshot selection to use the current shared run as authority, prefer the newest same-run snapshot, and retry a database leaderboard write that was temporarily throttled or unavailable.
+- Fixed the GPU Lab flush path to migrate legacy progress schemas instead of failing after a successful batch with `UndefinedColumn`.
 
 ### Verification
 - Added regression coverage for order-boundary invalidation, Paper/Live mode mismatch, protective exits, failed control persistence, strategy-family coverage, and partial-run status.
-- Focused execution/API/dashboard/fee/GPU hardening suite: 75 passed, 1 skipped; the 24-test phase hardening subset also passed. Python compilation and Git whitespace checks passed. No live order was placed.
+- Focused execution/API/dashboard/fee/GPU hardening suite: 76 passed, 1 skipped; the 25-test phase hardening subset also passed. Python compilation and Git whitespace checks passed. No live order was placed.
+- GPU launcher smoke: 100 genomes completed in 16 seconds on CUDA with 20/20 symbols, schema 2 telemetry, all 12 strategy families represented, 10 published leaders, and no DB flush error.
 
 ### Phase 40 - Independent Paper/Live Controls and GPU Exploration Transparency
 

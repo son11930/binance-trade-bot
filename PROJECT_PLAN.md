@@ -580,3 +580,27 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - a Paper resume cannot schedule the Futures LIVE evaluator
   - no live order is placed during verification
 - **Status**: **Completed - explicit lane admission, fail-safe emergency stop, effective pause handling, cache policy, regression suite, and deployment verification passed**
+
+### Phase 43: Paper Promotion Evidence Parity
+
+- **Objective**: Make the Paper Review promotion path accept the same immutable candidate evidence that the Lab UI displays, while keeping stale, tampered, or incomplete evidence rejected.
+- **Scope**: Shared-database leaderboard row reconstruction, candidate artifact hashing, Paper promotion regression coverage, dashboard error clarity, and safe paper-only deployment verification. No live orders are permitted.
+- **Required behavior**:
+  1. A leaderboard snapshot read from the shared database must preserve the exact hash-bound evidence published by the Lab.
+  2. Staging a qualified candidate to PAPER must succeed when the UI submits the candidate ID and artifact hash from the current snapshot.
+  3. Candidate hashes, full-evaluation, qualification, fee-model, OOS, and run-freshness gates remain fail-closed.
+  4. The recent-vs-long-horizon metrics must remain explicitly labeled as historical backtest evidence, not a live-profit guarantee.
+- **TDD/verification**:
+  - regression test for DB leaderboard evidence round-trip and Paper promotion
+  - stale/tampered evidence rejection tests remain green
+  - Python compilation, dashboard JavaScript syntax checks, focused API/evidence suite, and paper-only deployment smoke
+- **Exit gates**:
+  - Stage Paper Review works with the current DB-backed snapshot
+  - invalid or stale candidate evidence is still refused
+  - Live remains locked and no live order is placed during verification
+- **Verification**:
+  - DB-backed Paper promotion regression and the focused API/evidence/dashboard suite passed: 76 passed
+  - Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed
+  - Local DB snapshot verification confirms the selected candidate hashes now match the Lab-published evidence
+  - No live order was placed during verification
+- **Status**: **Completed - DB evidence round-trip and Paper promotion hash parity fixed and verified; Live remained disarmed**

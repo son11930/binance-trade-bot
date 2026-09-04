@@ -845,7 +845,17 @@ def _leaderboard_response(snapshot: dict) -> dict:
 
 
 def _format_leaderboard_row(row: Any) -> Dict[str, Any]:
-    """Convert a DB row while retaining evidence stored by newer lab runs."""
+    """Convert a DB row without changing the lab artifact used for its hash.
+
+    The lab stores the complete candidate snapshot in ``parameters_json`` and
+    also mirrors a few display columns into typed DB fields.  Rebuilding the
+    evidence from those columns can introduce harmless-looking float
+    representation changes (for example ``0.28`` versus
+    ``0.28000000000000003``), which changes the artifact hash and makes a
+    legitimate Paper promotion look stale.  The serialized snapshot is the
+    authoritative hash-bound payload; the typed columns remain a compatibility
+    fallback for legacy rows and the DB continues to own rank/display name.
+    """
     stored: Dict[str, Any] = {}
     if getattr(row, "parameters_json", None):
         try:
@@ -854,6 +864,16 @@ def _format_leaderboard_row(row: Any) -> Dict[str, Any]:
                 stored = parsed
         except (TypeError, ValueError):
             stored = {}
+    if stored and _has_valid_candidate_evidence(stored):
+        # Keep every hash-bound value exactly as published by the Lab.  Only
+        # rank and name are display metadata owned by the leaderboard table.
+        result = dict(stored)
+        result["rank"] = row.rank
+        result["name"] = row.name
+        if not isinstance(result.get("parameters"), dict):
+            result["parameters"] = {}
+        return result
+
     parameters = stored.get("parameters", stored if stored else {})
     result = {
         "rank": row.rank,

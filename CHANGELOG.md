@@ -1,5 +1,15 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 43 - Paper Promotion Evidence Parity
+
+### Fixed
+- Fixed shared-database leaderboard reconstruction to preserve the exact serialized candidate evidence published by the Lab; DB display-column float round-trips no longer invalidate a legitimate artifact hash.
+- Kept rank and display name as non-hash-bound database metadata while retaining full-evaluation, qualification, fee-model, OOS, and run-freshness gates for Paper promotion.
+
+### Verification
+- Added a regression test that promotes a qualified DB-backed candidate to PAPER through the same evidence path used by the dashboard; the focused API/evidence/dashboard suite passed 76 tests.
+- Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed. No live order was placed.
+
 ### Phase 42 - Explicit Futures Execution Lane Controls
 
 ### Added

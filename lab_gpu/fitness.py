@@ -4,6 +4,7 @@ fitness.py — The 4-Pillar Practical Fitness Framework grading and vectorized b
 import numpy as np
 from typing import Dict, List, Any
 from .config import GENOME_PARAM_ORDER, N_GENOME_PARAMS, _STRAT_MAP_MB, _MACRO_MAP_MB
+from .cost_model import cost_model_metadata
 from bot.strategy_contract import canonical_macro_regime, strategy_id
 
 # Qualification is deliberately stricter than search ranking.  A candidate
@@ -16,8 +17,11 @@ MAX_OOS_DRAWDOWN = 15.0
 def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[str, Any]:
     """Applies the 4-Pillar Practical Fitness Framework to an evaluated results dictionary."""
     res = dict(res)
-    FEE_PER_TRADE_PCT = 0.10
     horizon_divisors = {"1y": 1.0, "6m": 2.0, "3m": 4.0, "1m": 12.0}
+    for key, value in cost_model_metadata().items():
+        res.setdefault(key, value)
+    res.setdefault("fee_paid_1y_pct", 0.0)
+    res.setdefault("fee_paid_1y_dollar", 0.0)
     
     total_trades_1y = res.get("total_trades_1y", 0)
     win_rate = res.get("win_rate_1y", 0.0)
@@ -33,7 +37,7 @@ def _apply_four_pillar_fitness(res: Dict[str, Any], h_names: List[str]) -> Dict[
         res["avg_profit_per_trade_pct"] = 0.0
         res["avg_profit_per_trade_dollar"] = 0.0
 
-    # ── 1. Real-World Fee & Slippage Drag (Already deducted in simulation kernels: 0.15% round-trip per trade) & Calmar Profit Scaling ──
+    # ── 1. Real-World Fee & Slippage Drag (already deducted in kernels) & Calmar Profit Scaling ──
     total_profit_live = 0.0
     for h in h_names:
         raw_p = res.get(f"net_profit_{h}", 0.0)
@@ -103,7 +107,7 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     """
     Ultra-fast vectorized NumPy calculation of 4-Pillar Practical Fitness across ALL genomes in a batch.
     Replaces the slow 4096x Python loop.
-    raw shape is [n_g, n_h, 4]
+    raw shape is [n_g, n_h, 16]
     """
     raw = np.nan_to_num(np.asarray(raw), nan=0.0, posinf=0.0, neginf=0.0)
     is_p_1m = raw[:, 0, 0]
@@ -142,6 +146,9 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     oos_trades_1y = oos_trades_1y.astype(np.float32, copy=False)
     is_max_streak_1y = raw[:, 3, 6]
     oos_max_streak_1y = raw[:, 3, 14]
+    is_fee_paid_1y = np.maximum(raw[:, 3, 7], 0.0)
+    oos_fee_paid_1y = np.maximum(raw[:, 3, 15], 0.0)
+    fee_paid_1y = is_fee_paid_1y + oos_fee_paid_1y
     
     total_gross_profit_1y = is_gross_profit_1y + oos_gross_profit_1y
     total_gross_loss_1y = is_gross_loss_1y + oos_gross_loss_1y
@@ -213,6 +220,7 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
 
     fitness_arr = np.round(profit_score + all_horizon_bonus + win_score + score_trades - dd_penalty + penalty_win + penalty_profit + wfa_penalty + hard_gate_penalty, 2)
 
+    fee_metadata = cost_model_metadata()
     results = []
     for gi in range(n_g):
         t = int(total_trades_1y[gi])
@@ -240,12 +248,17 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
             "oos_trades_1y": int(oos_trades_1y[gi]),
             "is_max_dd": round(float(is_max_dd_1y[gi]), 2),
             "oos_max_dd": round(float(oos_max_dd_1y[gi]), 2),
+            "is_fee_paid_1y_pct": round(float(is_fee_paid_1y[gi]), 4),
+            "oos_fee_paid_1y_pct": round(float(oos_fee_paid_1y[gi]), 4),
+            "fee_paid_1y_pct": round(float(fee_paid_1y[gi]), 4),
+            "fee_paid_1y_dollar": round(float(fee_paid_1y[gi]) * 10.0, 2),
             "moonshots_1y": int(moonshots_1y[gi]),
             "avg_trades_month": round(t / 12.0, 1),
             "avg_trades_day": round(t / 365.0, 1),
             "profit_factor": round(float(pf_1y[gi]), 2),
             "oos_profit_factor": round(float(oos_pf_1y[gi]), 2),
             "oos_expectancy": round(float(oos_expectancy[gi]), 3),
-            "fitness_score": float(fitness_arr[gi])
+            "fitness_score": float(fitness_arr[gi]),
+            **fee_metadata,
         })
     return results

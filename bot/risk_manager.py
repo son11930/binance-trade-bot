@@ -27,13 +27,26 @@ def calculate_portfolio_heat(state_manager) -> float:
 
 def check_circuit_breakers(state_manager, market_type: str = "futures") -> bool:
     """Return True if any circuit breaker is tripped, blocking new trades and pausing the bot."""
-    from .control import set_bot_control
+    from .control import ControlPersistenceError, set_execution_pause
+
+    def pause_lane(reason: str) -> None:
+        try:
+            set_execution_pause(
+                market_type,
+                getattr(state_manager, "execution_mode", "PAPER"),
+                True,
+                reason=reason,
+            )
+        except ControlPersistenceError as exc:
+            # The control module latches the lane locally when persistence
+            # fails.  Keep the breaker tripped and fail closed in this process.
+            log_msg("ERROR", f"Circuit-breaker pause could not be persisted: {exc}", market_type=market_type)
     
     daily_trades = state_manager.daily_trades_count
     if daily_trades >= MAX_DAILY_TRADES:
         reason = f"Max Daily Trades ({MAX_DAILY_TRADES}) reached."
         log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
-        set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+        pause_lane(reason)
         return True
         
     daily_pnl = state_manager.daily_realized_pnl
@@ -47,7 +60,7 @@ def check_circuit_breakers(state_manager, market_type: str = "futures") -> bool:
         if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
             reason = f"Max Daily Loss Limit ({MAX_DAILY_LOSS_PCT*100}%) reached. Loss: {daily_pnl:.2f}"
             log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
-            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            pause_lane(reason)
             return True
             
         from .config import MAX_WEEKLY_LOSS_PCT, MAX_CONSECUTIVE_LOSSES, HARD_EQUITY_DRAWDOWN_KILL_PCT
@@ -55,19 +68,19 @@ def check_circuit_breakers(state_manager, market_type: str = "futures") -> bool:
         if weekly_loss_pct >= MAX_WEEKLY_LOSS_PCT:
             reason = f"Max Weekly Loss Limit ({MAX_WEEKLY_LOSS_PCT*100}%) reached. Loss: {weekly_pnl:.2f}"
             log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
-            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            pause_lane(reason)
             return True
             
         if consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             reason = f"Consecutive Losses ({MAX_CONSECUTIVE_LOSSES}) reached. Bot needs a break."
             log_msg("WARNING", f"🚫 CIRCUIT BREAKER TRIPPED: {reason}", market_type=market_type)
-            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            pause_lane(reason)
             return True
             
         if max_dd >= HARD_EQUITY_DRAWDOWN_KILL_PCT:
             reason = f"🚨 FATAL: HARD EQUITY DRAWDOWN KILL TRIPPED! Peak-to-Trough drawdown {max_dd*100:.2f}% >= {HARD_EQUITY_DRAWDOWN_KILL_PCT*100}%."
             log_msg("ERROR", reason, market_type=market_type)
-            set_bot_control(spot_paused=True, futures_paused=True, pause_reason=reason)
+            pause_lane(reason)
             return True
             
     heat = calculate_portfolio_heat(state_manager)

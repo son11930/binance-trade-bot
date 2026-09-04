@@ -1,5 +1,37 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 41 - Execution Boundary and Lab Evidence Hardening
+
+### Added
+- Added an immutable execution-context snapshot with an order-boundary recheck. Queued work is rejected when its Paper/Live manager, pause state, or validated strategy identity no longer matches.
+- Added cross-process locking for the shared control file and a fail-closed safety latch when a circuit-breaker pause cannot be persisted.
+- Added Lab run identifiers, telemetry schema versioning, per-family TPE/mutant/exploratory counters, explicit published-leader counts, and partial-run status handling.
+
+### Fixed
+- Fixed Futures evaluation paths that could derive the execution mode from a later manifest read instead of the lane's state manager.
+- Kept protective exits available while a lane is paused for new entries, so an existing position can still be flattened safely.
+- Fixed the Lab dashboard from overwriting archive-retention counts with the number of visible leaderboard cards; old snapshots without the new telemetry are no longer presented as measured zeroes.
+
+### Verification
+- Added regression coverage for order-boundary invalidation, Paper/Live mode mismatch, protective exits, failed control persistence, strategy-family coverage, and partial-run status.
+- Focused execution/API/dashboard/fee/GPU hardening suite: 79 passed, 1 skipped; Python compilation, dashboard JavaScript syntax, and Git whitespace checks passed. No live order was placed.
+
+### Phase 40 - Independent Paper/Live Controls and GPU Exploration Transparency
+
+### Added
+- Added separate Paper and Live pause/resume lanes for Spot and Futures. A Paper action never changes the Live lane, and Live stays fail-closed until the server-side unlock and validated LIVE manifest are both present.
+- Added explicit execution-mode validation to the control API, mode-aware state managers, order/cancel guards, risk circuit breakers, and telemetry broadcasts.
+- Added Lab search-coverage telemetry for generated, screened, TPE-sampled, mutant, random-exploration, full-evaluated, qualified, rejected-after-full-evaluation, and retained-leader counts, including per-strategy family counters.
+- Added a bounded per-strategy leader archive so lower-scoring strategy families remain inspectable while the global leaderboard remains compact.
+
+### Fixed
+- Fixed the dashboard control wiring so the Paper/Live button state and telemetry no longer share one global execution flag.
+- Fixed Live-lane UI metadata refresh so a valid LIVE stage remains visible after control changes without granting permission in the browser.
+
+### Verification
+- Focused execution, API, dashboard, fee, candidate-evidence, websocket, and GPU regression suite: 72 passed, 1 skipped.
+- Python compilation and dashboard JavaScript syntax checks passed. No live order was placed during verification.
+
 ### Phase 38 — Authenticated Home and Clear Dashboard Navigation
 
 ### Added
@@ -10,6 +42,25 @@
 ### Fixed
 - Added cache-busted dashboard CSS and JavaScript URLs so deployed navigation/auth changes cannot be hidden by stale browser assets.
 - Added a Home startup branch so the new route does not initialize market-only controls or accidentally select Spot as a fallback.
+
+### Phase 39 — End-to-End Trading Fee Accounting
+
+### Added
+- Added an explicit, configurable lab cost model with Spot (`0.10%/side`), Futures (`0.05%/side`), and a conservative default (`0.10%/side`) profile. The active profile is recorded with every candidate and progress snapshot.
+- Added CPU/GPU fee-drag diagnostics for both in-sample and out-of-sample closed trades, including cumulative fee estimate in quote currency.
+- Added fail-closed candidate evidence validation and artifact hashing so a result cannot be promoted with missing, stale, or mismatched fee assumptions.
+
+### Fixed
+- Removed the unused fitness-layer fee constant so fees are deducted exactly once in the simulation kernels; fitness now ranks the already net-of-cost returns without subtracting fees a second time.
+- Settled boundary and final open positions through the same fee-aware close path before reporting horizon metrics.
+- Updated the AI Lab card to label returns as net backtest returns and show modeled fee drag, rate, slippage allowance, and the fact that historical funding is not included.
+
+### Configuration
+- Set `LAB_MARKET_TYPE=spot`, `futures`, or `conservative` to choose the lab profile. Set `LAB_TAKER_FEE_RATE_PER_SIDE` only when the actual Binance account fee tier is known; use the same values on the lab machine and server so evidence validation remains consistent.
+- Futures funding is intentionally not guessed from candles; candidates still require paper validation with funding and actual fills before live deployment.
+
+### Verification
+- Fee/accounting regression tests: 6 passed; lab/API regression suite: 24 passed, 1 skipped; API tests: 22 passed; CUDA CPU/GPU golden parity: 1 passed; GPU launcher smoke test: 100 genomes, 20/20 symbols, completed successfully with fee metadata in the output.
 
 ### Phase 36 — Causal Lab/Live Parity and Separated Dashboard
 

@@ -51,8 +51,8 @@ def get_active_strategy() -> Dict[str, Any]:
         return {}
         
     try:
-        current_mtime = os.path.getmtime(_MANIFEST_PATH)
-        if current_mtime > _last_mtime or _cached_strategy is None:
+        current_mtime = os.stat(_MANIFEST_PATH).st_mtime_ns
+        if current_mtime != _last_mtime or _cached_strategy is None:
             with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 active = data.get("active_strategy", {})

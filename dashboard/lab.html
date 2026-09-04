@@ -12,7 +12,7 @@
             theme: { extend: { fontFamily: { sans: ['Outfit', 'sans-serif'] }, colors: { deepBg: '#020617', glassBg: 'rgba(15, 23, 42, 0.65)', neonCyan: '#00F0FF', neonGreen: '#39FF14', neonRed: '#FF003C', neonPink: '#FF00FF' } } }
         };
     </script>
-    <link rel="stylesheet" href="styles.css?v=phase38-1">
+    <link rel="stylesheet" href="styles.css?v=phase40-1">
 </head>
 <body data-market="lab" data-dashboard-market="lab" class="min-h-screen p-4 md:p-8">
     <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -40,11 +40,12 @@
 
         <div id="ai-lab-view" class="space-y-6">
             <div id="lab-progress-banner" class="hidden"></div>
+            <div id="lab-exploration-summary" class="hidden"></div>
             <div id="leaderboard-cards-container" class="grid grid-cols-1 gap-6"><div class="glass-card rounded-2xl p-8 text-center text-slate-400"><p class="animate-pulse font-bold text-neonCyan">Loading AI strategy leaderboard...</p></div></div>
         </div>
     </main>
     <div id="toast-region" class="fixed right-4 top-4 z-[60] flex max-w-sm flex-col gap-2" aria-live="polite"></div>
 
-    <script src="js/config_utils.js?v=phase38-1"></script><script src="js/auth.js?v=phase38-1"></script><script src="js/websocket.js?v=phase38-1"></script><script src="js/ui_status.js?v=phase38-1"></script><script src="js/ui_trades.js?v=phase38-1"></script><script src="js/ui_logs.js?v=phase38-1"></script><script src="js/ui_lab.js?v=phase38-1"></script><script src="js/bot_control.js?v=phase38-1"></script><script src="app.js?v=phase38-1"></script>
+    <script src="js/config_utils.js?v=phase40-1"></script><script src="js/auth.js?v=phase40-1"></script><script src="js/websocket.js?v=phase40-1"></script><script src="js/ui_status.js?v=phase40-1"></script><script src="js/ui_trades.js?v=phase40-1"></script><script src="js/ui_logs.js?v=phase40-1"></script><script src="js/ui_lab.js?v=phase40-1"></script><script src="js/bot_control.js?v=phase40-1"></script><script src="app.js?v=phase40-1"></script>
 </body>
 </html>

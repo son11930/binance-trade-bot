@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace, asdict, fields
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from .config import SYMBOLS, is_paper_trading, FUTURES_LEVERAGE
+from .config import SYMBOLS, FUTURES_LEVERAGE
 from .binance_client import get_live_asset_balance, get_current_price, futures_get_position, futures_get_live_balance, get_all_spot_balances, client
 from .database import TradeRepository
 from .logger import log_msg
@@ -334,7 +334,7 @@ class StateManager:
                     pnl_amount, pnl_percent = calculate_pnl_func(state.buy_price, current_price, state.position, market_type='spot')
                     from .database import TradeRepository
                     TradeRepository.create_trade(
-                        symbol, "SELL", current_price, state.position, None, "Startup Sync / Manual Sell", is_paper_trading(),
+                        symbol, "SELL", current_price, state.position, None, "Startup Sync / Manual Sell", self.execution_mode == "PAPER",
                         0.0, "USDT", pnl_amount, pnl_percent, market_type='spot'
                     )
                 new_states[symbol] = replace(state, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, position_side="")
@@ -400,7 +400,11 @@ class StateManager:
                 from .database import SessionLocalFutures, Trade
                 db = SessionLocalFutures()
                 try:
-                    last_trade = db.query(Trade).filter(Trade.symbol == symbol, Trade.market_type == 'futures').order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
+                    last_trade = db.query(Trade).filter(
+                        Trade.symbol == symbol,
+                        Trade.market_type == 'futures',
+                        Trade.paper_trade == False,
+                    ).order_by(Trade.timestamp.desc(), Trade.id.desc()).first()
                     
                     is_open = False
                     if last_trade:
@@ -440,7 +444,10 @@ class StateManager:
                             new_t = Trade(
                                 symbol=symbol, side=close_side, price=last_price, quantity=agg_qty, market_type='futures',
                                 position_side=last_trade.position_side, ai_reasoning="Binance Native SL/TP (Auto-Sync)",
-                                pnl_amount=agg_pnl, pnl_percent=pnl_pct, fee=agg_fee, fee_asset=fee_asset, timestamp=ts
+                                pnl_amount=agg_pnl, pnl_percent=pnl_pct, fee=agg_fee, fee_asset=fee_asset,
+                                paper_trade=False, execution_mode=self.execution_mode,
+                                deployment_id=last_trade.deployment_id, strategy_id=last_trade.strategy_id,
+                                timestamp=ts
                             )
                             db.add(new_t)
                             db.commit()
@@ -450,7 +457,9 @@ class StateManager:
                             new_t = Trade(
                                 symbol=symbol, side=close_side, price=last_trade.price, quantity=last_trade.quantity, market_type='futures',
                                 position_side=last_trade.position_side, ai_reasoning="Binance Native SL/TP (Fallback - Not Found)",
-                                pnl_amount=0.0, pnl_percent=0.0, fee=0.0, fee_asset='USDT', timestamp=datetime.now(timezone.utc)
+                                pnl_amount=0.0, pnl_percent=0.0, fee=0.0, fee_asset='USDT', paper_trade=False,
+                                execution_mode=self.execution_mode, deployment_id=last_trade.deployment_id,
+                                strategy_id=last_trade.strategy_id, timestamp=datetime.now(timezone.utc)
                             )
                             db.add(new_t)
                             db.commit()

@@ -228,7 +228,9 @@ def place_market_order(symbol: str, side: str, quantity: float, is_paper: bool =
     Places a market order. If is_paper is True, it simulates the execution.
     side: 'BUY' or 'SELL'
     """
-    if is_paper or is_paper_trading():
+    # The caller supplies the immutable execution lane.  Do not consult the
+    # legacy global flag here: Paper and Live managers can coexist.
+    if is_paper:
         price = get_current_price(symbol)
         log_msg("INFO", f"[PAPER TRADE] {side} {quantity} of {symbol} at approx {price}")
         return {
@@ -362,7 +364,9 @@ def futures_place_order(symbol: str, side: str, positionSide: str, quantity: flo
     side: 'BUY' or 'SELL'
     positionSide: 'LONG' or 'SHORT'
     """
-    if is_paper or is_paper_trading():
+    # The caller supplies the immutable execution lane.  Do not consult the
+    # legacy global flag here: Paper and Live managers can coexist.
+    if is_paper:
         price = futures_get_current_price(symbol)
         log_msg("INFO", f"[FUTURES PAPER] {side} {positionSide} {quantity} of {symbol} at approx {price}")
         return {
@@ -454,10 +458,10 @@ from dataclasses import replace
 import logging
 from bot.database import sanitize_text
 
-def futures_cancel_all_orders(symbol: str):
+def futures_cancel_all_orders(symbol: str, is_paper: bool = True):
     """Cancel all open orders (including TP/SL) for a futures symbol."""
     try:
-        if is_paper_trading():
+        if is_paper:
             log_msg("INFO", f"[FUTURES PAPER] Cancelled all orders for {symbol}")
             return True
             
@@ -468,9 +472,9 @@ def futures_cancel_all_orders(symbol: str):
         log_msg("ERROR", f"Failed to cancel orders for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
-def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float):
+def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price: float, is_paper: bool = True):
     """Set Take Profit and Stop Loss for a specific position using closePosition=True"""
-    if is_paper_trading():
+    if is_paper:
         log_msg("INFO", f"[FUTURES PAPER] Set TP={tp_price} SL={sl_price} for {positionSide} {symbol}")
         return True
         
@@ -479,7 +483,7 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
     
     try:
         # Cancel existing orders first
-        futures_cancel_all_orders(symbol)
+        futures_cancel_all_orders(symbol, is_paper=is_paper)
         
         # Place Take Profit
         if tp_price > 0:
@@ -507,9 +511,9 @@ def futures_set_tp_sl(symbol: str, positionSide: str, tp_price: float, sl_price:
         log_msg("ERROR", f"Failed to set TP/SL for {symbol}: {sanitize_error(e)}", market_type='futures')
         return False
 
-def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float) -> bool:
+def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float, is_paper: bool = True) -> bool:
     """Place a STOP_MARKET reduce-only (closePosition=True) order immediately after entry."""
-    if is_paper_trading():
+    if is_paper:
         log_msg("INFO", f"[FUTURES PAPER] Native Stop Loss placed at {sl_price} for {positionSide} {symbol}")
         return True
         
@@ -517,7 +521,7 @@ def futures_place_native_stop(symbol: str, positionSide: str, sl_price: float) -
     
     try:
         # Cancel old stops first just in case
-        futures_cancel_all_orders(symbol)
+        futures_cancel_all_orders(symbol, is_paper=is_paper)
         
         client.futures_create_order(
             symbol=symbol,

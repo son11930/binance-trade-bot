@@ -157,6 +157,7 @@ if GPU_AVAILABLE and _cuda_jit:
         total_trades = 0
         gross_profit = 0.0
         gross_loss = 0.0
+        fees_paid = 0.0
         curr_streak = 0.0
         max_streak = 0.0
         
@@ -198,6 +199,7 @@ if GPU_AVAILABLE and _cuda_jit:
                             if adj_kelly > max_pos_alloc_pct:
                                 adj_kelly = max_pos_alloc_pct
                             trade_impact = pnl_pct * adj_kelly * 4.0
+                            fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                             balance *= (1.0 + trade_impact)
                             if trade_impact > 0.0:
                                 wins += 1
@@ -231,7 +233,7 @@ if GPU_AVAILABLE and _cuda_jit:
                 out_results[base + 4] = gross_profit * 100.0
                 out_results[base + 5] = gross_loss * 100.0
                 out_results[base + 6] = max_streak
-                out_results[base + 7] = 0.0
+                out_results[base + 7] = fees_paid / 10.0
                 
                 balance = 1000.0
                 peak_balance = 1000.0
@@ -240,6 +242,7 @@ if GPU_AVAILABLE and _cuda_jit:
                 total_trades = 0
                 gross_profit = 0.0
                 gross_loss = 0.0
+                fees_paid = 0.0
                 curr_streak = 0.0
                 max_streak = 0.0
                 for s in range(n_symbols):
@@ -300,6 +303,7 @@ if GPU_AVAILABLE and _cuda_jit:
                         if adj_kelly > max_pos_alloc_pct:
                             adj_kelly = max_pos_alloc_pct
                         trade_impact = pnl_pct * adj_kelly * 4.0
+                        fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                         balance *= (1.0 + trade_impact)
                         if trade_impact > 0.0:
                             wins += 1
@@ -511,6 +515,7 @@ if GPU_AVAILABLE and _cuda_jit:
                 if adj_kelly > max_pos_alloc_pct:
                     adj_kelly = max_pos_alloc_pct
                 trade_impact = pnl_pct * adj_kelly * 4.0
+                fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                 balance *= (1.0 + trade_impact)
                 if trade_impact > 0.0:
                     wins += 1
@@ -545,7 +550,7 @@ if GPU_AVAILABLE and _cuda_jit:
         out_results[base + 12] = gross_profit * 100.0
         out_results[base + 13] = gross_loss * 100.0
         out_results[base + 14] = max_streak
-        out_results[base + 15] = 0.0
+        out_results[base + 15] = fees_paid / 10.0
 
 else:
     def _backtest_kernel(*args, **kwargs):

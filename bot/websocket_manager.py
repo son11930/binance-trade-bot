@@ -135,7 +135,11 @@ class WebSocketManager:
                         log_msg("WARNING", f"🚨 {rm_signal} TRIGGERED for {symbol} at {current_price}!", market_type=self.market_type)
                         self.state_manager.update_state(symbol, active_strategy="CLOSING")
                         def _execute_spot_rm():
-                            execution_mode = _resolve_execution_mode("spot")
+                            execution_mode = _resolve_execution_mode(
+                                "spot",
+                                state_manager=self.state_manager,
+                                allow_protective_exit=True,
+                            )
                             if execution_mode is None:
                                 log_msg("ERROR", f"Risk close refused for {symbol}: execution mode is not validated", market_type="spot")
                                 self.state_manager.update_state(symbol, active_strategy="NONE")
@@ -170,7 +174,11 @@ class WebSocketManager:
                         def _execute_futures_rm():
                             close_side = "BUY" if state.position_side == "SHORT" else "SELL"
                             from .trade_executor import execute_futures_trade
-                            execution_mode = _resolve_execution_mode("futures")
+                            execution_mode = _resolve_execution_mode(
+                                "futures",
+                                state_manager=self.state_manager,
+                                allow_protective_exit=True,
+                            )
                             if execution_mode is None:
                                 log_msg("ERROR", f"Futures risk close refused for {symbol}: execution mode is not validated", market_type="futures")
                                 self.state_manager.update_state(symbol, active_strategy="NONE")
@@ -178,7 +186,7 @@ class WebSocketManager:
                             trade = execute_futures_trade(self.state_manager, symbol, close_side, state.position_side, state.position, current_price, reason=rm_signal, is_paper=execution_mode)
                             if trade:
                                 from .binance_client import futures_cancel_all_orders
-                                futures_cancel_all_orders(symbol)
+                                futures_cancel_all_orders(symbol, is_paper=execution_mode)
                                 _, pnl_amt = _notify_profitable_close(trade, symbol, rm_signal, "futures")
                                 if pnl_amt:
                                     self.state_manager.add_to_balance(pnl_amt)

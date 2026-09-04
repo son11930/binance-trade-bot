@@ -84,7 +84,8 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
 
     from .strategy_manager import get_active_strategy
     strat = get_active_strategy()
-    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if os.getenv("is_paper_trading()", "True").lower() == "true" else "LIVE")
+    execution_mode = str(getattr(state_manager, "execution_mode", "PAPER")).upper()
+    active_stage = strat.get("stage", execution_mode) if strat else execution_mode
 
     sys_health = {
         "api_healthy": True,
@@ -93,6 +94,7 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
 
     res = {
         "market_type": market_type,
+        "execution_mode": execution_mode,
         "status_message": safe_status,
         "is_thinking": thinking,
         "symbol_active": safe_symbol,
@@ -110,7 +112,7 @@ def build_webhook_payload(state_manager: StateManager, status_msg: str, thinking
     }
     try:
         import json
-        with open(f"/tmp/webhook_payload_{market_type}.json", "w") as f:
+        with open(f"/tmp/webhook_payload_{market_type}_{execution_mode.lower()}.json", "w") as f:
             json.dump(res, f)
     except: pass
     return res

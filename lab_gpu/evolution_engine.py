@@ -7,6 +7,7 @@ import time
 import json
 import random
 import threading
+import uuid
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Any
@@ -27,6 +28,7 @@ from .gpu_kernel import GPU_AVAILABLE
 from .data_loader import _load_and_cache_symbol, _df_to_arrays, preload_all_symbols_to_gpu, _pack_symbols_to_flat_gpu, _GPU_FLAT_DATA
 from .evaluator import _mega_batch_gpu_backtest, evaluate_genome_gpu, _is_qualified_result
 from .leaderboard_sync import save_lab_progress_gpu, push_leaderboard_to_db_and_json_gpu, get_deduplicated_top10_gpu, flush_sync_worker
+from .cost_model import cost_model_metadata
 from bot.strategy_contract import canonical_macro_regime, canonical_strategy_type
 
 try:
@@ -111,6 +113,91 @@ def _is_usable_parent(result: Dict[str, Any]) -> bool:
     )
 
 
+def _increment_counter(counts: Dict[str, int], key: str, amount: int = 1) -> Dict[str, int]:
+    """Return a new counter map so batch snapshots are never mutated in place."""
+    return {**counts, str(key): int(counts.get(str(key), 0)) + int(amount)}
+
+
+def _strategy_bucket(parameters: Dict[str, Any]) -> str:
+    raw_strategy = (parameters or {}).get("strategy_type", "rsi_sniper")
+    try:
+        return canonical_strategy_type(raw_strategy)
+    except (TypeError, ValueError):
+        return str(raw_strategy)
+
+
+def _count_genome_strategies(counts: Dict[str, int], genomes: List[Dict[str, Any]]) -> Dict[str, int]:
+    next_counts = dict(counts)
+    for genome in genomes:
+        next_counts = _increment_counter(next_counts, _strategy_bucket(genome))
+    return next_counts
+
+
+def _initial_strategy_counters() -> Dict[str, int]:
+    """Start every family at zero so absent families remain visible in telemetry."""
+    return {str(strategy): 0 for strategy in _STRAT_MAP_MB}
+
+
+def _family_coverage_indices(genomes: List[Dict[str, Any]]) -> List[int]:
+    """Return one index per strategy family present in a batch."""
+    selected = []
+    seen = set()
+    for index, genome in enumerate(genomes):
+        strategy = _strategy_bucket(genome)
+        if strategy not in seen:
+            seen.add(strategy)
+            selected.append(index)
+    return selected
+
+
+def _final_lab_status(total_trials: int | None, completed: int, stop_requested: bool) -> str:
+    """Report completion only when the requested finite budget was reached."""
+    if total_trials and not stop_requested and int(completed) >= int(total_trials):
+        return "completed"
+    return "stopped"
+
+
+def _leaderboard_sort_key(item: Dict[str, Any]) -> tuple:
+    return (
+        int(item.get("full_evaluated", False)),
+        int(item.get("qualified", False)),
+        float(item.get("fitness_score", -1e9)),
+    )
+
+
+def _retain_leaderboard_map(
+    leaderboard_map: Dict[str, Dict[str, Any]],
+    global_limit: int = 50,
+    per_strategy_limit: int = 10,
+) -> Dict[str, Dict[str, Any]]:
+    """Keep global winners plus a bounded niche archive for every strategy.
+
+    The old global top-50 trim could discard every lower-scoring strategy
+    before the UI had a chance to show whether it was explored.  A small
+    per-strategy archive keeps parent selection and leader visibility diverse
+    without retaining the entire search history.
+    """
+    ranked = sorted(leaderboard_map.items(), key=lambda pair: _leaderboard_sort_key(pair[1]), reverse=True)
+    selected_keys = []
+    selected = set()
+    for key, _ in ranked[:global_limit]:
+        selected_keys.append(key)
+        selected.add(key)
+
+    for strategy in _STRAT_MAP_MB:
+        niche = [
+            (key, item)
+            for key, item in ranked
+            if _strategy_bucket(item.get("parameters", {})) == strategy
+        ][:per_strategy_limit]
+        for key, _ in niche:
+            if key not in selected:
+                selected_keys.append(key)
+                selected.add(key)
+
+    return {key: leaderboard_map[key] for key in selected_keys}
+
+
 def _build_genome_from_trial(trial: Any) -> dict:
     """Build a genome from the same schema used by mutation and packing."""
     genome = {}
@@ -147,6 +234,7 @@ def _build_genome_from_trial(trial: Any) -> dict:
 def run_gpu_synthesizer_lab(n_trials: int = 30):
     """Main entry: Runs the GPU-accelerated Evolutionary Strategy Lab."""
     start_time = time.time()
+    run_id = f"gpu-{int(start_time)}-{uuid.uuid4().hex[:8]}"
     if n_trials <= 0:
         n_trials = None
 
@@ -154,17 +242,28 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     engine_str = f"GPU CUDA (RTX 3070)" if GPU_AVAILABLE else f"CPU Multi-Core ({N_CPU_WORKERS} workers)"
 
     if BENCHMARK_MODE:
-        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing (Benchmark Mode)...", 0)
+        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing (Benchmark Mode)...", 0, run_id=run_id)
         logger.info("=" * 70)
         logger.info(f"  🏎️ BENCHMARK MODE ENABLED (DB Writes Disabled)")
     else:
-        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing...", 0)
+        save_lab_progress_gpu("running", 0, n_trials or 0, 0.0, "GPU Lab Initializing...", 0, run_id=run_id)
     logger.info("=" * 70)
     logger.info(f"  🚀 GPU EVOLUTIONARY STRATEGY LAB (Bot Strategy Synthesizer GPU)")
     logger.info(f"  Engine : {engine_str}")
     logger.info(f"  Trials : {mode_str}")
     logger.info(f"  Workers: {N_CPU_WORKERS} Optuna parallel workers")
     logger.info(f"  Symbols: {len(SYMBOLS)} (20 Binance Futures)")
+    cost_meta = cost_model_metadata()
+    logger.info(
+        "  Costs : %s fee %.4f%%/side (%.4f%% round trip) + ATR slippage %.2f%%; funding=%s"
+        % (
+            cost_meta["fee_market_type"],
+            float(cost_meta["taker_fee_rate_per_side"]) * 100.0,
+            float(cost_meta["round_trip_fee_rate"]) * 100.0,
+            float(cost_meta["atr_slippage_fraction"]) * 100.0,
+            "included" if cost_meta["funding_included"] else "not included",
+        )
+    )
     logger.info("=" * 70)
 
     logger.info("Loading historical data from local cache (binace_backtest1y/)...")
@@ -184,7 +283,10 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     
     if not symbol_arrays:
         logger.error("❌ No symbol data found! Run the CPU synthesizer first to download data.")
-        save_lab_progress_gpu("stopped", 0, 0, 0.0, "No data - run CPU synthesizer first!", 0)
+        save_lab_progress_gpu(
+            "stopped", 0, 0, 0.0, "No data - run CPU synthesizer first!", 0,
+            run_id=run_id,
+        )
         return []
 
     logger.info(f"✅ {len(symbol_arrays)}/{len(SYMBOLS)} symbols loaded and ready!")
@@ -269,14 +371,29 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     completed = 0
     batch_idx = 0
     validated_winners = 0
+    historical_re_evaluated_count = len(leaderboard_map)
     screened_count = 0
     full_evaluated_count = 0
+    generated_count = 0
+    tpe_sampled_count = 0
+    mutant_count = 0
+    exploration_mutant_count = 0
+    rejected_count = 0
+    strategy_generated_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_full_evaluated_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_qualified_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_rejected_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_tpe_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_mutant_counts: Dict[str, int] = _initial_strategy_counters()
+    strategy_exploration_counts: Dict[str, int] = _initial_strategy_counters()
+    stop_requested = False
     try:
         while True:
             if n_trials and completed >= n_trials:
                 break
             if os.path.exists("stop_lab.txt"):
                 logger.info("Graceful stop signal (stop_lab.txt) detected. Shutting down...")
+                stop_requested = True
                 try: os.remove("stop_lab.txt")
                 except: pass
                 break
@@ -290,12 +407,14 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                     genomes = [_build_genome_from_trial(t) for t in optuna_trials]
 
                     n_mutants = batch_size - len(genomes)
+                    batch_exploration_mutants = 0
+                    batch_exploration_strategies = []
                     if n_mutants > 0:
                         elites_by_strat = {}
                         for res in leaderboard_map.values():
                             if _is_usable_parent(res):
                                 p = res["parameters"]
-                                st = p.get("strategy_type", "rsi_sniper")
+                                st = _strategy_bucket(p)
                                 elites_by_strat.setdefault(st, []).append(p)
                         
                         fallback_parent = genomes[0]
@@ -303,7 +422,14 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
                         for m_idx in range(n_mutants):
                             is_exploration = random.random() < 0.25
-                            target_strat = random.choice(STRATEGY_TYPES)
+                            # Deterministic round-robin strategy allocation
+                            # gives every family an equal mutant budget.  The
+                            # exploration flag still randomizes parameter
+                            # mutation intensity within that allocation.
+                            target_strat = STRATEGY_TYPES[(completed + m_idx) % len(STRATEGY_TYPES)]
+                            if is_exploration:
+                                batch_exploration_mutants += 1
+                                batch_exploration_strategies.append(target_strat)
                             
                             if is_exploration or target_strat not in elites_by_strat:
                                 parent = fallback_parent
@@ -324,9 +450,30 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 all_paired.sort(key=lambda pair: str(pair[1].get("strategy_type", "")))
                 
                 sorted_genomes = [pair[1] for pair in all_paired]
+                tpe_sampled_count += n_tpe
+                mutant_count += n_mutants
+                exploration_mutant_count += batch_exploration_mutants
+                generated_count += batch_size
+                strategy_generated_counts = _count_genome_strategies(strategy_generated_counts, sorted_genomes)
+                strategy_tpe_counts = _count_genome_strategies(
+                    strategy_tpe_counts,
+                    [genome for trial, genome in all_paired if trial is not None],
+                )
+                strategy_mutant_counts = _count_genome_strategies(
+                    strategy_mutant_counts,
+                    [genome for trial, genome in all_paired if trial is None],
+                )
+                for strategy in batch_exploration_strategies:
+                    strategy_exploration_counts = _increment_counter(
+                        strategy_exploration_counts, strategy
+                    )
                 force_full_indices = [
                     idx for idx, pair in enumerate(all_paired) if pair[0] is not None
                 ]
+                # At least one candidate from every family present in this
+                # batch receives a full evaluation, even if its cheap screen
+                # score is not in the top-K rescue set.
+                force_full_indices = sorted(set(force_full_indices).union(_family_coverage_indices(sorted_genomes)))
                 batch_results = _mega_batch_gpu_backtest(
                     sorted_genomes,
                     force_full_indices=force_full_indices,
@@ -359,22 +506,27 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                             best_so_far_name  = res["name"]
                         if res.get("full_evaluated", False):
                             full_evaluated_count += 1
+                            strategy_key = _strategy_bucket(genome)
+                            strategy_full_evaluated_counts = _increment_counter(
+                                strategy_full_evaluated_counts, strategy_key
+                            )
 
                         # KPI: only complete, finite candidates with positive fitness qualify.
                         if _is_qualified_result(res):
                             validated_winners += 1
+                            strategy_key = _strategy_bucket(genome)
+                            strategy_qualified_counts = _increment_counter(
+                                strategy_qualified_counts, strategy_key
+                            )
+                        elif res.get("full_evaluated", False):
+                            rejected_count += 1
+                            strategy_key = _strategy_bucket(genome)
+                            strategy_rejected_counts = _increment_counter(
+                                strategy_rejected_counts, strategy_key
+                            )
 
                     if len(leaderboard_map) > 50:
-                        top_keys = sorted(
-                            leaderboard_map.keys(),
-                            key=lambda k: (
-                                int(leaderboard_map[k].get("full_evaluated", False)),
-                                int(leaderboard_map[k].get("qualified", False)),
-                                leaderboard_map[k].get("fitness_score", -1e9),
-                            ),
-                            reverse=True,
-                        )[:50]
-                        leaderboard_map = {k: leaderboard_map[k] for k in top_keys}
+                        leaderboard_map = _retain_leaderboard_map(leaderboard_map)
 
                 completed += batch_size
                 batch_idx += 1
@@ -386,7 +538,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 logger.info(
                     f"[Batch {batch_idx}] {completed} genomes | "
                     f"Screened: {screened_count} | Full: {full_evaluated_count} | "
-                    f"Qualified: {validated_winners} ({rate:.1f}/hr) | "
+                    f"Qualified: {validated_winners} | Rejected: {rejected_count} ({rate:.1f}/hr) | "
                     f"Best full: {best_so_far_score:.2f} | Best screen: {best_screen_score:.2f} | "
                     f"Elapsed: {elapsed//60}m{elapsed%60}s"
                 )
@@ -402,6 +554,22 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                         screened_count=screened_count,
                         full_evaluated_count=full_evaluated_count,
                         qualified_count=validated_winners,
+                        rejected_count=rejected_count,
+                        generated_count=generated_count,
+                        tpe_sampled_count=tpe_sampled_count,
+                        mutant_count=mutant_count,
+                        exploration_mutant_count=exploration_mutant_count,
+                        retained_leader_count=len(leaderboard_map),
+                        strategy_generated_counts=strategy_generated_counts,
+                        strategy_full_evaluated_counts=strategy_full_evaluated_counts,
+                        strategy_qualified_counts=strategy_qualified_counts,
+                        strategy_rejected_counts=strategy_rejected_counts,
+                        strategy_tpe_counts=strategy_tpe_counts,
+                        strategy_mutant_counts=strategy_mutant_counts,
+                        strategy_exploration_counts=strategy_exploration_counts,
+                        published_leader_count=len(get_deduplicated_top10_gpu(leaderboard_map)),
+                        historical_re_evaluated_count=historical_re_evaluated_count,
+                        run_id=run_id,
                     )
 
                 if batch_idx % 5 == 0:
@@ -409,7 +577,7 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                         with lock:
                             top_10 = get_deduplicated_top10_gpu(leaderboard_map)
                         if not BENCHMARK_MODE:
-                            push_leaderboard_to_db_and_json_gpu(top_10)
+                            push_leaderboard_to_db_and_json_gpu(top_10, run_id=run_id)
                     except Exception as e:
                         logger.error(f"Leaderboard sync error: {e}")
 
@@ -417,6 +585,9 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                 def objective(trial):
                     nonlocal best_so_far_score, best_so_far_name, best_screen_score, best_screen_name
                     nonlocal validated_winners, screened_count, full_evaluated_count
+                    nonlocal generated_count, tpe_sampled_count, rejected_count, completed, leaderboard_map
+                    nonlocal strategy_generated_counts, strategy_full_evaluated_counts, strategy_qualified_counts, strategy_rejected_counts
+                    nonlocal strategy_tpe_counts
                     cur_step = max(1, (trial.number - session_start_id) + 1)
                     genome = _build_genome_from_trial(trial)
 
@@ -432,13 +603,28 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
 
                     with lock:
                         leaderboard_map[f"trial_{trial.number}"] = full_res
+                        generated_count += 1
+                        completed += 1
+                        tpe_sampled_count += 1
+                        strategy_key = _strategy_bucket(genome)
+                        strategy_generated_counts = _increment_counter(
+                            strategy_generated_counts, strategy_key
+                        )
+                        strategy_tpe_counts = _increment_counter(
+                            strategy_tpe_counts, strategy_key
+                        )
                         screen_value = full_res.get("screening_score")
                         screen_score = float(screen_value) if screen_value is not None else float(full_res.get("search_score", -1e9))
                         best_screen_is_new = screen_score > best_screen_score
                         if best_screen_is_new:
                             best_screen_score = screen_score
                             best_screen_name = full_res["name"]
-                        full_evaluated_count += int(full_res.get("full_evaluated", False))
+                        is_full_evaluated = bool(full_res.get("full_evaluated", False))
+                        full_evaluated_count += int(is_full_evaluated)
+                        if is_full_evaluated:
+                            strategy_full_evaluated_counts = _increment_counter(
+                                strategy_full_evaluated_counts, strategy_key
+                            )
                         screened_count += 1
                         is_new_best = full_res.get("full_evaluated", False) and full_res["fitness_score"] > best_so_far_score
                         if is_new_best:
@@ -446,10 +632,23 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                             best_so_far_name  = full_res["name"]
                         if _is_qualified_result(full_res):
                             validated_winners += 1
+                            strategy_qualified_counts = _increment_counter(
+                                strategy_qualified_counts, strategy_key
+                            )
+                        elif is_full_evaluated:
+                            rejected_count += 1
+                            strategy_rejected_counts = _increment_counter(
+                                strategy_rejected_counts, strategy_key
+                            )
+                        if len(leaderboard_map) > 200:
+                            leaderboard_map = _retain_leaderboard_map(leaderboard_map)
 
                     elapsed = int(time.time() - start_time)
+                    with lock:
+                        published_count = len(get_deduplicated_top10_gpu(leaderboard_map))
+                        retained_count = len(leaderboard_map)
                     if not BENCHMARK_MODE:
-                        save_lab_progress_gpu("running", cur_step, n_trials or 0,
+                        save_lab_progress_gpu("running", completed, n_trials or 0,
                                               best_so_far_score if full_evaluated_count else best_screen_score,
                                               best_so_far_name if full_evaluated_count else best_screen_name,
                                               elapsed,
@@ -458,13 +657,29 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
                                               best_screen_score=best_screen_score,
                                               screened_count=screened_count,
                                               full_evaluated_count=full_evaluated_count,
-                                              qualified_count=validated_winners)
+                                              qualified_count=validated_winners,
+                                              rejected_count=rejected_count,
+                                              generated_count=generated_count,
+                                              tpe_sampled_count=tpe_sampled_count,
+                                              mutant_count=mutant_count,
+                                              exploration_mutant_count=exploration_mutant_count,
+                                              retained_leader_count=retained_count,
+                                              published_leader_count=published_count,
+                                              historical_re_evaluated_count=historical_re_evaluated_count,
+                                              strategy_generated_counts=strategy_generated_counts,
+                                              strategy_full_evaluated_counts=strategy_full_evaluated_counts,
+                                              strategy_qualified_counts=strategy_qualified_counts,
+                                              strategy_rejected_counts=strategy_rejected_counts,
+                                              strategy_tpe_counts=strategy_tpe_counts,
+                                              strategy_mutant_counts=strategy_mutant_counts,
+                                              strategy_exploration_counts=strategy_exploration_counts,
+                                              run_id=run_id)
                     if trial.number % 10 == 0 or is_new_best:
                         try:
                             with lock:
                                 top_10 = get_deduplicated_top10_gpu(leaderboard_map)
                             if not BENCHMARK_MODE:
-                                push_leaderboard_to_db_and_json_gpu(top_10)
+                                push_leaderboard_to_db_and_json_gpu(top_10, run_id=run_id)
                         except Exception as e:
                             logger.error(f"Leaderboard sync error: {e}")
                     return full_res["fitness_score"]
@@ -486,20 +701,36 @@ def run_gpu_synthesizer_lab(n_trials: int = 30):
     with lock:
         top_10 = get_deduplicated_top10_gpu(leaderboard_map)
     if not BENCHMARK_MODE:
-        push_leaderboard_to_db_and_json_gpu(top_10, force=True)
+        push_leaderboard_to_db_and_json_gpu(top_10, force=True, run_id=run_id)
     elapsed = int(time.time() - start_time)
     best_item = top_10[0] if top_10 else {}
     best_val = best_so_far_score if full_evaluated_count else best_screen_score
     best_display_name = best_so_far_name if full_evaluated_count else best_screen_name
-    final_status = "stopped" if not n_trials else "completed"
+    final_status = _final_lab_status(n_trials, completed, stop_requested)
     if not BENCHMARK_MODE:
-        save_lab_progress_gpu(final_status, n_trials or len(leaderboard_map), n_trials or 0,
+        save_lab_progress_gpu(final_status, completed, n_trials or 0,
                                best_val, best_display_name, elapsed,
                                best_full_score=best_so_far_score,
                                best_screen_score=best_screen_score,
                                screened_count=screened_count,
                                full_evaluated_count=full_evaluated_count,
-                               qualified_count=validated_winners)
+                               qualified_count=validated_winners,
+                               rejected_count=rejected_count,
+                               generated_count=generated_count,
+                               tpe_sampled_count=tpe_sampled_count,
+                               mutant_count=mutant_count,
+                               exploration_mutant_count=exploration_mutant_count,
+                               retained_leader_count=len(leaderboard_map),
+                               published_leader_count=len(top_10),
+                               historical_re_evaluated_count=historical_re_evaluated_count,
+                               strategy_generated_counts=strategy_generated_counts,
+                               strategy_full_evaluated_counts=strategy_full_evaluated_counts,
+                               strategy_qualified_counts=strategy_qualified_counts,
+                               strategy_rejected_counts=strategy_rejected_counts,
+                               strategy_tpe_counts=strategy_tpe_counts,
+                               strategy_mutant_counts=strategy_mutant_counts,
+                               strategy_exploration_counts=strategy_exploration_counts,
+                               run_id=run_id)
         flush_sync_worker()
     logger.info(f"GPU Lab finished! {completed} genomes evaluated in {elapsed//60}m {elapsed%60}s ({len(leaderboard_map)} retained)")
     logger.info(f"Best full: {best_display_name} | Score: {best_val:.2f}")

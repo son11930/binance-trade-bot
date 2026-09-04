@@ -13,6 +13,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from .config import logger, DASHBOARD_DATA_DIR, DATABASE_URL_FUTURES, DATABASE_URL_SPOT
 from .gpu_kernel import GPU_AVAILABLE
+from .cost_model import cost_model_metadata
 from candidate_evidence import attach_candidate_identity
 from bot.strategy_contract import strategy_id
 
@@ -59,6 +60,7 @@ def _get_db_engine():
 _async_state = {
     "progress_data": None,
     "leaderboard_data": None,
+    "leaderboard_metadata": {},
 }
 _async_lock = threading.Lock()
 
@@ -83,8 +85,10 @@ def _sync_worker_loop():
             with _async_lock:
                 prog_data = copy.deepcopy(_async_state["progress_data"])
                 lb_data = copy.deepcopy(_async_state["leaderboard_data"])
+                lb_metadata = copy.deepcopy(_async_state["leaderboard_metadata"])
                 _async_state["progress_data"] = None  # Clear dirty flag
                 _async_state["leaderboard_data"] = None # Clear dirty flag
+                _async_state["leaderboard_metadata"] = {}
 
             # 1. Process Progress Updates
             if prog_data:
@@ -125,6 +129,9 @@ def _sync_worker_loop():
                 try:
                     payload = {
                         "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "run_id": lb_metadata.get("run_id", ""),
+                        "telemetry_schema_version": 2,
+                        "published_leader_count": len(lb_data),
                         "strategies": lb_data
                     }
                     _write_json_atomic(lb_path, payload)
@@ -177,9 +184,34 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
                            best_screen_score: float | None = None,
                            screened_count: int = 0,
                            full_evaluated_count: int = 0,
-                           qualified_count: int = 0):
+                           qualified_count: int = 0,
+                           rejected_count: int = 0,
+                           generated_count: int | None = None,
+                           tpe_sampled_count: int = 0,
+                           mutant_count: int = 0,
+                           exploration_mutant_count: int = 0,
+                           retained_leader_count: int = 0,
+                           strategy_generated_counts: Dict[str, int] | None = None,
+                           strategy_full_evaluated_counts: Dict[str, int] | None = None,
+                           strategy_qualified_counts: Dict[str, int] | None = None,
+                           strategy_rejected_counts: Dict[str, int] | None = None,
+                           strategy_tpe_counts: Dict[str, int] | None = None,
+                           strategy_mutant_counts: Dict[str, int] | None = None,
+                           strategy_exploration_counts: Dict[str, int] | None = None,
+                           published_leader_count: int | None = None,
+                           historical_re_evaluated_count: int = 0,
+                           run_id: str = "",
+                           telemetry_schema_version: int = 2):
     """Puts progress data into the background async queue."""
     pct = round(min(100.0, (current_trial / total_trials) * 100.0), 1) if total_trials and total_trials > 0 else 100.0
+    generated = screened_count if generated_count is None else generated_count
+    generated_by_strategy = dict(strategy_generated_counts or {})
+    full_by_strategy = dict(strategy_full_evaluated_counts or {})
+    qualified_by_strategy = dict(strategy_qualified_counts or {})
+    rejected_by_strategy = dict(strategy_rejected_counts or {})
+    tpe_by_strategy = dict(strategy_tpe_counts or {})
+    mutant_by_strategy = dict(strategy_mutant_counts or {})
+    exploration_by_strategy = dict(strategy_exploration_counts or {})
     data = {
         "status": status,
         "current_trial": current_trial,
@@ -193,9 +225,38 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
         "screened_count": int(screened_count),
         "full_evaluated_count": int(full_evaluated_count),
         "qualified_count": int(qualified_count),
+        # Rejected means a candidate completed full evaluation but failed the
+        # qualification gate; screening-only placeholders are not counted.
+        "rejected_count": int(rejected_count),
+        "generated_count": int(generated),
+        "tpe_sampled_count": int(tpe_sampled_count),
+        "mutant_count": int(mutant_count),
+        "exploration_mutant_count": int(exploration_mutant_count),
+        "retained_leader_count": int(retained_leader_count),
+        "strategy_generated_counts": generated_by_strategy,
+        "strategy_full_evaluated_counts": full_by_strategy,
+        "strategy_qualified_counts": qualified_by_strategy,
+        "strategy_rejected_counts": rejected_by_strategy,
+        "strategy_tpe_counts": tpe_by_strategy,
+        "strategy_mutant_counts": mutant_by_strategy,
+        "strategy_exploration_counts": exploration_by_strategy,
+        "published_leader_count": int(published_leader_count) if published_leader_count is not None else None,
+        "historical_re_evaluated_count": int(historical_re_evaluated_count),
+        "run_id": str(run_id or ""),
+        "telemetry_schema_version": int(telemetry_schema_version),
+        # The DB model stores these as text so existing SQLite/Postgres
+        # installations can migrate without relying on a JSON column type.
+        "strategy_generated_counts_json": json.dumps(generated_by_strategy, sort_keys=True),
+        "strategy_full_evaluated_counts_json": json.dumps(full_by_strategy, sort_keys=True),
+        "strategy_qualified_counts_json": json.dumps(qualified_by_strategy, sort_keys=True),
+        "strategy_rejected_counts_json": json.dumps(rejected_by_strategy, sort_keys=True),
+        "strategy_tpe_counts_json": json.dumps(tpe_by_strategy, sort_keys=True),
+        "strategy_mutant_counts_json": json.dumps(mutant_by_strategy, sort_keys=True),
+        "strategy_exploration_counts_json": json.dumps(exploration_by_strategy, sort_keys=True),
         "elapsed_seconds": int(elapsed_sec),
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "engine": "GPU" if GPU_AVAILABLE else "CPU-MultiCore",
+        "cost_model": cost_model_metadata(),
     }
     with _async_lock:
         _async_state["progress_data"] = data
@@ -204,7 +265,11 @@ def save_lab_progress_gpu(status: str, current_trial: int, total_trials: int,
 _last_top1_score = -999999.0
 _last_lb_push_time = 0.0
 
-def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]], force: bool = False):
+def push_leaderboard_to_db_and_json_gpu(
+    leaderboard: List[Dict[str, Any]],
+    force: bool = False,
+    run_id: str = "",
+):
     """Puts leaderboard data into the background async queue only if it's meaningful."""
     global _last_top1_score, _last_lb_push_time
     
@@ -223,6 +288,7 @@ def push_leaderboard_to_db_and_json_gpu(leaderboard: List[Dict[str, Any]], force
         _last_lb_push_time = now_ts
         with _async_lock:
             _async_state["leaderboard_data"] = copy.deepcopy(leaderboard)
+            _async_state["leaderboard_metadata"] = {"run_id": str(run_id or "")}
 
 def flush_sync_worker():
     """Synchronously force-flushes the async queue to DB and JSON files. Call this before exiting."""
@@ -230,8 +296,10 @@ def flush_sync_worker():
     with _async_lock:
         prog_data = copy.deepcopy(_async_state.get("progress_data"))
         lb_data = copy.deepcopy(_async_state.get("leaderboard_data"))
+        lb_metadata = copy.deepcopy(_async_state.get("leaderboard_metadata", {}))
         _async_state["progress_data"] = None
         _async_state["leaderboard_data"] = None
+        _async_state["leaderboard_metadata"] = {}
 
     if prog_data:
         prog_path = os.path.join(DASHBOARD_DATA_DIR, "lab_progress.json")
@@ -260,6 +328,9 @@ def flush_sync_worker():
         try:
             payload = {
                 "updated_at": datetime.now(timezone.utc).isoformat(),
+                "run_id": lb_metadata.get("run_id", ""),
+                "telemetry_schema_version": 2,
+                "published_leader_count": len(lb_data),
                 "strategies": lb_data
             }
             _write_json_atomic(lb_path, payload)

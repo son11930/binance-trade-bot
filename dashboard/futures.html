@@ -12,7 +12,7 @@
             theme: { extend: { fontFamily: { sans: ['Outfit', 'sans-serif'] }, colors: { deepBg: '#020617', glassBg: 'rgba(15, 23, 42, 0.65)', neonCyan: '#00F0FF', neonGreen: '#39FF14', neonRed: '#FF003C', neonPink: '#FF00FF' } } }
         };
     </script>
-    <link rel="stylesheet" href="styles.css?v=phase38-1">
+    <link rel="stylesheet" href="styles.css?v=phase40-1">
 </head>
 <body data-market="futures" data-dashboard-market="futures" class="min-h-screen p-4 md:p-8">
     <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="login-title">
@@ -36,7 +36,18 @@
             <div class="dashboard-actions">
                 <div class="health-strip" aria-label="System health"><span id="health-bot" class="text-neonGreen">BOT</span><span class="text-slate-600">|</span><span id="health-api" class="text-neonGreen">API</span><span class="text-slate-600">|</span><span id="health-db" class="text-neonGreen">DB</span></div>
                 <span id="connection-status" class="status-pill status-pill--neutral">CONNECTING</span>
-                <button id="toggle-pause-btn" type="button" class="rounded-full border border-slate-600 bg-slate-800 px-4 py-1.5 text-sm font-bold uppercase tracking-widest text-slate-300 transition-colors hover:bg-slate-700"><span id="pause-text">Loading...</span></button>
+                <div class="execution-lane-controls" aria-label="Futures execution controls">
+                    <div class="execution-lane execution-lane--paper">
+                        <span class="execution-lane-label">Paper trading</span>
+                        <span id="paper-execution-status" class="execution-lane-status">Loading...</span>
+                        <button id="toggle-paper-pause-btn" type="button" data-execution-mode="PAPER" class="execution-lane-button"><span id="paper-pause-text">Loading...</span></button>
+                    </div>
+                    <div class="execution-lane execution-lane--live">
+                        <span class="execution-lane-label">Live trading</span>
+                        <span id="live-execution-status" class="execution-lane-status">LOCKED</span>
+                        <button id="toggle-live-pause-btn" type="button" data-execution-mode="LIVE" class="execution-lane-button execution-lane-button--live"><span id="live-pause-text">LOCKED</span></button>
+                    </div>
+                </div>
                 <div class="execution-guard" title="This switch changes the server-side live-order permission."><label for="toggle-allow-live" class="execution-guard-label">Live execution unlock</label><input type="checkbox" id="toggle-allow-live" aria-describedby="live-guard-note" class="h-4 w-4 accent-neonRed"><span id="live-guard-note" class="execution-guard-note">Off by default · server gated</span></div>
                 <div class="view-switch" aria-label="Telemetry view"><span class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Data view</span><button id="view-paper-btn" type="button" aria-pressed="true">PAPER</button><button id="view-live-btn" type="button" aria-pressed="false" title="Shows live telemetry only; it does not unlock live orders.">LIVE DATA</button></div>
                 <span id="mode-badge" class="status-pill status-pill--neutral">Loading mode...</span><button type="button" data-action="logout" class="auth-button auth-button--logout"><span aria-hidden="true">↪</span> Sign out</button>
@@ -59,6 +70,6 @@
         </div>
     </main>
 
-    <script src="js/config_utils.js?v=phase38-1"></script><script src="js/auth.js?v=phase38-1"></script><script src="js/websocket.js?v=phase38-1"></script><script src="js/ui_status.js?v=phase38-1"></script><script src="js/ui_trades.js?v=phase38-1"></script><script src="js/ui_logs.js?v=phase38-1"></script><script src="js/ui_lab.js?v=phase38-1"></script><script src="js/bot_control.js?v=phase38-1"></script><script src="app.js?v=phase38-1"></script>
+    <script src="js/config_utils.js?v=phase40-1"></script><script src="js/auth.js?v=phase40-1"></script><script src="js/websocket.js?v=phase40-1"></script><script src="js/ui_status.js?v=phase40-1"></script><script src="js/ui_trades.js?v=phase40-1"></script><script src="js/ui_logs.js?v=phase40-1"></script><script src="js/ui_lab.js?v=phase40-1"></script><script src="js/bot_control.js?v=phase40-1"></script><script src="app.js?v=phase40-1"></script>
 </body>
 </html>

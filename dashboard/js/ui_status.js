@@ -23,21 +23,35 @@ function updateStatusUI(aiStatus, globalConfig) {
         }
     }
     
-    const serverExecutionMode = (globalConfig.paper_trading === "True" || globalConfig.paper_trading === true) ? "PAPER" : "LIVE";
+    const selectedMode = (typeof viewMode === 'string' && viewMode === 'LIVE') ? 'LIVE' : 'PAPER';
     const manifestStage = globalConfig.active_stage || "PAPER";
-    const isPaused = currentMarket === 'futures'
+    const market = currentMarket === 'futures' ? 'futures' : 'spot';
+    const lane = globalConfig.execution_controls
+        && globalConfig.execution_controls[market]
+        && globalConfig.execution_controls[market][selectedMode];
+    const legacyPaused = market === 'futures'
         ? (globalConfig.futures_paused === 'True' || globalConfig.futures_paused === true)
         : (globalConfig.spot_paused === 'True' || globalConfig.spot_paused === true);
-    
-    let execStatus = manifestStage;
+    const isPaused = lane
+        ? (lane.effective_paused === true || lane.effective_paused === 'true')
+        : legacyPaused;
+    const liveLocked = selectedMode === 'LIVE'
+        && (!(globalConfig.allow_live === true || globalConfig.allow_live === 'true')
+            || manifestStage !== 'LIVE');
+
+    let execStatus = selectedMode;
     let badgeClass = "badge-outline";
     let titleMsg = "Bot is running";
     
-    if (isPaused) {
+    if (liveLocked) {
+        execStatus = "LOCKED";
+        badgeClass = "bg-red-500/10 text-red-400 border border-red-500/20";
+        titleMsg = "LIVE execution is locked by the server-side gate";
+    } else if (isPaused) {
         execStatus = "PAUSED";
         badgeClass = "bg-red-500/10 text-red-400 border border-red-500/20";
         titleMsg = globalConfig.pause_reason || "Bot is paused";
-    } else if (serverExecutionMode !== manifestStage) {
+    } else if (selectedMode !== manifestStage) {
         execStatus = "MISMATCH";
         badgeClass = "bg-red-500/10 text-red-400 border border-red-500/20";
         titleMsg = "Execution context does not match configuration";
@@ -62,7 +76,7 @@ function updateStatusUI(aiStatus, globalConfig) {
     }
     
     if (liveUsdt) {
-        if (serverExecutionMode === "PAPER") {
+        if (selectedMode === "PAPER") {
             liveUsdt.innerText = "SIMULATED";
             liveUsdt.classList.add('text-lg', 'text-slate-400');
         } else {

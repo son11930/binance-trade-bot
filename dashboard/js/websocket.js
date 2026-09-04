@@ -45,13 +45,20 @@ function connectWebSocket() {
             const statusData = message.data || {};
             dataStore.spot.globalConfig = statusData;
             dataStore.futures.globalConfig = statusData;
-            dataStore.spot.status = statusData.spot || null;
-            dataStore.futures.status = statusData.futures || null;
+            dataStore.spot.execution = statusData.execution && statusData.execution.spot
+                ? statusData.execution.spot : {};
+            dataStore.futures.execution = statusData.execution && statusData.execution.futures
+                ? statusData.execution.futures : {};
+            dataStore.spot.statusByMode = { ...dataStore.spot.execution };
+            dataStore.futures.statusByMode = { ...dataStore.futures.execution };
+            dataStore.spot.status = getExecutionStatusForMarket('spot', statusData.spot || null);
+            dataStore.futures.status = getExecutionStatusForMarket('futures', statusData.futures || null);
 
             const tradingMarket = getTradingMarket();
-            const currentStatus = tradingMarket === 'futures'
-                ? statusData.futures
-                : (tradingMarket === 'spot' ? statusData.spot : null);
+            const currentStatus = tradingMarket ? getExecutionStatusForMarket(
+                tradingMarket,
+                statusData[tradingMarket] || null,
+            ) : null;
             if (currentStatus && typeof updateStatusUI === 'function') {
                 updateStatusUI(currentStatus, statusData);
             }

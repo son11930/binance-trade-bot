@@ -1,7 +1,7 @@
 import time
 import threading
 
-from .config import SYMBOLS, is_paper_trading, FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
+from .config import SYMBOLS, FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
 from .state import StateManager
 from .database import setup_logging
 from .logger import log_msg
@@ -15,7 +15,7 @@ from .opportunity_tracker import track_opportunities
 from .global_memory_agent import generate_global_memory
 from .context import ExecutionContext
 from .strategy_manager import get_active_strategy
-from .control import get_bot_control, set_bot_control
+from .control import get_bot_control, set_bot_control, is_execution_paused
 
 setup_logging()
 
@@ -23,26 +23,30 @@ def main():
     log_msg("INFO", "Starting Multi-Coin Dual-Engine Bot (Spot & Futures)...")
 
     # A live process may start only when the operator has explicitly unlocked
-    # live execution and the manifest carries validated lab evidence.  Without
-    # this guard, a missing/corrupt manifest could fall back to the legacy
-    # default strategy while the global mode was LIVE.
+    # live execution and the manifest carries validated lab evidence.  The
+    # legacy paper_trading flag is intentionally not used as an execution
+    # authority because Paper and Live managers are independent lanes.
     startup_control = get_bot_control()
     startup_strategy = get_active_strategy()
-    if not startup_control.get("paper_trading", True) and (
-        not startup_control.get("allow_live", False) or not startup_strategy
+    if startup_control.get("allow_live", False) and (
+        not startup_strategy or startup_strategy.get("stage") != "LIVE"
     ):
-        log_msg("ERROR", "LIVE startup refused: valid promotion evidence and live unlock are required.")
+        log_msg("ERROR", "LIVE startup refused: valid LIVE promotion evidence is required.")
         set_bot_control(
-            spot_paused=True,
-            futures_paused=True,
             allow_live=False,
-            paper_trading=True,
+            spot_live_paused=True,
+            futures_live_paused=True,
             pause_reason="LIVE startup refused: invalid strategy manifest or live unlock",
         )
-        return
+        startup_control = get_bot_control()
     
     # Configure Futures settings on real account
-    if not is_paper_trading():
+    live_strategy_ready = bool(
+        startup_strategy
+        and startup_strategy.get("stage") == "LIVE"
+        and startup_control.get("allow_live", False)
+    )
+    if live_strategy_ready:
         log_msg("INFO", f"Setting up Futures Margin ({FUTURES_MARGIN_TYPE}) and Leverage ({FUTURES_LEVERAGE}x)...", market_type='futures')
         futures_set_position_mode(is_paper=False)
         for sym in SYMBOLS:
@@ -124,7 +128,13 @@ def main():
         while True:
             # Reconcile every 4 hours (14400 seconds)
             time.sleep(14400)
-            if is_paper_trading():
+            current_control = get_bot_control()
+            current_strategy = get_active_strategy()
+            if not (
+                current_strategy
+                and current_strategy.get("stage") == "LIVE"
+                and current_control.get("allow_live", False)
+            ):
                 continue
                 
             try:
@@ -133,9 +143,7 @@ def main():
                     continue
                 
                 # Compare with Futures state manager
-                f_sm = next((sm for sm in all_managers if sm.market_type == 'futures'), None)
-                if not f_sm:
-                    continue
+                f_sm = state_manager_futures_live
                     
                 local_balance = f_sm.get_balance()
                 diff = abs(actual_balance - local_balance)
@@ -219,56 +227,41 @@ def main():
                 
                 from .config import SYMBOLS
                 
-                # Phase 0A: Build ExecutionContext and validate state
+                # Phase 40: each market/mode lane gets its own context and
+                # pause gate.  The legacy global paper_trading flag is only a
+                # compatibility snapshot and cannot select an order manager.
                 strat = get_active_strategy()
                 ctrl = get_bot_control()
-                
-                if strat:
-                    manifest_stage = strat.get("stage", "PAPER")
-                    exec_mode = "PAPER" if is_paper_trading() else "LIVE"
+                lanes = (
+                    ("futures", "PAPER", state_manager_futures_paper, evaluate_all_futures_strategies_single_pass),
+                    ("spot", "PAPER", state_manager_spot_paper, evaluate_all_spot_strategies_single_pass),
+                    ("futures", "LIVE", state_manager_futures_live, evaluate_all_futures_strategies_single_pass),
+                    ("spot", "LIVE", state_manager_spot_live, evaluate_all_spot_strategies_single_pass),
+                )
 
-                    if exec_mode == "LIVE" and not ctrl.get("allow_live", False):
-                        log_msg("ERROR", "LIVE execution is not unlocked. Failsafe triggered: PAUSING bot.")
-                        set_bot_control(spot_paused=True, futures_paused=True)
-                        time.sleep(2)
+                for market, mode, state_manager, evaluator in lanes:
+                    if is_execution_paused(market, mode, control=ctrl):
                         continue
-                    
-                    if manifest_stage != exec_mode:
-                        log_msg("ERROR", f"CRITICAL SECURITY ALERT: Config execution mode ({exec_mode}) does not match Manifest stage ({manifest_stage}). Failsafe triggered: PAUSING bot.")
-                        set_bot_control(spot_paused=True, futures_paused=True)
-                        time.sleep(2)
+                    if mode == "LIVE":
+                        if not strat or strat.get("stage") != "LIVE" or not ctrl.get("allow_live", False):
+                            log_msg("WARNING", f"Skipping {market} LIVE lane: validated LIVE strategy and unlock are required.", market_type=market)
+                            continue
+                    elif strat and strat.get("stage") != "PAPER":
+                        log_msg("WARNING", f"Skipping {market} PAPER lane: active strategy is staged for {strat.get('stage')}.", market_type=market)
                         continue
-                        
+
                     context = ExecutionContext(
-                        execution_mode=exec_mode,
-                        deployment_id=strat.get("id", "unknown_deployment"),
-                        strategy_id=strat.get("name", "unknown_strategy"),
-                        version=strat.get("version", "1.0.0")
+                        execution_mode=mode,
+                        deployment_id=strat.get("id", "default_deployment") if strat else "default_deployment",
+                        strategy_id=strat.get("name", "default_strategy") if strat else "default_strategy",
+                        version=strat.get("version", "1.0.0") if strat else "1.0.0",
+                        artifact_hash=strat.get("artifact_hash", "") if strat else "",
                     )
-                else:
-                    exec_mode = "PAPER" if is_paper_trading() else "LIVE"
-                    if exec_mode == "LIVE":
-                        log_msg("ERROR", "LIVE execution refused because no validated strategy manifest is active.")
-                        set_bot_control(spot_paused=True, futures_paused=True, allow_live=False, paper_trading=True, pause_reason="No validated strategy manifest")
-                        time.sleep(2)
-                        continue
-                    context = ExecutionContext(
-                        execution_mode=exec_mode,
-                        deployment_id="default_deployment",
-                        strategy_id="default_strategy",
-                        version="1.0.0"
-                    )
-                
-                if exec_mode == "PAPER":
-                    active_spot_manager = state_manager_spot_paper
-                    active_futures_manager = state_manager_futures_paper
-                else:
-                    active_spot_manager = state_manager_spot_live
-                    active_futures_manager = state_manager_futures_live
-                
-                # Run evaluations in separate threads so we don't block the clock
-                threading.Thread(target=evaluate_all_futures_strategies_single_pass, args=(active_futures_manager, SYMBOLS, context), daemon=True).start()
-                threading.Thread(target=evaluate_all_spot_strategies_single_pass, args=(active_spot_manager, SYMBOLS, context), daemon=True).start()
+                    threading.Thread(
+                        target=evaluator,
+                        args=(state_manager, SYMBOLS, context),
+                        daemon=True,
+                    ).start()
                 
                 # Sleep for 2 seconds to avoid triggering multiple times within the same second
                 time.sleep(2)
@@ -319,9 +312,15 @@ def main():
         log_msg("ERROR", f"Failed to start futures multiplex socket: {e}", market_type='futures')
         
     log_msg("INFO", "WebSocket streams active. Waiting for candle closes...")
-    # Initial state broadcast
-    update_bot_state(state_manager_spot_paper, "Waiting for next candle close...", symbol="All", market_type='spot')
-    update_bot_state(state_manager_futures_paper, "Waiting for next candle close...", symbol="All", market_type='futures')
+    # Initial state broadcast for every lane so the dashboard can keep Paper
+    # and Live telemetry separate even when only Paper is enabled.
+    for state_manager, market in (
+        (state_manager_spot_paper, "spot"),
+        (state_manager_spot_live, "spot"),
+        (state_manager_futures_paper, "futures"),
+        (state_manager_futures_live, "futures"),
+    ):
+        update_bot_state(state_manager, "Waiting for next candle close...", symbol="All", market_type=market)
     
     import signal
     import sys
@@ -384,12 +383,13 @@ def main():
                 reconnect_time = 0.0
 
         try:
-            if is_paper_trading():
-                update_bot_state(state_manager_spot_paper, "Monitoring Spot markets...", symbol="All", market_type='spot')
-                update_bot_state(state_manager_futures_paper, "Monitoring Futures markets...", symbol="All", market_type='futures')
-            else:
-                update_bot_state(state_manager_spot_live, "Monitoring Spot markets...", symbol="All", market_type='spot')
-                update_bot_state(state_manager_futures_live, "Monitoring Futures markets...", symbol="All", market_type='futures')
+            for state_manager, market in (
+                (state_manager_spot_paper, "spot"),
+                (state_manager_spot_live, "spot"),
+                (state_manager_futures_paper, "futures"),
+                (state_manager_futures_live, "futures"),
+            ):
+                update_bot_state(state_manager, f"Monitoring {market.capitalize()} markets...", symbol="All", market_type=market)
         except Exception as e:
             log_msg("ERROR", f"Error updating bot state: {e}")
 

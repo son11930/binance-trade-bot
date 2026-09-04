@@ -9,6 +9,61 @@ function asBoolean(value) {
     return value === true || value === 'true' || value === 'True' || value === 1;
 }
 
+function getExecutionLane(data, market, mode) {
+    const nested = data.execution_controls
+        && data.execution_controls[market]
+        && data.execution_controls[market][mode];
+    if (nested && typeof nested === 'object') return nested;
+
+    const modeKey = `${market}_${mode.toLowerCase()}_paused`;
+    if (Object.prototype.hasOwnProperty.call(data, modeKey)) {
+        return { paused: asBoolean(data[modeKey]), effective_paused: asBoolean(data[modeKey]) };
+    }
+
+    const legacyKey = `${market}_paused`;
+    return {
+        paused: asBoolean(data[legacyKey]),
+        effective_paused: asBoolean(data[legacyKey])
+    };
+}
+
+function updateExecutionLaneUI(mode, lane, data) {
+    const button = document.getElementById(`toggle-${mode.toLowerCase()}-pause-btn`);
+    const textSpan = document.getElementById(`${mode.toLowerCase()}-pause-text`);
+    const status = document.getElementById(`${mode.toLowerCase()}-execution-status`);
+    if (!button || !textSpan) return;
+
+    const isLive = mode === 'LIVE';
+    const liveUnlocked = asBoolean(data.allow_live) && String(data.active_stage || '').toUpperCase() === 'LIVE';
+    const locked = isLive && !liveUnlocked;
+    const paused = lane && (Object.prototype.hasOwnProperty.call(lane, 'effective_paused')
+        ? asBoolean(lane.effective_paused)
+        : asBoolean(lane.paused));
+
+    button.disabled = locked;
+    button.setAttribute('aria-disabled', String(locked));
+    if (locked) {
+        button.className = 'execution-lane-button execution-lane-button--live';
+        textSpan.innerText = 'LOCKED';
+        if (status) status.innerText = 'LOCKED';
+        return;
+    }
+
+    if (paused) {
+        button.className = isLive
+            ? 'execution-lane-button execution-lane-button--live animate-pulse'
+            : 'execution-lane-button animate-pulse';
+        textSpan.innerText = `RESUME ${mode}`;
+        if (status) status.innerText = 'PAUSED';
+    } else {
+        button.className = isLive
+            ? 'execution-lane-button execution-lane-button--live'
+            : 'execution-lane-button';
+        textSpan.innerText = `PAUSE ${mode}`;
+        if (status) status.innerText = 'RUNNING';
+    }
+}
+
 async function fetchBotControl() {
     try {
         const response = await fetch('/api/bot_control', { headers: getAuthHeader() });
@@ -21,6 +76,7 @@ async function fetchBotControl() {
 }
 
 function updatePauseUI(data = {}) {
+    window.lastBotControl = { ...data };
     if (Object.prototype.hasOwnProperty.call(data, 'spot_paused')) {
         isSpotPaused = asBoolean(data.spot_paused);
     }
@@ -34,34 +90,57 @@ function updatePauseUI(data = {}) {
     }
 
     const market = getTradingMarket();
-    const btn = document.getElementById('toggle-pause-btn');
-    const textSpan = document.getElementById('pause-text');
-    if (!market || !btn || !textSpan) return;
-
-    const isPaused = market === 'spot' ? isSpotPaused : isFuturesPaused;
-    if (isPaused) {
-        btn.className = 'px-4 py-1.5 rounded-full bg-neonRed/20 text-neonRed text-sm font-bold border border-neonRed/50 uppercase tracking-widest hover:bg-neonRed/30 transition-colors animate-pulse';
-        textSpan.innerText = `RESUME ${market.toUpperCase()}`;
-    } else {
-        btn.className = 'px-4 py-1.5 rounded-full bg-slate-800 text-slate-300 text-sm font-bold border border-slate-600 uppercase tracking-widest hover:bg-slate-700 transition-colors';
-        textSpan.innerText = `PAUSE ${market.toUpperCase()}`;
-    }
+    if (!market) return;
+    updateExecutionLaneUI('PAPER', getExecutionLane(data, market, 'PAPER'), data);
+    updateExecutionLaneUI('LIVE', getExecutionLane(data, market, 'LIVE'), data);
 }
 
 async function togglePause() {
-    const targetMarket = getTradingMarket();
-    if (!targetMarket) return;
+    // Compatibility entry point for older cached pages.  New pages always
+    // bind to the explicit Paper/Live buttons below.
+    return toggleExecutionPause('PAPER');
+}
 
-    const newStatus = targetMarket === 'spot' ? !isSpotPaused : !isFuturesPaused;
+async function toggleExecutionPause(mode) {
+    const targetMarket = getTradingMarket();
+    const normalizedMode = String(mode || '').toUpperCase();
+    if (!targetMarket || !['PAPER', 'LIVE'].includes(normalizedMode)) return;
+
+    const lane = getExecutionLane(
+        window.lastBotControl || {},
+        targetMarket,
+        normalizedMode,
+    );
+    const liveUnlocked = asBoolean(window.lastBotControl && window.lastBotControl.allow_live)
+        && String(window.lastBotControl && window.lastBotControl.active_stage || '').toUpperCase() === 'LIVE';
+    if (normalizedMode === 'LIVE' && !liveUnlocked) {
+        const message = 'LIVE execution is locked by the server. Stage a LIVE strategy and enable the live unlock first.';
+        if (typeof showToast === 'function') showToast(message, 'error');
+        return;
+    }
+
+    const currentPaused = lane && Object.prototype.hasOwnProperty.call(lane, 'paused')
+        ? asBoolean(lane.paused)
+        : false;
     try {
-        const response = await fetch('/api/toggle_pause', {
+        const response = await fetch('/api/toggle_execution_pause', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-            body: JSON.stringify({ market: targetMarket, paused: newStatus })
+            body: JSON.stringify({ market: targetMarket, execution_mode: normalizedMode, paused: !currentPaused })
         });
-        if (!response.ok) await fetchBotControl();
+        if (!response.ok) {
+            let detail = `Unable to change ${normalizedMode} execution state.`;
+            try {
+                const errorData = await response.json();
+                if (typeof errorData.detail === 'string') detail = errorData.detail;
+            } catch (error) {
+                // Keep the generic message when the server does not return JSON.
+            }
+            if (typeof showToast === 'function') showToast(detail, 'error');
+        }
+        await fetchBotControl();
     } catch (error) {
-        console.error('Error toggling bot pause state:', error);
+        console.error(`Error toggling ${normalizedMode} execution state:`, error);
         await fetchBotControl();
     }
 }
@@ -125,13 +204,14 @@ function initializeMarketPage() {
     if (!market) return;
 
     localStorage.setItem('selectedMarket', market);
-    updatePauseUI({ spot_paused: isSpotPaused, futures_paused: isFuturesPaused });
-    setViewMode(viewMode);
-
     const marketData = dataStore[market];
     if (!marketData) return;
-    if (marketData.status && typeof updateStatusUI === 'function') {
-        updateStatusUI(marketData.status, marketData.globalConfig);
+    updatePauseUI(marketData.globalConfig || { spot_paused: isSpotPaused, futures_paused: isFuturesPaused });
+    setViewMode(viewMode);
+
+    const selectedStatus = getExecutionStatusForMarket(market, marketData.status);
+    if (selectedStatus && typeof updateStatusUI === 'function') {
+        updateStatusUI(selectedStatus, marketData.globalConfig);
     }
     if (marketData.trades && typeof updateTradesUI === 'function') {
         updateTradesUI(marketData.trades);
@@ -150,6 +230,13 @@ function bindDashboardActions() {
         pauseButton.addEventListener('click', togglePause);
         pauseButton.dataset.bound = 'true';
     }
+
+    ['PAPER', 'LIVE'].forEach((mode) => {
+        const button = document.getElementById(`toggle-${mode.toLowerCase()}-pause-btn`);
+        if (!button || button.dataset.bound) return;
+        button.addEventListener('click', () => toggleExecutionPause(mode));
+        button.dataset.bound = 'true';
+    });
 
     const liveToggle = document.getElementById('toggle-allow-live');
     if (liveToggle && !liveToggle.dataset.bound) {

@@ -6,8 +6,8 @@ from .ai_engine import analyze_sentiment
 from .database import sanitize_text, TradeRepository
 from bot.logger import log_msg
 from bot.state import StateManager, SymbolState
-from bot.control import get_bot_control
-from .config import is_paper_trading, COOLDOWN_MINUTES
+from bot.control import get_bot_control, is_execution_paused
+from .config import COOLDOWN_MINUTES
 from .trade_executor import execute_trade
 from .webhook_notifier import update_bot_state, send_discord_alert
 from .binance_client import get_current_price
@@ -15,36 +15,60 @@ from .state import StateManager
 from .risk_manager import check_circuit_breakers
 from .config import MAX_RISK_PER_TRADE_PCT
 
+
+def _context_matches_state_manager(state_manager: StateManager, context=None) -> bool:
+    if context is None:
+        return True
+    manager_mode = str(getattr(state_manager, "execution_mode", "PAPER")).upper()
+    context_mode = str(getattr(context, "execution_mode", "")).upper()
+    if context_mode != manager_mode:
+        log_msg("ERROR", f"Execution context mismatch: manager={manager_mode}, context={context_mode}")
+        return False
+    return True
+
 def _check_trading_paused(control: dict, market_type: str, symbol: str, state_manager: StateManager) -> bool:
-    key = "futures_paused" if market_type == "futures" else "spot_paused"
-    if control.get(key):
-        log_msg("WARNING", f"⏸️ Trading is Paused for {market_type.capitalize()}. Skipping AI evaluation and order for {symbol}.")
+    execution_mode = getattr(state_manager, "execution_mode", "PAPER")
+    if is_execution_paused(market_type, execution_mode, control=control):
+        log_msg("WARNING", f"⏸️ {execution_mode} trading is paused for {market_type.capitalize()}. Skipping AI evaluation and order for {symbol}.")
         update_bot_state(state_manager, f"Paused: Skipping {symbol}", symbol=symbol, market_type=market_type)
         state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc))
         return True
     return False
 
 
-def _resolve_execution_mode(market_type: str) -> bool | None:
-    """Return the mode permitted by control + manifest, or fail closed."""
+def _resolve_execution_mode(
+    market_type: str,
+    execution_mode: str | None = None,
+    state_manager: StateManager | None = None,
+    allow_protective_exit: bool = False,
+) -> bool | None:
+    """Return the requested state-manager lane if its gates are valid."""
+    mode = execution_mode or getattr(state_manager, "execution_mode", "PAPER")
+    mode = str(mode).strip().upper()
+    if mode not in {"PAPER", "LIVE"}:
+        log_msg("ERROR", f"{market_type} order refused: invalid execution mode")
+        return None
+
     control = get_bot_control()
-    configured_paper = bool(control.get("paper_trading", True))
+    if is_execution_paused(market_type, mode, control=control) and not allow_protective_exit:
+        log_msg("INFO", f"{mode} {market_type} execution is paused")
+        return None
+
     from .strategy_manager import get_active_strategy
     active = get_active_strategy()
     if not active:
-        if not configured_paper:
+        if mode == "LIVE" and not allow_protective_exit:
             log_msg("ERROR", f"LIVE {market_type} order refused: no validated strategy manifest")
             return None
-        return True
+        return mode == "PAPER"
 
-    expected_stage = "PAPER" if configured_paper else "LIVE"
-    if active.get("stage") != expected_stage:
-        log_msg("ERROR", f"{market_type} order refused: manifest stage does not match execution mode")
+    if active.get("stage") != mode and not allow_protective_exit:
+        log_msg("ERROR", f"{mode} {market_type} order refused: manifest stage does not match execution lane")
         return None
-    if expected_stage == "LIVE" and not control.get("allow_live", False):
+    if mode == "LIVE" and not control.get("allow_live", False) and not allow_protective_exit:
         log_msg("ERROR", f"LIVE {market_type} order refused: live execution is locked")
         return None
-    return expected_stage == "PAPER"
+    return mode == "PAPER"
 
 def _check_slippage_guard(state_manager: StateManager, symbol: str, current_price: float, market_type: str) -> float | None:
     state = state_manager.get_state(symbol)
@@ -167,7 +191,8 @@ def _calculate_spot_position_size(state_manager: StateManager, symbol: str, allo
     if trade_amount > live_usdt_balance: trade_amount = live_usdt_balance
     
     if live_usdt_balance < 10.0 or live_usdt_balance < trade_amount:
-        log_msg("WARNING", f"⚠️ Insufficient {'Binance' if not is_paper_trading() else 'Paper'} USDT to buy {symbol}")
+        execution_mode = str(getattr(state_manager, "execution_mode", "PAPER")).upper()
+        log_msg("WARNING", f"⚠️ Insufficient {'Binance' if execution_mode == 'LIVE' else 'Paper'} USDT to buy {symbol}")
         return None
         
     safe_trade_amount = trade_amount * 0.98
@@ -176,10 +201,12 @@ def _calculate_spot_position_size(state_manager: StateManager, symbol: str, allo
 
 def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, current_price: float, signal: str, position_side: str, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN", context=None):
     try:
+        if not _context_matches_state_manager(state_manager, context):
+            return
         control = get_bot_control()
         if _check_trading_paused(control, "futures", symbol, state_manager):
             return
-        is_paper = _resolve_execution_mode("futures")
+        is_paper = _resolve_execution_mode("futures", state_manager=state_manager)
         if is_paper is None:
             return
 
@@ -220,7 +247,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 
                 # Phase 5: Place Native Stop immediately (closePosition=True)
                 from .binance_client import futures_place_native_stop
-                if not futures_place_native_stop(symbol, position_side, sl_target):
+                if not futures_place_native_stop(symbol, position_side, sl_target, is_paper=is_paper):
                     log_msg("ERROR", f"🚨 Native Stop placement failed for {symbol}. FAILING CLOSED immediately.", market_type="futures")
                     close_signal = "SELL" if position_side == "LONG" else "BUY"
                     close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper, context=context)
@@ -250,10 +277,12 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
 
 def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price: float, strategy_used: str, sl_target: float, tp_target: float, time_limit: int, adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val="UNKNOWN", context=None):
     try:
+        if not _context_matches_state_manager(state_manager, context):
+            return
         control = get_bot_control()
         if _check_trading_paused(control, "spot", symbol, state_manager):
             return
-        is_paper = _resolve_execution_mode("spot")
+        is_paper = _resolve_execution_mode("spot", state_manager=state_manager)
         if is_paper is None:
             return
 
@@ -311,7 +340,7 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
 
 def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
     try:
-        is_paper = _resolve_execution_mode("spot")
+        is_paper = _resolve_execution_mode("spot", state_manager=state_manager)
         if is_paper is None:
             return
         update_bot_state(state_manager, f"Evaluating {symbol}...", symbol=symbol, market_type='spot')
@@ -395,7 +424,7 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
 
 def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
     try:
-        execution_mode = _resolve_execution_mode("futures")
+        execution_mode = _resolve_execution_mode("futures", state_manager=state_manager)
         if execution_mode is None:
             return
         from .strategy import analyze_futures_market, evaluate_dynamic_strategy
@@ -410,7 +439,9 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
         
         if active_strat and active_strat.get("parameters"):
             signal_plan = evaluate_dynamic_strategy(df, active_strat.get("parameters", {}))
-            is_paper = (active_strat.get("stage", "PAPER") == "PAPER")
+            # The state-manager lane is the only execution-mode authority.
+            # Manifest parameters select the strategy, not Paper vs Live.
+            is_paper = execution_mode
         else:
             signal_plan = analyze_futures_market(df)
             is_paper = execution_mode
@@ -436,7 +467,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper)
                         if trade:
                             from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol)
+                            futures_cancel_all_orders(symbol, is_paper=is_paper)
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:
@@ -512,7 +543,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     vol_surge_val, symbol, _evaluate_futures_trade_signal, 
                     state_manager, symbol, current_price, signal, position_side, strategy_used, 
                     signal_plan.stop_loss, signal_plan.take_profit, signal_plan.time_in_trade, 
-                    adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val
+                    adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val, context
                 )
 
             # Check if exiting position
@@ -522,7 +553,7 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=is_paper)
                     if trade:
                         from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol)
+                        futures_cancel_all_orders(symbol, is_paper=is_paper)
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -548,7 +579,9 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
 def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbols: list, context=None):
     try:
         log_msg("INFO", "Running Spot Single-Pass Evaluation...", market_type='spot')
-        execution_mode = _resolve_execution_mode("spot")
+        if not _context_matches_state_manager(state_manager, context):
+            return
+        execution_mode = _resolve_execution_mode("spot", state_manager=state_manager)
         if execution_mode is None:
             return
 
@@ -673,7 +706,9 @@ def evaluate_all_spot_strategies_single_pass(state_manager: StateManager, symbol
 def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, symbols: list, context=None):
     try:
         log_msg("INFO", "Running Futures Single-Pass Evaluation...", market_type='futures')
-        execution_mode = _resolve_execution_mode("futures")
+        if not _context_matches_state_manager(state_manager, context):
+            return
+        execution_mode = _resolve_execution_mode("futures", state_manager=state_manager)
         if execution_mode is None:
             return
         
@@ -693,7 +728,9 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
             active_strat = get_active_strategy()
             if active_strat and active_strat.get("parameters"):
                 signal_plan = evaluate_dynamic_strategy(df, active_strat.get("parameters", {}))
-                is_paper = (active_strat.get("stage", "PAPER") == "PAPER")
+                # The state-manager lane is the only execution-mode authority.
+                # Manifest parameters select the strategy, not Paper vs Live.
+                is_paper = execution_mode
             else:
                 signal_plan = analyze_futures_market(df)
                 is_paper = execution_mode
@@ -721,7 +758,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=data['is_paper'], context=context)
                     if trade:
                         from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol)
+                        futures_cancel_all_orders(symbol, is_paper=data['is_paper'])
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -739,7 +776,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=data['is_paper'], context=context)
                         if trade:
                             from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol)
+                            futures_cancel_all_orders(symbol, is_paper=data['is_paper'])
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:
@@ -840,7 +877,7 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                 vol_surge_val, symbol, _evaluate_futures_trade_signal, 
                 state_manager, symbol, current_price, signal, position_side, strategy_used, 
                 signal_plan.stop_loss, signal_plan.take_profit, signal_plan.time_in_trade, 
-                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val
+                adx_val, rsi_val, macd_histogram_val, atr_val, bb_width_val, dist_sma_200_val, vol_surge_val, market_regime_val, context
             )
             
     except Exception as e:

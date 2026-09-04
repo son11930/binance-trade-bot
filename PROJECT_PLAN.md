@@ -481,3 +481,77 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - JavaScript syntax checks and focused existing dashboard/API tests
   - deployed HTTP smoke checks for all routes/assets and unauthenticated API protection
 - **Status**: **Completed — Home route, navigation/auth shell, focused tests, GPU run, push, restart, and deployed HTTP smoke verification passed**
+
+### Phase 39: End-to-End Trading Fee Accounting
+
+- **Objective**: Make strategy evaluation and monitoring reflect the cost of repeated trading by applying explicit entry/exit fees exactly once per completed trade and exposing the assumptions used.
+- **Scope**: Lab cost model and CPU/GPU parity, fee-aware regression tests, paper/live fee-boundary audit, leaderboard/dashboard metric labels, and changelog documentation. Runtime paper/live execution remains separately gated; no live orders or live execution permission changes.
+- **Required behavior**:
+  1. Every backtest/OOS round trip deducts the configured fee plus execution-cost allowance exactly once; open positions are settled consistently at the evaluation boundary.
+  2. CPU and GPU kernels produce identical fee-adjusted metrics and the fee assumptions are visible/auditable.
+  3. The lab never substitutes its modeled fee for a realized exchange commission; paper/live execution remains separately gated and unchanged by this phase.
+  4. Invalid, missing, or negative fee inputs fail safely and cannot improve a candidate's score.
+- **TDD/verification**:
+  - unit tests for fee math, boundary values, repeated trades, and no-double-charge behavior
+  - CPU/GPU fee-adjusted parity regression
+  - focused bot/accounting tests and a safe GPU smoke run without live orders
+- **Exit gates**:
+  - displayed net returns are net of documented fees/cost assumptions
+  - no fee-related regression or metric inflation is observed
+  - paper/live execution remains paused or paper-only during verification
+- **Status**: **Completed — fee-aware lab metrics, evidence validation, dashboard visibility, focused tests, and safe GPU smoke verification passed; live execution was not enabled**
+
+### Phase 40: Independent Paper/Live Controls and GPU Exploration Transparency
+
+- **Objective**: Keep Paper Trading and Live Trading execution controls independent, and make GPU Lab exploration/leader retention observable so a small leaderboard cannot be mistaken for a small search.
+- **Scope**: Shared execution control state/API, Spot/Futures dashboard control wiring, authorization and cross-mode safety tests, GPU search accounting/leaderboard diagnostics, and changelog documentation. No live orders are permitted during implementation or verification.
+- **Required behavior**:
+  1. Paper resume/stop changes only the paper runtime; Live resume/stop changes only the live runtime.
+  2. Paper-only operation must be possible while the server-side live execution unlock remains off; a paper action must never enable live execution.
+  3. Every control request must carry and validate its execution mode server-side; the UI cannot select or infer a different mode after the request is sent.
+  4. GPU Lab must report generated, screened, full-evaluated, qualified, retained, and rejected counts separately, and show whether new genomes continue after historical leaders are loaded.
+  5. Leaderboard display must distinguish retained top candidates from total exploration and must not imply that only the displayed rows were searched.
+- **TDD/verification**:
+  - API/control tests for mode isolation, invalid mode rejection, live-unlock gating, and idempotent stop/resume behavior
+  - dashboard structure/wiring tests for distinct Paper and Live actions and status labels
+  - GPU Lab tests for new-genome sampling, champion seeding, count accounting, and leaderboard metadata
+  - focused syntax, regression, and safe paper-only smoke verification
+- **Exit gates**:
+  - Paper can be resumed and stopped without changing live state
+  - Live remains blocked unless its explicit server-side unlock and evidence gates pass
+  - Lab output exposes exploration counts and retained-leader limits
+  - no live order is placed during verification
+- **Verification**:
+  - Focused execution/API/dashboard/fee/GPU regression suite: 72 passed, 1 skipped
+  - Python compilation and dashboard JavaScript syntax checks passed
+  - Local artifacts confirm the previous leaderboard's two visible rows were not the total search; the persisted Optuna study contains strategy-type observations across multiple families. New checkpoints now expose the same evidence directly in the Lab UI.
+  - No live order was placed during verification
+- **Status**: **Completed - independent execution lanes, Live UI metadata refresh, rejection/retention telemetry, and strategy-family exploration visibility implemented and verified**
+
+### Phase 41: Execution Boundary and Lab Evidence Hardening
+
+- **Objective**: Close the residual race windows identified during the Phase 40 security review before the separated controls and Lab telemetry are deployed to the server.
+- **Scope**: order-boundary revalidation, immutable execution context checks, cross-process control locking, fail-closed pause persistence, protective-exit handling, promotion post-conditions, and unambiguous Lab run/family/archive counters.
+- **Required behavior**:
+  1. A queued or delayed order must revalidate its immutable market/mode/deployment context immediately before exchange submission; a pause or manifest change must invalidate the order.
+  2. Paper and Live mode cannot be changed by a later manifest read inside an evaluator; the lane context remains authoritative and must match the state manager.
+  3. Control updates from the API process and bot process are serialized across processes, and a failed safety pause is treated as a fail-closed condition.
+  4. Pausing Live blocks new entries but does not suppress emergency exits/reconciliation for an already-open live position.
+  5. Promotion verifies all required control post-conditions and leaves Live disarmed on any persistence mismatch.
+  6. Lab telemetry initializes every strategy family, distinguishes family selection from exploratory mutation intensity, preserves truthful archive/published counts, and reports partial runs as stopped rather than completed.
+- **TDD/verification**:
+  - regression tests for pause/manifest invalidation at the order boundary and cross-process control updates
+  - mode-context tests for both evaluator paths and protective-exit behavior
+  - Lab tests for zero-count families, minimum family coverage, run status, archive/published counts, and rejected/full semantics
+  - focused suite, Python/JavaScript syntax checks, and static no-live-order audit before Git deployment
+- **Exit gates**:
+  - no mocked exchange order is reached after a pause/context mismatch
+  - Paper-only default remains available and Live remains fail-closed
+  - Lab counters cannot be mistaken for leaderboard-card count
+  - no live order is placed during verification
+- **Verification**:
+  - Focused execution/API/dashboard/fee/GPU hardening suite: 79 passed, 1 skipped
+  - Python compilation, dashboard JavaScript syntax checks, and Git whitespace checks passed
+  - Boundary regression tests confirm stale Paper/Live orders are refused, protective exits remain available, failed control writes latch fail-closed, and partial Lab runs are reported as stopped
+  - No live order was placed during verification
+- **Status**: **Completed - execution boundary revalidation, cross-process control safety, promotion post-conditions, and transparent Lab telemetry implemented and verified**

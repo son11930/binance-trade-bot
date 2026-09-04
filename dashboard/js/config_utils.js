@@ -23,16 +23,25 @@ let authToken = localStorage.getItem('bot_token') || sessionStorage.getItem('bot
 let reconnectTimeout = 1000;
 let shouldReconnect = true;
 let dataStore = {
-    home: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
-    spot: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
-    futures: { trades: [], logs: [], stats: null, status: null, globalConfig: null },
-    lab: { trades: [], logs: [], stats: null, status: null, globalConfig: null }
+    home: { trades: [], logs: [], stats: null, status: null, statusByMode: {}, globalConfig: null },
+    spot: { trades: [], logs: [], stats: null, status: null, statusByMode: {}, globalConfig: null },
+    futures: { trades: [], logs: [], stats: null, status: null, statusByMode: {}, globalConfig: null },
+    lab: { trades: [], logs: [], stats: null, status: null, statusByMode: {}, globalConfig: null }
 };
 let isSpotPaused = false;
 let isFuturesPaused = false;
 let selectedTimeframe = "ALL";
 const storedViewMode = localStorage.getItem('viewMode');
 let viewMode = storedViewMode === 'LIVE' ? 'LIVE' : 'PAPER'; // Default to PAPER
+
+function getExecutionStatusForMarket(market, fallback = null) {
+    const marketData = dataStore[market];
+    if (!marketData) return fallback;
+    return (marketData.statusByMode && marketData.statusByMode[viewMode])
+        || (marketData.execution && marketData.execution[viewMode])
+        || marketData.status
+        || fallback;
+}
 
 function getTradingMarket() {
     return currentMarket === 'futures' ? 'futures' : (currentMarket === 'spot' ? 'spot' : null);
@@ -63,9 +72,10 @@ function setViewMode(mode) {
     const marketData = dataStore[currentMarket];
     if (!marketData) return;
 
-    if (marketData.status) {
+    const selectedStatus = getExecutionStatusForMarket(currentMarket, marketData.status);
+    if (selectedStatus) {
         if (typeof updateStatusUI === 'function') {
-            updateStatusUI(marketData.status, marketData.globalConfig);
+            updateStatusUI(selectedStatus, marketData.globalConfig);
         }
     }
     if (marketData.trades) {

@@ -4,9 +4,22 @@ from .database import TradeRepository
 from .logger import log_msg
 from .risk_manager import calculate_pnl
 from .state import StateManager
+from .context import validate_execution_context
 from .config import FUTURES_LEVERAGE, FUTURES_MARGIN_TYPE
 
 def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
+    state = state_manager.get_state(symbol)
+    is_protective_exit = str(side).upper() == "SELL" and state.position > 0
+    allowed, guard_reason = validate_execution_context(
+        state_manager,
+        context,
+        is_paper,
+        allow_protective_exit=is_protective_exit,
+    )
+    if not allowed:
+        log_msg("WARNING", f"Execution refused for {symbol}: {guard_reason}")
+        return None
+
     if side == "SELL" and not is_paper:
         base_asset = symbol.replace("USDT", "")
         actual_balance = get_live_asset_balance(base_asset)
@@ -34,6 +47,17 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
             if not order:
                 return None
         else:
+            # Recheck immediately before the exchange call so a pause or
+            # manifest change during AI/queue work invalidates the order.
+            allowed, guard_reason = validate_execution_context(
+                state_manager,
+                context,
+                is_paper,
+                allow_protective_exit=is_protective_exit,
+            )
+            if not allowed:
+                log_msg("WARNING", f"Live order refused for {symbol}: {guard_reason}")
+                return None
             from .binance_client import place_market_order
             order = place_market_order(symbol, side, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
@@ -61,8 +85,6 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
     pnl_amount = None
     pnl_percent = None
     
-    state = state_manager.get_state(symbol)
-    
     if side == "SELL" and state.buy_price > 0 and exec_qty > 0:
         pnl_amount, pnl_percent = calculate_pnl(state.buy_price, avg_price, exec_qty, symbol=symbol)
             
@@ -84,13 +106,27 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
         return None
 
 def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, positionSide: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
+    state = state_manager.get_state(symbol)
+    is_protective_exit = (
+        state.position > 0
+        and ((positionSide == "LONG" and side == "SELL") or (positionSide == "SHORT" and side == "BUY"))
+    )
+    allowed, guard_reason = validate_execution_context(
+        state_manager,
+        context,
+        is_paper,
+        allow_protective_exit=is_protective_exit,
+    )
+    if not allowed:
+        log_msg("WARNING", f"Futures execution refused for {symbol}: {guard_reason}", market_type="futures")
+        return None
+
     if qty <= 0:
         log_msg("WARNING", f"⚠️ Skipped {side} {positionSide} for {symbol} because quantity is <= 0.", market_type="futures")
         return None
 
     try:
         # Safety cap for exiting a position to avoid opening an opposite position
-        state = state_manager.get_state(symbol)
         if state.position > 0:
             if (positionSide == "LONG" and side == "SELL") or (positionSide == "SHORT" and side == "BUY"):
                 if not is_paper:
@@ -122,6 +158,17 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
             if not order:
                 return None
         else:
+            # Recheck immediately before the exchange call so a pause or
+            # manifest change during AI/queue work invalidates the order.
+            allowed, guard_reason = validate_execution_context(
+                state_manager,
+                context,
+                is_paper,
+                allow_protective_exit=is_protective_exit,
+            )
+            if not allowed:
+                log_msg("WARNING", f"Live futures order refused for {symbol}: {guard_reason}", market_type="futures")
+                return None
             from .binance_client import futures_place_order
             order = futures_place_order(symbol, side, positionSide, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
@@ -156,7 +203,7 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         if ("-1013" in err_msg or "-2019" in err_msg or "Margin is insufficient" in err_msg) and is_closing:
             log_msg("WARNING", f"🧹 Uncloseable position for {symbol} due to locked margin. Canceling all open orders to attempt close on next tick.", market_type="futures")
             from .binance_client import futures_cancel_all_orders
-            futures_cancel_all_orders(symbol)
+            futures_cancel_all_orders(symbol, is_paper=is_paper)
             return None
             
         if "MarginError" in err_msg or (("-2019" in err_msg or "Margin is insufficient" in err_msg) and is_opening):
@@ -168,8 +215,6 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         
     pnl_amount = None
     pnl_percent = None
-    
-    state = state_manager.get_state(symbol)
     
     # Calculate PNL if closing a position
     if positionSide == "LONG" and side == "SELL" and state.buy_price > 0 and exec_qty > 0:

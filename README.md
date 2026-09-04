@@ -22,5 +22,23 @@ AI-powered cryptocurrency trading bot with a massively parallel **CUDA GPU Strat
 3. Run the Bot Core: `python -m bot.main` (รันตัวบอทเทรดหลัก)
 4. (New) Run the GPU Lab: `python scripts/run_benchmarks.bat` (รันห้องแล็บจำลองกลยุทธ์ AI)
 
+### Lab trading-cost assumptions
+
+The AI Lab reports returns after the configured taker fee and ATR-based execution allowance. It defaults to the conservative profile (`0.10%` per side, `0.20%` round trip) so frequent trading is not made to look artificially profitable. Choose the target market explicitly when needed:
+
+```text
+LAB_MARKET_TYPE=futures       # 0.05% taker fee per side
+LAB_MARKET_TYPE=spot          # 0.10% taker fee per side
+LAB_MARKET_TYPE=conservative  # 0.10% taker fee per side (default)
+```
+
+If the Binance account has a verified fee tier, `LAB_TAKER_FEE_RATE_PER_SIDE` can override the profile with the decimal rate (for example, `0.0004`). Use the same cost-model settings on the lab machine and the dashboard server. Historical funding, partial fills, latency, and order-book impact are not available in the candle-only lab, so paper-trade a candidate before enabling live execution.
+
+### Execution lanes and Lab audit
+
+Spot and Futures each expose independent Paper and Live execution controls. Paper can run while the server-side Live unlock is off; Live remains paused until a validated LIVE manifest and explicit server unlock are present. Every queued order is checked again at the execution boundary, so a pause or manifest change invalidates stale work. Protective exits remain available for an existing position. The dashboard's `PAPER` / `LIVE DATA` selector changes telemetry only and never grants order permission.
+
+The Lab audit panel separates generated, screened, TPE samples, mutants, exploratory mutants, full evaluations, qualified candidates, rejected full evaluations, the retained archive, and published leaderboard rows. Per-strategy counters make it possible to confirm that strategy families outside the visible leaderboard were sampled and evaluated; old snapshots without this telemetry are shown as unavailable until a new checkpoint is written.
+
 ## Versioning (ประวัติการอัปเดต)
 See [CHANGELOG.md](CHANGELOG.md) for the detailed version history and patch notes. (ดูประวัติการอัปเดตทั้งหมดได้ที่ไฟล์ CHANGELOG.md)

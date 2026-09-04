@@ -4,7 +4,12 @@ cpu_kernel.py — Pure Python/NumPy multi-worker simulation fallback mapping per
 import numpy as np
 from typing import Dict, List, Any
 from .config import _STRAT_MAP_MB, _MACRO_MAP_MB, N_GENOME_PARAMS
-from .cost_model import ATR_FEATURE_INDEX, round_trip_cost, volume_is_exhausted
+from .cost_model import (
+    ATR_FEATURE_INDEX,
+    ROUND_TRIP_TAKER_FEE_RATE,
+    round_trip_cost,
+    volume_is_exhausted,
+)
 from .fitness import _pack_genomes_to_flat
 
 def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool = True) -> List[Dict[str, Any]]:
@@ -120,6 +125,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
             total_trades = 0
             gross_profit = 0.0
             gross_loss = 0.0
+            fees_paid = 0.0
             curr_streak = 0.0
             max_streak = 0.0
             
@@ -150,6 +156,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                                 if adj_kelly > max_pos_alloc_pct:
                                     adj_kelly = max_pos_alloc_pct
                                 trade_impact = pnl_pct * adj_kelly * 4.0
+                                fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                                 balance *= (1.0 + trade_impact)
                                 if trade_impact > 0.0:
                                     wins += 1
@@ -183,7 +190,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                     out_results[g_idx, h_idx, 4] = gross_profit * 100.0
                     out_results[g_idx, h_idx, 5] = gross_loss * 100.0
                     out_results[g_idx, h_idx, 6] = max_streak
-                    out_results[g_idx, h_idx, 7] = 0.0
+                    out_results[g_idx, h_idx, 7] = fees_paid / 10.0
                     
                     balance = 1000.0
                     peak_balance = 1000.0
@@ -192,6 +199,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                     total_trades = 0
                     gross_profit = 0.0
                     gross_loss = 0.0
+                    fees_paid = 0.0
                     curr_streak = 0.0
                     max_streak = 0.0
                     for s in range(n_symbols):
@@ -231,7 +239,8 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                         if o > tp_p[s]:
                             actual_tp_fill = o
                             
-                        # Maker 0.02%, Taker 0.05%, Slippage 0.05% + Funding ~ 0.20% Round Trip
+                        # Fee and ATR-based slippage are charged once at close;
+                        # historical funding is intentionally not inferred.
                         trade_cost = round_trip_cost(entry_p[s], entry_atr[s])
                         
                         if l <= actual_sl_fill:
@@ -252,6 +261,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                             if adj_kelly > max_pos_alloc_pct:
                                 adj_kelly = max_pos_alloc_pct
                             trade_impact = pnl_pct * adj_kelly * 4.0
+                            fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                             balance *= (1.0 + trade_impact)
                             if trade_impact > 0.0:
                                 wins += 1
@@ -461,6 +471,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
                     if adj_kelly > max_pos_alloc_pct:
                         adj_kelly = max_pos_alloc_pct
                     trade_impact = pnl_pct * adj_kelly * 4.0
+                    fees_paid += balance * (ROUND_TRIP_TAKER_FEE_RATE * adj_kelly * 4.0)
                     balance *= (1.0 + trade_impact)
                     if trade_impact > 0.0:
                         wins += 1
@@ -495,7 +506,7 @@ def _cpu_mega_batch_fallback(genome_batch: List[Dict[str, Any]], screening: bool
             out_results[g_idx, h_idx, 12] = gross_profit * 100.0
             out_results[g_idx, h_idx, 13] = gross_loss * 100.0
             out_results[g_idx, h_idx, 14] = max_streak
-            out_results[g_idx, h_idx, 15] = 0.0
+            out_results[g_idx, h_idx, 15] = fees_paid / 10.0
 
     from .fitness import _vectorized_batch_compute_fitness
     return _vectorized_batch_compute_fitness(out_results, n_genomes)

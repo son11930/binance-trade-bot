@@ -29,6 +29,16 @@ function formatLabCurrency(value) {
     return number === null ? '--' : `${number >= 0 ? '+$' : '-$'}${Math.abs(number).toFixed(2)}`;
 }
 
+function formatLabCostCurrency(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : `-$${Math.abs(number).toFixed(2)}`;
+}
+
+function formatLabCostPercent(value) {
+    const number = toFiniteNumber(value);
+    return number === null ? '--' : `-${Math.abs(number).toFixed(2)}%`;
+}
+
 function formatLabDrawdown(value) {
     const number = toFiniteNumber(value);
     return number === null ? '--' : `-${Math.abs(number).toFixed(2)}%`;
@@ -37,6 +47,96 @@ function formatLabDrawdown(value) {
 function clampLabPercent(value) {
     const number = toFiniteNumber(value);
     return number === null ? 0 : Math.max(0, Math.min(100, number));
+}
+
+function renderLabExplorationSummary(progress) {
+    const summary = document.getElementById('lab-exploration-summary');
+    if (!summary) return;
+
+    const generated = toFiniteNumber(progress.generated_count ?? progress.screened_count);
+    const screened = toFiniteNumber(progress.screened_count ?? progress.generated_count);
+    const full = toFiniteNumber(progress.full_evaluated_count);
+    const qualified = toFiniteNumber(progress.qualified_count);
+    const rejected = toFiniteNumber(progress.rejected_count);
+    const retained = toFiniteNumber(progress.retained_leader_count);
+    const published = toFiniteNumber(progress.published_leader_count);
+    const tpe = toFiniteNumber(progress.tpe_sampled_count);
+    const mutants = toFiniteNumber(progress.mutant_count);
+    const exploration = toFiniteNumber(progress.exploration_mutant_count);
+    const generatedByStrategy = progress.strategy_generated_counts && typeof progress.strategy_generated_counts === 'object'
+        ? progress.strategy_generated_counts : {};
+    const fullByStrategy = progress.strategy_full_evaluated_counts && typeof progress.strategy_full_evaluated_counts === 'object'
+        ? progress.strategy_full_evaluated_counts : {};
+    const qualifiedByStrategy = progress.strategy_qualified_counts && typeof progress.strategy_qualified_counts === 'object'
+        ? progress.strategy_qualified_counts : {};
+    const rejectedByStrategy = progress.strategy_rejected_counts && typeof progress.strategy_rejected_counts === 'object'
+        ? progress.strategy_rejected_counts : {};
+    const tpeByStrategy = progress.strategy_tpe_counts && typeof progress.strategy_tpe_counts === 'object'
+        ? progress.strategy_tpe_counts : {};
+    const mutantByStrategy = progress.strategy_mutant_counts && typeof progress.strategy_mutant_counts === 'object'
+        ? progress.strategy_mutant_counts : {};
+    const explorationByStrategy = progress.strategy_exploration_counts && typeof progress.strategy_exploration_counts === 'object'
+        ? progress.strategy_exploration_counts : {};
+    const strategies = [...new Set([
+        ...Object.keys(generatedByStrategy),
+        ...Object.keys(tpeByStrategy),
+        ...Object.keys(mutantByStrategy),
+        ...Object.keys(explorationByStrategy),
+        ...Object.keys(fullByStrategy),
+        ...Object.keys(qualifiedByStrategy),
+        ...Object.keys(rejectedByStrategy),
+    ])].sort();
+
+    if (generated === null && rejected === null && retained === null && published === null && !strategies.length) {
+        summary.classList.add('hidden');
+        return;
+    }
+
+    const metric = (label, value, tone = 'text-white') => `
+        <div class="rounded-xl border border-slate-800/80 bg-slate-950/50 p-3">
+            <span class="block text-[10px] font-bold uppercase tracking-wider text-slate-500">${label}</span>
+            <span class="mt-1 block font-mono text-lg font-black ${tone}">${formatLabCount(value)}</span>
+        </div>`;
+    const strategyRows = strategies.length
+        ? strategies.map((strategy) => `
+            <div class="grid grid-cols-[minmax(0,1fr)_repeat(7,auto)] items-center gap-3 border-t border-slate-800/70 py-2 text-xs">
+                <span class="truncate font-mono font-bold text-slate-300">${escapeHTML(strategy)}</span>
+                <span class="font-mono text-slate-300" title="Generated">${formatLabCount(generatedByStrategy[strategy])}</span>
+                <span class="font-mono text-purple-300" title="TPE samples">${formatLabCount(tpeByStrategy[strategy])}</span>
+                <span class="font-mono text-blue-300" title="Mutants">${formatLabCount(mutantByStrategy[strategy])}</span>
+                <span class="font-mono text-amber-300" title="Exploratory/high-variance mutants">${formatLabCount(explorationByStrategy[strategy])}</span>
+                <span class="font-mono text-neonCyan" title="Full evaluated">${formatLabCount(fullByStrategy[strategy])}</span>
+                <span class="font-mono text-neonGreen" title="Qualified">${formatLabCount(qualifiedByStrategy[strategy])}</span>
+                <span class="font-mono text-rose-300" title="Rejected after full evaluation">${formatLabCount(rejectedByStrategy[strategy])}</span>
+            </div>`).join('')
+        : '<p class="text-xs text-slate-500">Per-strategy counters will appear after the next batch checkpoint.</p>';
+
+    summary.classList.remove('hidden');
+    summary.innerHTML = `
+        <section class="glass-card rounded-2xl border border-indigo-400/30 bg-indigo-950/10 p-5 md:p-6" aria-labelledby="lab-exploration-heading">
+            <div class="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-xs font-bold uppercase tracking-[0.22em] text-indigo-300">SEARCH COVERAGE</p>
+                    <h2 id="lab-exploration-heading" class="mt-1 text-xl font-extrabold text-white">Exploration and evaluation audit</h2>
+                </div>
+                <p class="max-w-xl text-xs leading-relaxed text-slate-400">The leaderboard shows retained leaders, not total search. These counters show whether other strategy families were generated, fully evaluated, and qualified.</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-10">
+                ${metric('Generated', generated, 'text-white')}
+                ${metric('Screened', screened, 'text-slate-300')}
+                ${metric('TPE samples', tpe, 'text-purple-300')}
+                ${metric('Mutants', mutants, 'text-blue-300')}
+                ${metric('Exploratory mutants', exploration, 'text-amber-300')}
+                ${metric('Full evaluated', full, 'text-neonCyan')}
+                ${metric('Qualified', qualified, 'text-neonGreen')}
+                ${metric('Rejected (full)', rejected, 'text-rose-300')}
+                ${metric('Retained archive', retained, 'text-amber-300')}
+                ${metric('Published leaders', published, 'text-indigo-300')}
+            </div>
+            <div class="mt-4 rounded-xl border border-slate-800/80 bg-black/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Strategy family · generated · TPE · mutants · exploratory · full evaluated · qualified · rejected (full)</div>
+            <div class="mt-1">${strategyRows}</div>
+        </section>
+    `;
 }
 
 function showToast(message, type = 'info') {
@@ -62,6 +162,8 @@ function showToast(message, type = 'info') {
 function renderLabProgress(progress) {
     const banner = document.getElementById('lab-progress-banner');
     if (!banner) return;
+
+    renderLabExplorationSummary(progress);
 
     const status = String(progress.status || '');
     if (!status || status === 'idle') {
@@ -215,6 +317,20 @@ function buildStrategyCard(strategy, index) {
     const oosTrades = toFiniteNumber(strategy.oos_trades_1y) || 0;
     const oosDrawdown = toFiniteNumber(strategy.oos_max_dd);
     const oosProfitFactor = toFiniteNumber(strategy.oos_profit_factor);
+    const feePaid1y = toFiniteNumber(strategy.fee_paid_1y_pct);
+    const feePaid1yDollar = toFiniteNumber(strategy.fee_paid_1y_dollar);
+    const modeledFeeDollar = feePaid1yDollar === null
+        ? (feePaid1y === null ? null : feePaid1y * 10)
+        : feePaid1yDollar;
+    const feeRate = toFiniteNumber(strategy.taker_fee_rate_per_side);
+    const roundTripFeeRate = toFiniteNumber(strategy.round_trip_fee_rate);
+    const atrSlippageFraction = toFiniteNumber(strategy.atr_slippage_fraction);
+    const feeMarketType = typeof strategy.fee_market_type === 'string'
+        ? strategy.fee_market_type
+        : 'unknown';
+    const feeSummary = feeRate === null
+        ? 'Cost model metadata unavailable'
+        : `${feeMarketType} · Fee ${(feeRate * 100).toFixed(4)}%/side · Round trip ${((roundTripFeeRate === null ? feeRate * 2 : roundTripFeeRate) * 100).toFixed(4)}% · ATR slippage factor ${((atrSlippageFraction === null ? 0 : atrSlippageFraction) * 100).toFixed(2)}% · Funding not included`;
     const averageDollar = toFiniteNumber(strategy.avg_profit_per_trade_dollar);
     const fallbackAverageDollar = netProfit1yDollar === null ? null : netProfit1yDollar / Math.max(1, totalTrades);
     const averageProfitDollar = averageDollar === null ? fallbackAverageDollar : averageDollar;
@@ -255,7 +371,7 @@ function buildStrategyCard(strategy, index) {
             <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">1M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit1m)}">${escapeHTML(formatLabPercent(netProfit1m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit1m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_1m_dollar))}</span></div>
             <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">3M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit3m)}">${escapeHTML(formatLabPercent(netProfit3m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit3m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_3m_dollar))}</span></div>
             <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-3"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">6M Return</span><span class="text-lg font-extrabold ${safeMetricClass(netProfit6m)}">${escapeHTML(formatLabPercent(netProfit6m))}</span><span class="block font-mono text-[11px] ${safeSubMetricClass(netProfit6m)}">${escapeHTML(formatLabCurrency(strategy.net_profit_6m_dollar))}</span></div>
-            <div class="rounded-xl border p-3 ${index === 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800 bg-slate-900/60'}"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">1Y Annualized</span><span class="text-xl font-extrabold ${safeMetricClass(netProfit1y)}">${escapeHTML(formatLabPercent(netProfit1y))}</span><span class="block font-mono text-[11px] font-bold ${safeSubMetricClass(netProfit1y)}">${escapeHTML(formatLabCurrency(netProfit1yDollar))}</span></div>
+            <div class="rounded-xl border p-3 ${index === 0 ? 'border-amber-500/30 bg-amber-500/10' : 'border-slate-800 bg-slate-900/60'}"><span class="block text-[10px] font-bold uppercase tracking-wider text-slate-400">1Y Backtest Return</span><span class="text-xl font-extrabold ${safeMetricClass(netProfit1y)}">${escapeHTML(formatLabPercent(netProfit1y))}</span><span class="block text-[10px] font-semibold uppercase tracking-wider text-slate-500">Net of modeled costs</span><span class="block font-mono text-[11px] font-bold ${safeSubMetricClass(netProfit1y)}">${escapeHTML(formatLabCurrency(netProfit1yDollar))}</span></div>
         </div>
         <div class="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-800/60 bg-black/30 p-3 text-xs sm:grid-cols-5">
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">Win Rate</span><span class="text-sm font-extrabold text-white">${escapeHTML(formatLabPercent(strategy.win_rate_1y))}</span></div>
@@ -264,12 +380,14 @@ function buildStrategyCard(strategy, index) {
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">Avg Profit / Trade</span><span class="text-sm font-extrabold ${averageClass}">${escapeHTML(formatLabCurrency(averageProfitDollar))}</span><span class="block text-[10px] text-slate-400">${escapeHTML(formatLabPercent(averageProfitPercent))}</span></div>
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">Moonshots (&gt;30%)</span><span class="text-sm font-extrabold text-amber-400">${escapeHTML(formatLabCount(strategy.moonshots_1y))}</span></div>
         </div>
-        <div class="mb-4 grid grid-cols-2 gap-3 rounded-xl border ${qualified ? 'border-neonGreen/30 bg-neonGreen/5' : 'border-amber-500/30 bg-amber-500/5'} p-3 text-xs sm:grid-cols-4">
+        <div class="mb-4 grid grid-cols-2 gap-3 rounded-xl border ${qualified ? 'border-neonGreen/30 bg-neonGreen/5' : 'border-amber-500/30 bg-amber-500/5'} p-3 text-xs sm:grid-cols-5">
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS 1Y Return</span><span class="text-sm font-extrabold ${oosProfit !== null && oosProfit > 0 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabPercent(oosProfit))}</span></div>
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Profit Factor</span><span class="text-sm font-extrabold ${oosProfitFactor !== null && oosProfitFactor >= 1.1 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabNumber(oosProfitFactor, 2))}</span></div>
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Trades</span><span class="text-sm font-extrabold text-white">${escapeHTML(formatLabCount(oosTrades))}</span><span class="block text-[10px] text-slate-500">minimum 30</span></div>
             <div><span class="block text-[10px] font-bold uppercase text-slate-400">OOS Drawdown</span><span class="text-sm font-extrabold ${oosDrawdown !== null && oosDrawdown <= 15 ? 'text-neonGreen' : 'text-neonRed'}">${escapeHTML(formatLabDrawdown(oosDrawdown))}</span><span class="block text-[10px] text-slate-500">maximum 15%</span></div>
+            <div><span class="block text-[10px] font-bold uppercase text-slate-400">Modeled Fee Drag</span><span class="text-sm font-extrabold text-amber-300">${escapeHTML(formatLabCostPercent(feePaid1y))}</span><span class="block text-[10px] text-amber-200/70">${escapeHTML(formatLabCostCurrency(modeledFeeDollar))} IS + OOS</span></div>
         </div>
+        <div class="mb-4 rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">${escapeHTML(feeSummary)}</div>
         <div class="mb-4 rounded-xl border border-slate-800/80 bg-black/40 p-3 text-xs font-mono text-slate-300">
             <span class="mb-1 block text-[10px] font-bold uppercase text-slate-500">Genome DNA Parameters</span>
             <pre class="overflow-x-auto text-[11px] text-neonCyan/90">${safeParamStr}</pre>
@@ -306,6 +424,12 @@ async function fetchLeaderboard() {
 
         if (JSON.stringify(window.currentLeaderboardStrategies) === JSON.stringify(strategies)) return;
         window.currentLeaderboardStrategies = strategies;
+        renderLabExplorationSummary({
+            ...(window.currentLabProgress || {}),
+            // The cards are the published snapshot; do not overwrite the
+            // backend archive-retention count with the visible card count.
+            published_leader_count: toFiniteNumber(window.currentLabProgress && window.currentLabProgress.published_leader_count) ?? strategies.length,
+        });
 
         if (strategies.length === 0) {
             container.innerHTML = `

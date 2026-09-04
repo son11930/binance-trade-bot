@@ -244,6 +244,26 @@ class LabProgressState(Base):
     best_strategy_name = Column(String(200))
     elapsed_seconds = Column(Integer)
     updated_at = Column(String(100))
+    generated_count = Column(Integer, default=0)
+    screened_count = Column(Integer, default=0)
+    full_evaluated_count = Column(Integer, default=0)
+    qualified_count = Column(Integer, default=0)
+    rejected_count = Column(Integer, default=0)
+    tpe_sampled_count = Column(Integer, default=0)
+    mutant_count = Column(Integer, default=0)
+    exploration_mutant_count = Column(Integer, default=0)
+    retained_leader_count = Column(Integer, default=0)
+    strategy_generated_counts_json = Column(Text)
+    strategy_full_evaluated_counts_json = Column(Text)
+    strategy_qualified_counts_json = Column(Text)
+    strategy_rejected_counts_json = Column(Text)
+    strategy_tpe_counts_json = Column(Text)
+    strategy_mutant_counts_json = Column(Text)
+    strategy_exploration_counts_json = Column(Text)
+    published_leader_count = Column(Integer)
+    historical_re_evaluated_count = Column(Integer)
+    run_id = Column(String(100))
+    telemetry_schema_version = Column(Integer)
 
 def init_db():
     Base.metadata.create_all(bind=engine_spot)
@@ -262,6 +282,44 @@ def init_db():
                         pass
                 except Exception:
                     # Column likely exists
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+
+            # Lab progress is written by the local GPU worker and may be read
+            # by a server using an older SQLite/Postgres schema.  Add only the
+            # known telemetry columns; never build SQL from user input.
+            progress_columns = {
+                'generated_count': 'INTEGER',
+                'screened_count': 'INTEGER',
+                'full_evaluated_count': 'INTEGER',
+                'qualified_count': 'INTEGER',
+                'rejected_count': 'INTEGER',
+                'tpe_sampled_count': 'INTEGER',
+                'mutant_count': 'INTEGER',
+                'exploration_mutant_count': 'INTEGER',
+                'retained_leader_count': 'INTEGER',
+                'strategy_generated_counts_json': 'TEXT',
+                'strategy_full_evaluated_counts_json': 'TEXT',
+                'strategy_qualified_counts_json': 'TEXT',
+                'strategy_rejected_counts_json': 'TEXT',
+                'strategy_tpe_counts_json': 'TEXT',
+                'strategy_mutant_counts_json': 'TEXT',
+                'strategy_exploration_counts_json': 'TEXT',
+                'published_leader_count': 'INTEGER',
+                'historical_re_evaluated_count': 'INTEGER',
+                'run_id': 'VARCHAR(100)',
+                'telemetry_schema_version': 'INTEGER',
+            }
+            for col, sql_type in progress_columns.items():
+                try:
+                    conn.execute(text(f"ALTER TABLE lab_progress_state ADD COLUMN {col} {sql_type}"))
+                    try:
+                        conn.commit()
+                    except Exception:
+                        pass
+                except Exception:
                     try:
                         conn.rollback()
                     except Exception:

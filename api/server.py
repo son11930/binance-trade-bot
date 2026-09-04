@@ -18,16 +18,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 from pydantic import BaseModel, Field
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Literal
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from bot.control import get_bot_control, set_bot_control
+from bot.control import (
+    ControlPersistenceError,
+    get_bot_control,
+    set_bot_control,
+    get_execution_control,
+    is_execution_paused,
+    set_execution_pause,
+)
 from bot.strategy_manager import get_active_strategy
 from typing import Dict, Optional, List, Any
 from fastapi.concurrency import run_in_threadpool
 from dotenv import load_dotenv
-from candidate_evidence import CANDIDATE_VERSION, candidate_artifact_hash
+from candidate_evidence import (
+    CANDIDATE_VERSION,
+    candidate_artifact_hash,
+    has_valid_cost_model_evidence,
+)
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -219,6 +230,10 @@ def format_logs(logs):
 
 latest_bot_state_spot = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
 latest_bot_state_futures = {"status_message": "Bot is offline (Not running)", "is_thinking": False, "live_usdt": 0.0, "positions": []}
+latest_bot_states = {
+    "spot": {"PAPER": dict(latest_bot_state_spot), "LIVE": dict(latest_bot_state_spot)},
+    "futures": {"PAPER": dict(latest_bot_state_futures), "LIVE": dict(latest_bot_state_futures)},
+}
 
 from bot.config import SYMBOLS
 
@@ -234,7 +249,9 @@ def get_bot_status():
     futures_paused = ctrl.get("futures_paused", False)
     pause_reason = ctrl.get("pause_reason", "")
     
-    active_stage = strat.get("stage", "PAPER") if strat else ("PAPER" if paper_trading_config else "LIVE")
+    # No validated manifest means no executable LIVE stage, regardless of the
+    # legacy paper_trading compatibility flag.
+    active_stage = strat.get("stage", "PAPER") if strat else "PAPER"
     
     # Phase 8: Reconciliation status
     recon_status = "Pending..."
@@ -248,6 +265,22 @@ def get_bot_status():
         except:
             pass
             
+    execution_controls = {
+        market: {
+            mode: get_execution_control(market, mode, control=ctrl)
+            for mode in ("PAPER", "LIVE")
+        }
+        for market in ("spot", "futures")
+    }
+    execution_states = {
+        market: {
+            mode: dict(latest_bot_states[market][mode])
+            for mode in ("PAPER", "LIVE")
+        }
+        for market in ("spot", "futures")
+    }
+    active_mode = "PAPER" if active_stage == "PAPER" else "LIVE"
+
     return {
         "status": "online",
         "symbols": SYMBOLS,
@@ -258,9 +291,22 @@ def get_bot_status():
         "pause_reason": pause_reason,
         "active_stage": active_stage,
         "reconciliation_status": recon_status,
-        "spot": latest_bot_state_spot,
-        "futures": latest_bot_state_futures
+        # Keep the old top-level market fields for older dashboard clients.
+        "spot": execution_states["spot"][active_mode],
+        "futures": execution_states["futures"][active_mode],
+        "execution_controls": execution_controls,
+        "execution": execution_states,
     }
+
+
+def get_public_bot_control() -> dict:
+    """Return control flags plus non-authoritative manifest metadata for UI."""
+    control = get_bot_control()
+    active_strategy = get_active_strategy()
+    active_stage = active_strategy.get("stage", "PAPER") if active_strategy else "PAPER"
+    # ``active_stage`` is display metadata only.  Every execution mutation
+    # still validates the live unlock and manifest server-side.
+    return {**control, "active_stage": active_stage}
 
 db_poll_event = None
 
@@ -336,6 +382,11 @@ class TogglePauseRequest(BaseModel):
     market: str
     paused: bool
 
+class ToggleExecutionPauseRequest(BaseModel):
+    market: Literal["spot", "futures"]
+    execution_mode: Literal["PAPER", "LIVE"]
+    paused: bool
+
 class ToggleExecutionModeRequest(BaseModel):
     allow_live: Optional[bool] = None
     paper_trading: Optional[bool] = None
@@ -357,7 +408,7 @@ def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", au
 
 @app.get("/api/bot_control")
 async def get_bot_control_endpoint(auth: bool = Depends(verify_jwt)):
-    return get_bot_control()
+    return get_public_bot_control()
 
 @app.post("/api/toggle_pause")
 async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(verify_jwt)):
@@ -368,7 +419,40 @@ async def toggle_pause_endpoint(req: TogglePauseRequest, auth: bool = Depends(ve
     else:
         raise HTTPException(status_code=400, detail="Invalid market. Must be 'spot' or 'futures'")
     
-    new_state = get_bot_control()
+    new_state = get_public_bot_control()
+    state_key = f"{req.market}_paused"
+    if bool(new_state.get(state_key, not req.paused)) is not bool(req.paused):
+        raise HTTPException(status_code=503, detail="Pause control could not be persisted; state remains fail-closed.")
+    await manager.broadcast({"type": "bot_control_update", "data": new_state})
+    return {"status": "success", "data": new_state}
+
+@app.post("/api/toggle_execution_pause")
+async def toggle_execution_pause_endpoint(req: ToggleExecutionPauseRequest, auth: bool = Depends(verify_jwt)):
+    """Pause one execution lane without touching the other lane."""
+    mode = req.execution_mode.upper()
+    current = get_bot_control()
+
+    if mode == "LIVE" and not req.paused:
+        if not current.get("allow_live", False):
+            raise HTTPException(status_code=403, detail="LIVE execution is locked. Enable the server-side live unlock first.")
+        active = get_active_strategy()
+        if not active or active.get("stage") != "LIVE":
+            raise HTTPException(status_code=409, detail="A validated LIVE strategy must be active before resuming LIVE execution.")
+
+    if mode == "PAPER" and not req.paused:
+        active = get_active_strategy()
+        if active and active.get("stage") != "PAPER":
+            raise HTTPException(status_code=409, detail="The active strategy is not staged for PAPER execution.")
+
+    try:
+        set_execution_pause(req.market, mode, req.paused, reason=None)
+    except ControlPersistenceError as exc:
+        raise HTTPException(status_code=503, detail="Execution control could not be persisted; the lane remains fail-closed.") from exc
+    new_state = get_public_bot_control()
+    expected_key = f"{req.market}_{mode.lower()}_paused"
+    if bool(new_state.get(expected_key, not req.paused)) is not bool(req.paused):
+        raise HTTPException(status_code=503, detail="Execution control could not be persisted; state remains fail-closed.")
+    await manager.broadcast({"type": "status_update", "data": get_bot_status()})
     await manager.broadcast({"type": "bot_control_update", "data": new_state})
     return {"status": "success", "data": new_state}
 
@@ -380,24 +464,27 @@ async def toggle_execution_mode_endpoint(req: ToggleExecutionModeRequest, auth: 
             status_code=403,
             detail="LIVE mode can only be entered through a validated strategy promotion.",
         )
-    if req.paper_trading is True and (
-        not current.get("spot_paused", False) or not current.get("futures_paused", False)
-    ):
-        raise HTTPException(status_code=400, detail="Pause both engines before changing execution mode.")
     if req.allow_live is True and (
-        not current.get("spot_paused", False)
-        or not current.get("futures_paused", False)
+        not is_execution_paused("spot", "LIVE", control=current)
+        or not is_execution_paused("futures", "LIVE", control=current)
         or not get_active_strategy()
+        or get_active_strategy().get("stage") != "LIVE"
     ):
-        raise HTTPException(status_code=400, detail="Pause both engines and stage a validated strategy before enabling live execution.")
+        raise HTTPException(status_code=400, detail="Keep both LIVE lanes paused and stage a validated LIVE strategy before enabling live execution.")
 
     # This endpoint only arms/disarms the live guard.  The promotion endpoint
     # is the sole path that can switch paper_trading to LIVE.
-    set_bot_control(
+    persisted = set_bot_control(
         allow_live=req.allow_live,
         paper_trading=True if req.paper_trading is True else None,
     )
-    new_state = get_bot_control()
+    if not persisted:
+        raise HTTPException(status_code=503, detail="Live guard could not be persisted; live execution remains locked.")
+    new_state = get_public_bot_control()
+    if req.allow_live is not None and bool(new_state.get("allow_live", False)) is not bool(req.allow_live):
+        raise HTTPException(status_code=503, detail="Live guard could not be persisted; live execution remains locked.")
+    if req.paper_trading is True and bool(new_state.get("paper_trading", False)) is not True:
+        raise HTTPException(status_code=503, detail="Execution compatibility state could not be persisted.")
     
     # Broadcast the updated status immediately
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
@@ -488,6 +575,7 @@ class PositionModel(BaseModel):
 
 class BroadcastState(BaseModel):
     market_type: str = 'spot'
+    execution_mode: Optional[Literal["PAPER", "LIVE"]] = None
     status_message: str
     is_thinking: bool
     symbol_active: Optional[str] = None
@@ -505,12 +593,24 @@ class BroadcastState(BaseModel):
 @app.post("/api/internal/broadcast")
 @limiter.limit("120/minute")
 async def receive_broadcast(state: BroadcastState, request: Request, auth: bool = Depends(verify_token)):
-    global latest_bot_state_spot, latest_bot_state_futures
-    
-    if state.market_type == 'futures':
-        latest_bot_state_futures = state.model_dump()
+    global latest_bot_state_spot, latest_bot_state_futures, latest_bot_states
+
+    market = state.market_type if state.market_type in {"spot", "futures"} else "spot"
+    mode = state.execution_mode
+    if mode is None:
+        # Backward-compatible broadcasts from an older bot process are
+        # assigned to the legacy configured lane, never to LIVE by default.
+        mode = "PAPER" if get_bot_control().get("paper_trading", True) else "LIVE"
+    payload = state.model_dump()
+    payload["market_type"] = market
+    payload["execution_mode"] = mode
+    latest_bot_states[market][mode] = payload
+
+    # Preserve the legacy top-level snapshots for old API consumers.
+    if market == 'futures':
+        latest_bot_state_futures = payload
     else:
-        latest_bot_state_spot = state.model_dump()
+        latest_bot_state_spot = payload
     
     # Push ONLY state update
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
@@ -546,6 +646,16 @@ _LEADERBOARD_META_FIELDS = (
     "net_profit_3m_dollar",
     "net_profit_6m_dollar",
     "net_profit_1y_dollar",
+    "fee_model_version",
+    "fee_market_type",
+    "taker_fee_rate_per_side",
+    "round_trip_fee_rate",
+    "atr_slippage_fraction",
+    "funding_included",
+    "is_fee_paid_1y_pct",
+    "oos_fee_paid_1y_pct",
+    "fee_paid_1y_pct",
+    "fee_paid_1y_dollar",
 )
 
 
@@ -639,7 +749,10 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
         from bot.database import LabProgressState
         db = SessionLocalFutures()
         row = db.query(LabProgressState).filter_by(id=1).first()
-        if row and row.status and row.status != "idle":
+        telemetry_schema_version = (
+            (getattr(row, "telemetry_schema_version", 0) or 0) if row else 0
+        )
+        if row and row.status and row.status != "idle" and telemetry_schema_version >= 2:
             res = {
                 "status": row.status,
                 "current_trial": row.current_trial or 0,
@@ -648,8 +761,37 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
                 "best_score": row.best_score or 0.0,
                 "best_strategy_name": row.best_strategy_name or "N/A",
                 "elapsed_seconds": row.elapsed_seconds or 0,
-                "updated_at": row.updated_at or ""
+                "updated_at": row.updated_at or "",
+                "generated_count": getattr(row, "generated_count", 0) or 0,
+                "screened_count": getattr(row, "screened_count", 0) or 0,
+                "full_evaluated_count": getattr(row, "full_evaluated_count", 0) or 0,
+                "qualified_count": getattr(row, "qualified_count", 0) or 0,
+                "rejected_count": getattr(row, "rejected_count", 0) or 0,
+                "tpe_sampled_count": getattr(row, "tpe_sampled_count", 0) or 0,
+                "mutant_count": getattr(row, "mutant_count", 0) or 0,
+                "exploration_mutant_count": getattr(row, "exploration_mutant_count", 0) or 0,
+                "retained_leader_count": getattr(row, "retained_leader_count", 0) or 0,
+                "published_leader_count": getattr(row, "published_leader_count", None),
+                "historical_re_evaluated_count": getattr(row, "historical_re_evaluated_count", 0) or 0,
+                "run_id": getattr(row, "run_id", "") or "",
+                "telemetry_schema_version": telemetry_schema_version,
             }
+            for key in (
+                "strategy_generated_counts",
+                "strategy_full_evaluated_counts",
+                "strategy_qualified_counts",
+                "strategy_rejected_counts",
+                "strategy_tpe_counts",
+                "strategy_mutant_counts",
+                "strategy_exploration_counts",
+            ):
+                json_key = f"{key}_json"
+                raw_counts = getattr(row, json_key, None)
+                try:
+                    parsed_counts = json.loads(raw_counts) if raw_counts else {}
+                except (TypeError, ValueError):
+                    parsed_counts = {}
+                res[key] = parsed_counts if isinstance(parsed_counts, dict) else {}
             db.close()
             return {"status": "ok", "progress": res}
         db.close()
@@ -792,6 +934,8 @@ def _has_valid_candidate_evidence(candidate: Dict[str, Any]) -> bool:
         or not candidate.get("full_evaluated", False)
     ):
         return False
+    if not has_valid_cost_model_evidence(candidate):
+        return False
     try:
         if int(candidate.get("total_trades_1y")) <= 0 or int(candidate.get("oos_trades_1y")) <= 0:
             return False
@@ -833,8 +977,14 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     if req.stage == "LIVE" and req.direct_live and req.live_confirmation != LIVE_CONFIRMATION_PHRASE:
         raise HTTPException(status_code=400, detail=f"Type '{LIVE_CONFIRMATION_PHRASE}' to confirm direct LIVE deployment")
         
-    if not ctrl.get("spot_paused", False) or not ctrl.get("futures_paused", False):
-        raise HTTPException(status_code=400, detail="Cannot deploy strategy while bot is running. Please PAUSE the bot first.")
+    required_modes = ("PAPER", "LIVE") if req.stage == "LIVE" else ("PAPER",)
+    if not all(
+        is_execution_paused(market, mode, control=ctrl)
+        for market in ("spot", "futures")
+        for mode in required_modes
+    ):
+        modes_label = " and ".join(required_modes)
+        raise HTTPException(status_code=400, detail=f"Cannot deploy strategy while execution is running. Pause both market lanes for {modes_label} first.")
         
     if req.stage == "LIVE":
         try:
@@ -936,10 +1086,48 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     # The manifest and execution mode must agree before the bot can resume.
     # Keep the bot paused from the precondition above; the operator explicitly
     # resumes it after reviewing the resulting mode banner.
-    set_bot_control(paper_trading=req.stage == "PAPER")
+    if req.stage == "PAPER":
+        # A PAPER promotion must disarm any persisted LIVE permission and keep
+        # both LIVE lanes paused until a later explicit LIVE promotion.
+        persisted = set_bot_control(
+            paper_trading=True,
+            allow_live=False,
+            spot_live_paused=True,
+            futures_live_paused=True,
+        )
+    else:
+        # LIVE promotion arms only the validated manifest; the operator still
+        # has to resume each LIVE lane explicitly after review.
+        persisted = set_bot_control(
+            paper_trading=False,
+            spot_live_paused=True,
+            futures_live_paused=True,
+        )
+    if not persisted:
+        # The manifest has been written, but execution must remain disarmed if
+        # the control snapshot cannot be persisted and verified.
+        set_bot_control(
+            paper_trading=True,
+            allow_live=False,
+            spot_live_paused=True,
+            futures_live_paused=True,
+        )
+        raise HTTPException(status_code=503, detail="Deployment manifest saved but execution controls could not be persisted; Live remains disarmed.")
     effective_control = get_bot_control()
-    expected_paper_mode = req.stage == "PAPER"
-    if effective_control.get("paper_trading") is not expected_paper_mode:
+    expected_controls = {
+        "paper_trading": req.stage == "PAPER",
+        "spot_live_paused": True,
+        "futures_live_paused": True,
+    }
+    if req.stage == "PAPER":
+        expected_controls["allow_live"] = False
+    if any(effective_control.get(key) is not expected for key, expected in expected_controls.items()):
+        set_bot_control(
+            paper_trading=True,
+            allow_live=False,
+            spot_live_paused=True,
+            futures_live_paused=True,
+        )
         raise HTTPException(status_code=503, detail="Execution mode could not be updated; deployment remains paused")
         
     return {"status": "success", "message": f"Successfully promoted {new_strategy['name']} to {req.stage}", "data": new_strategy}

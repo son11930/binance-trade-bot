@@ -72,10 +72,6 @@ def test_db_backed_candidate_can_be_staged_to_paper(monkeypatch, tmp_path):
     )
 
     manifest_dir = tmp_path / "dashboard" / "data"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "strategy_manifest.json").write_text(
-        json.dumps({"active_strategy": {}, "history": []}), encoding="utf-8"
-    )
     real_abspath = os.path.abspath
 
     def fake_abspath(path):
@@ -122,3 +118,29 @@ def test_db_backed_candidate_can_be_staged_to_paper(monkeypatch, tmp_path):
     assert result["status"] == "success"
     assert result["data"]["stage"] == "PAPER"
     assert candidate_artifact_hash(result["data"]["evidence"]) == candidate["artifact_hash"]
+    assert (manifest_dir / "strategy_manifest.json").exists()
+
+
+def test_deployment_status_does_not_leak_manifest_errors(monkeypatch, tmp_path):
+    """Manifest read failures must remain generic for authenticated clients."""
+    import api.server as server
+
+    manifest_dir = tmp_path / "dashboard" / "data"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "strategy_manifest.json").write_text("{not-json", encoding="utf-8")
+    real_abspath = os.path.abspath
+
+    def fake_abspath(path):
+        if path == server.__file__:
+            return str(tmp_path / "api" / "server.py")
+        return real_abspath(path)
+
+    monkeypatch.setattr(server.os.path, "abspath", fake_abspath)
+
+    result = server.get_strategy_deployment(True)
+
+    assert result == {
+        "active_strategy": None,
+        "error": "Strategy manifest is unavailable",
+    }
+    assert str(tmp_path) not in result["error"]

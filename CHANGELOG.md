@@ -1,5 +1,11 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 44 - Paper Promotion Manifest Storage Bootstrap
+
+### Planned
+- Ensure the Paper Review promotion path creates its ignored runtime manifest directory on a fresh server checkout before attempting the atomic write.
+- Keep storage failures generic in the browser while retaining detailed diagnostics in server logs; no execution or Live safety gate is changed.
+
 ### Phase 43 - Paper Promotion Evidence Parity
 
 ### Fixed

@@ -1263,15 +1263,34 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     ):
         raise HTTPException(status_code=409, detail="Candidate identity does not match leaderboard evidence")
         
-    manifest_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dashboard", "data", "strategy_manifest.json")
+    manifest_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "dashboard",
+        "data",
+    )
+    try:
+        # dashboard/data is runtime state and is intentionally ignored by Git,
+        # so a fresh deployment may not have created it yet.
+        os.makedirs(manifest_dir, exist_ok=True)
+    except OSError as exc:
+        logging.error("Could not prepare strategy manifest storage: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Strategy manifest storage is unavailable",
+        )
+    manifest_path = os.path.join(manifest_dir, "strategy_manifest.json")
     
     manifest_data = {"active_strategy": {}, "history": []}
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest_data = json.load(f)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Invalid strategy manifest; deployment refused: {e}")
+        except Exception as exc:
+            logging.error("Invalid strategy manifest; deployment refused: %s", exc)
+            raise HTTPException(
+                status_code=500,
+                detail="Invalid strategy manifest; deployment refused",
+            )
 
     if not isinstance(manifest_data, dict) or not isinstance(manifest_data.get("history", []), list):
         raise HTTPException(status_code=500, detail="Invalid strategy manifest; deployment refused")
@@ -1311,8 +1330,12 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
         with open(tmp_manifest, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2)
         os.replace(tmp_manifest, manifest_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write manifest: {e}")
+    except Exception as exc:
+        logging.error("Failed to write strategy manifest: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to write strategy manifest; server storage is unavailable",
+        )
 
     # The manifest and execution mode must agree before the bot can resume.
     # Keep the bot paused from the precondition above; the operator explicitly
@@ -1371,8 +1394,9 @@ def get_strategy_deployment(auth: bool = Depends(verify_jwt)):
             import json
             with open(manifest_path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception as e:
-            return {"active_strategy": None, "error": str(e)}
+        except Exception as exc:
+            logging.error("Could not read strategy manifest for deployment status: %s", exc)
+            return {"active_strategy": None, "error": "Strategy manifest is unavailable"}
     return {"active_strategy": None}
 
 

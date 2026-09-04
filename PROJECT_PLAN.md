@@ -604,3 +604,21 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Local DB snapshot verification confirms the selected candidate hashes now match the Lab-published evidence
   - No live order was placed during verification
 - **Status**: **Completed - DB evidence round-trip and Paper promotion hash parity fixed and verified; Live remained disarmed**
+
+### Phase 44: Paper Promotion Manifest Storage Bootstrap
+
+- **Objective**: Make Stage Paper Review work on a freshly deployed server where the ignored runtime manifest directory does not yet exist.
+- **Scope**: promotion-route storage initialization, safe error responses, regression coverage, deployment smoke, and browser verification. No live orders are permitted.
+- **Required behavior**:
+  1. The Paper promotion route creates `dashboard/data` before reading or atomically writing `strategy_manifest.json`.
+  2. Storage failures are logged server-side without exposing filesystem paths or exception details to the browser.
+  3. Existing candidate evidence, pause, Paper/Live separation, and Live-unlock gates remain unchanged.
+- **TDD/verification**:
+  - regression test stages a DB-backed qualified candidate when the manifest directory is absent
+  - focused promotion/API/security/dashboard tests, Python/JavaScript syntax checks, and Git whitespace checks
+  - deploy/restart verification, authenticated Stage Paper Review browser smoke where the existing session permits, and no-live-order audit
+- **Exit gates**:
+  - Stage Paper Review succeeds on a clean runtime data directory
+  - invalid/stale candidate evidence remains refused
+  - Live remains locked and no live order is placed during verification
+- **Status**: **In progress - regression test added; implementation and deployment verification pending**

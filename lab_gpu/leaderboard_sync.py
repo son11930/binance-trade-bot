@@ -141,6 +141,7 @@ def _sync_worker_loop():
                     logger.error(f"SyncWorker: Failed to write leaderboard JSON: {e}")
                 
                 # 2.2 DB Leaderboard Update (Heavy, throttle to 5.0s)
+                db_persisted = False
                 if now_ts - last_leaderboard_db_write >= 5.0:
                     try:
                         engine = _get_db_engine()
@@ -169,9 +170,20 @@ def _sync_worker_loop():
                                      parameters_json=json.dumps(stored_item)
                                 ))
                             sess.commit()
+                        db_persisted = True
                         last_leaderboard_db_write = now_ts
                     except Exception as e:
                         logger.error(f"SyncWorker: Failed to push leaderboard to DB: {e}")
+
+                # Keep the latest update queued until the shared DB has
+                # acknowledged it.  The local JSON write is not enough for
+                # the server, because the Lab and dashboard run on separate
+                # machines and the API uses the shared DB snapshot.
+                if not db_persisted:
+                    with _async_lock:
+                        if _async_state["leaderboard_data"] is None:
+                            _async_state["leaderboard_data"] = lb_data
+                            _async_state["leaderboard_metadata"] = lb_metadata
 
         except Exception as e:
             time.sleep(1.0) # Prevent tight loop on critical failure

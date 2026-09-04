@@ -1,4 +1,5 @@
 from .binance_client import place_market_order, get_live_asset_balance, futures_place_order, futures_set_leverage, futures_set_margin_type, sanitize_error
+import math
 import uuid
 from .database import TradeRepository
 from .logger import log_msg
@@ -21,18 +22,82 @@ def _pause_after_persistence_failure(state_manager: StateManager, market_type: s
 
 def _unpersisted_execution(order: dict, avg_price: float, exec_qty: float, commission: float, commission_asset: str, pnl_amount=None, pnl_percent=None) -> dict:
     """Return a truthy fill marker so callers do not reverse a real fill."""
+    if not isinstance(order, dict):
+        return None
+    execution_status = str(order.get("status", "")).strip().upper()
+    if execution_status not in {"FILLED", "PARTIALLY_FILLED"}:
+        return None
+    try:
+        confirmed_qty = float(exec_qty)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(confirmed_qty) or confirmed_qty <= 0:
+        return None
     return {
-        **(order if isinstance(order, dict) else {}),
+        **order,
         "status": "FILLED",
         "execution_confirmed": True,
         "trade_persisted": False,
+        "execution_status": execution_status,
+        "partial_fill": execution_status == "PARTIALLY_FILLED",
         "parsed_avg_price": avg_price,
-        "parsed_exec_qty": exec_qty,
+        "parsed_exec_qty": confirmed_qty,
         "parsed_commission": commission,
         "parsed_commission_asset": commission_asset,
         "pnl_amount": pnl_amount,
         "pnl_percent": pnl_percent,
     }
+
+
+def execution_quantity(trade: dict, fallback: float) -> float:
+    """Use the exchange/DB fill quantity instead of the requested quantity."""
+    values = (
+        trade.get("parsed_exec_qty") if isinstance(trade, dict) else None,
+        trade.get("quantity") if isinstance(trade, dict) else None,
+        fallback,
+    )
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number) and number > 0:
+            return number
+    return 0.0
+
+
+def execution_price(trade: dict, fallback: float) -> float:
+    """Use the actual average fill price when updating local accounting."""
+    values = (
+        trade.get("parsed_avg_price") if isinstance(trade, dict) else None,
+        trade.get("price") if isinstance(trade, dict) else None,
+        fallback,
+    )
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number) and number > 0:
+            return number
+    return 0.0
+
+
+def is_unpersisted_execution(trade: dict) -> bool:
+    return isinstance(trade, dict) and trade.get("trade_persisted") is False
+
+
+def futures_position_is_flat(symbol: str, position_side: str) -> bool:
+    """Return True only when the exchange confirms no requested-side position."""
+    from .binance_client import futures_get_position
+    position = futures_get_position(symbol, positionSide=position_side)
+    if position is None:
+        return False
+    try:
+        return abs(float(position.get("positionAmt", 0))) <= 0
+    except (TypeError, ValueError):
+        return False
+
 
 def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: float, price: float, reason: str = "", ai_risk: float = None, is_paper: bool = True, context=None):
     state = state_manager.get_state(symbol)
@@ -135,7 +200,27 @@ def execute_trade(state_manager: StateManager, symbol: str, side: str, qty: floa
     )
     if not trade:
         _pause_after_persistence_failure(state_manager, "spot", is_paper)
-        return _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
+        marker = _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
+        if marker is None:
+            return None
+        from .execution_journal import record_pending_execution
+        journal_persisted = record_pending_execution({
+            **marker,
+            "market_type": "spot",
+            "execution_mode": "PAPER" if is_paper else "LIVE",
+            "symbol": symbol,
+            "side": side,
+            "price": avg_price,
+            "quantity": exec_qty,
+            "fee": commission,
+            "fee_asset": commission_asset,
+            "pnl_amount": pnl_amount,
+            "pnl_percent": pnl_percent,
+            "reason": reason,
+            "deployment_id": context.deployment_id if context else None,
+            "strategy_id": context.strategy_id if context else None,
+        })
+        return {**marker, "journal_persisted": journal_persisted}
     if trade:
         log_msg("INFO", f"✅ Trade logged: {side} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})")
         return trade
@@ -167,31 +252,6 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
         # Safety cap for exiting a position to avoid opening an opposite position
         if state.position > 0:
             if (positionSide == "LONG" and side == "SELL") or (positionSide == "SHORT" and side == "BUY"):
-                if not is_paper:
-                    try:
-                        from .binance_client import futures_get_position
-                        live_pos = futures_get_position(symbol, positionSide=positionSide)
-                        if live_pos is None:
-                            log_msg("ERROR", f"Futures exit refused for {symbol}: Binance position could not be verified", market_type="futures")
-                            return None
-                        remote_side = str(live_pos.get("positionSide", "")).strip().upper()
-                        if remote_side and remote_side != str(positionSide).strip().upper():
-                            log_msg("ERROR", f"Futures exit refused for {symbol}: remote position side is {remote_side}, expected {positionSide}", market_type="futures")
-                            return None
-                        if live_pos is not None:
-                            actual_qty = abs(float(live_pos.get('positionAmt', 0)))
-                            if actual_qty <= 0:
-                                log_msg("INFO", f"Futures position already closed externally for {symbol}; clearing local state.", market_type="futures")
-                                from datetime import datetime, timezone
-                                state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
-                                return None
-                            if actual_qty < qty:
-                                log_msg("WARNING", f"📉 Adjusted FUTURES EXIT qty for {symbol} from {qty} to {actual_qty} to match Binance.", market_type="futures")
-                                qty = actual_qty
-                    except Exception as e:
-                        log_msg("ERROR", f"Failed to verify live futures position size before exit: {e}", market_type="futures")
-                        return None
-                
                 # Double check against local state to prevent over-closing in paper trading
                 qty = min(qty, state.position)
 
@@ -221,6 +281,42 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
                 if not allowed:
                     log_msg("WARNING", f"Live futures order refused for {symbol}: {guard_reason}", market_type="futures")
                     return None
+                if is_protective_exit:
+                    # The remote position must be refreshed while the same
+                    # lock is held as the final exchange call.  A check made
+                    # before the lock lets two concurrent exits both submit
+                    # stale quantities.
+                    current_state = state_manager.get_state(symbol)
+                    if current_state.position <= 0 or (
+                        current_state.position_side
+                        and current_state.position_side != positionSide
+                    ):
+                        log_msg("WARNING", f"Futures exit refused for {symbol}: local position changed before submission", market_type="futures")
+                        return None
+                    from .binance_client import futures_get_position
+                    live_pos = futures_get_position(symbol, positionSide=positionSide)
+                    if live_pos is None:
+                        log_msg("ERROR", f"Futures exit refused for {symbol}: Binance position could not be verified", market_type="futures")
+                        return None
+                    remote_side = str(live_pos.get("positionSide", "")).strip().upper()
+                    if remote_side and remote_side != str(positionSide).strip().upper():
+                        log_msg("ERROR", f"Futures exit refused for {symbol}: remote position side is {remote_side}, expected {positionSide}", market_type="futures")
+                        return None
+                    try:
+                        actual_qty = abs(float(live_pos.get("positionAmt", 0)))
+                    except (TypeError, ValueError):
+                        log_msg("ERROR", f"Futures exit refused for {symbol}: Binance returned an invalid position quantity", market_type="futures")
+                        return None
+                    if actual_qty <= 0:
+                        log_msg("INFO", f"Futures position already closed externally for {symbol}; clearing local state.", market_type="futures")
+                        from datetime import datetime, timezone
+                        state_manager.update_state(symbol, position=0.0, buy_price=0.0, highest_price=0.0, lowest_price=0.0, active_strategy="NONE", last_trade_time=datetime.now(timezone.utc), dynamic_sl=0.0, dynamic_tp=0.0, position_side="")
+                        return None
+                    qty = min(qty, current_state.position, actual_qty)
+                    if qty <= 0:
+                        log_msg("INFO", f"Futures position already closed externally for {symbol}; clearing local state.", market_type="futures")
+                        return None
+                    state = current_state
                 from .binance_client import futures_place_order
                 order = futures_place_order(symbol, side, positionSide, qty, is_paper=False, client_order_id=client_oid)
         avg_price = order.get('parsed_avg_price')
@@ -290,7 +386,28 @@ def execute_futures_trade(state_manager: StateManager, symbol: str, side: str, p
     )
     if not trade:
         _pause_after_persistence_failure(state_manager, "futures", is_paper)
-        return _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
+        marker = _unpersisted_execution(order, avg_price, exec_qty, commission, commission_asset, pnl_amount, pnl_percent)
+        if marker is None:
+            return None
+        from .execution_journal import record_pending_execution
+        journal_persisted = record_pending_execution({
+            **marker,
+            "market_type": "futures",
+            "execution_mode": "PAPER" if is_paper else "LIVE",
+            "symbol": symbol,
+            "side": side,
+            "position_side": positionSide,
+            "price": avg_price,
+            "quantity": exec_qty,
+            "fee": commission,
+            "fee_asset": commission_asset,
+            "pnl_amount": pnl_amount,
+            "pnl_percent": pnl_percent,
+            "reason": reason,
+            "deployment_id": context.deployment_id if context else None,
+            "strategy_id": context.strategy_id if context else None,
+        })
+        return {**marker, "journal_persisted": journal_persisted}
     if trade:
         log_msg("INFO", f"✅ Futures Trade logged: {side} {positionSide} {exec_qty} {symbol} at {avg_price} (PNL: {pnl_amount})", market_type="futures")
         return trade

@@ -432,6 +432,14 @@ async def toggle_execution_pause_endpoint(req: ToggleExecutionPauseRequest, auth
     mode = req.execution_mode.upper()
     current = get_bot_control()
 
+    if not req.paused:
+        from bot.execution_journal import reconcile_pending_executions
+        if not reconcile_pending_executions(req.market, mode):
+            raise HTTPException(
+                status_code=409,
+                detail="A confirmed execution is awaiting database reconciliation; the lane remains paused.",
+            )
+
     if mode == "LIVE" and not req.paused:
         if not current.get("allow_live", False):
             raise HTTPException(status_code=403, detail="LIVE execution is locked. Enable the server-side live unlock first.")
@@ -709,24 +717,27 @@ def _read_lab_progress_run_id() -> str:
             data = json.load(handle)
         if not isinstance(data, dict):
             return ""
-        if int(data.get("telemetry_schema_version", 0) or 0) < 2:
+        if int(data.get("telemetry_schema_version", 0) or 0) != 2:
             return ""
         return str(data.get("run_id", "") or "")
     except (OSError, ValueError, TypeError):
         return ""
 
 
-def _read_lab_progress_db_run_id() -> str:
+def _read_lab_progress_db_run_id() -> str | None:
     """Read the current run id from the shared database when available."""
     db = SessionLocalFutures()
     try:
         from bot.database import LabProgressState
         row = db.query(LabProgressState).filter_by(id=1).first()
-        if not row or int(getattr(row, "telemetry_schema_version", 0) or 0) < 2:
+        if not row or int(getattr(row, "telemetry_schema_version", 0) or 0) != 2:
             return ""
         return str(getattr(row, "run_id", "") or "")
     except Exception:
-        return ""
+        # None means the shared source could not be read.  An empty string is
+        # a readable shared source with no current versioned run and must not
+        # be replaced by an older local file run.
+        return None
     finally:
         db.close()
 
@@ -761,24 +772,53 @@ def _read_leaderboard_db_snapshot() -> dict | None:
 
 def _read_leaderboard_snapshot() -> dict | None:
     """Read the newest versioned snapshot from shared DB or local JSON."""
-    current_run_id = _read_lab_progress_run_id() or _read_lab_progress_db_run_id()
+    db_progress_run_id = _read_lab_progress_db_run_id()
+    shared_progress_is_authoritative = db_progress_run_id is not None
+    current_run_id = (
+        db_progress_run_id
+        if shared_progress_is_authoritative
+        else _read_lab_progress_run_id()
+    )
     db_snapshot = _read_leaderboard_db_snapshot()
-    if db_snapshot is not None and (
-        not current_run_id or db_snapshot.get("run_id") == current_run_id
-    ):
-        return db_snapshot
     file_snapshot = _read_leaderboard_file_snapshot()
-    if file_snapshot is None:
-        return None
-    if current_run_id and file_snapshot.get("run_id") != current_run_id:
+    candidates = []
+    for snapshot in (db_snapshot, file_snapshot):
+        if not isinstance(snapshot, dict):
+            continue
+        if snapshot.get("telemetry_schema_version", 0) != 2 or not snapshot.get("run_id"):
+            continue
+        if shared_progress_is_authoritative and (
+            not current_run_id or snapshot.get("run_id") != current_run_id
+        ):
+            continue
+        if not shared_progress_is_authoritative and current_run_id and snapshot.get("run_id") != current_run_id:
+            continue
+        candidates.append(snapshot)
+
+    def snapshot_timestamp(snapshot: dict) -> float:
+        try:
+            parsed = datetime.fromisoformat(str(snapshot.get("updated_at", "")))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+    if candidates:
+        # JSON and DB publication can be a few seconds apart.  Returning the
+        # newest version of the same run prevents the DB throttle from
+        # hiding a more recent candidate snapshot.
+        return max(candidates, key=snapshot_timestamp)
+
+    if current_run_id or shared_progress_is_authoritative:
         return {
-            **file_snapshot,
+            **(file_snapshot or {}),
             "strategies": [],
             "run_id": current_run_id,
             "telemetry_schema_version": 2,
             "published_leader_count": 0,
         }
-    return file_snapshot
+    return file_snapshot or db_snapshot
 
 
 def _leaderboard_response(snapshot: dict) -> dict:
@@ -786,7 +826,7 @@ def _leaderboard_response(snapshot: dict) -> dict:
         "status": "ok",
         "strategies": snapshot.get("strategies", []),
         "snapshot": {
-            "available": snapshot.get("telemetry_schema_version", 0) >= 2 and bool(snapshot.get("run_id")),
+            "available": snapshot.get("telemetry_schema_version", 0) == 2 and bool(snapshot.get("run_id")),
             "run_id": snapshot.get("run_id", ""),
             "updated_at": snapshot.get("updated_at", ""),
             "telemetry_schema_version": snapshot.get("telemetry_schema_version", 0),
@@ -839,7 +879,7 @@ def get_strategy_leaderboard(auth: bool = Depends(verify_jwt)):
     # That would make a new/partial run look like the previous run succeeded.
     snapshot = _read_leaderboard_snapshot()
     if snapshot is not None:
-        if snapshot.get("telemetry_schema_version", 0) < 2 or not snapshot.get("run_id"):
+        if snapshot.get("telemetry_schema_version", 0) != 2 or not snapshot.get("run_id"):
             snapshot = {
                 **snapshot,
                 "strategies": [],
@@ -876,7 +916,7 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
         telemetry_schema_version = (
             (getattr(row, "telemetry_schema_version", 0) or 0) if row else 0
         )
-        if row and row.status and row.status != "idle" and telemetry_schema_version >= 2:
+        if row and row.status and row.status != "idle" and telemetry_schema_version == 2:
             res = {
                 "status": row.status,
                 "current_trial": row.current_trial or 0,
@@ -930,7 +970,7 @@ def get_strategy_lab_progress(auth: bool = Depends(verify_jwt)):
                 data = json.load(f)
                 if (
                     isinstance(data, dict)
-                    and int(data.get("telemetry_schema_version", 0) or 0) >= 2
+                    and int(data.get("telemetry_schema_version", 0) or 0) == 2
                     and str(data.get("run_id", "") or "")
                 ):
                     return {"status": "ok", "progress": data}
@@ -951,7 +991,7 @@ async def upload_strategy_results(data: Dict[str, Any], request: Request):
     except (TypeError, ValueError):
         telemetry_schema_version = 0
     run_id = str(data.get("run_id", "") or "")
-    if telemetry_schema_version < 2 or not run_id:
+    if telemetry_schema_version != 2 or not run_id:
         raise HTTPException(status_code=400, detail="Versioned lab snapshot with run_id is required")
 
     auth_header = request.headers.get("Authorization", "")
@@ -1159,11 +1199,16 @@ def promote_strategy(req: PromoteRequest, auth: bool = Depends(verify_jwt)):
     snapshot = _read_leaderboard_snapshot()
     if (
         snapshot is None
-        or snapshot.get("telemetry_schema_version", 0) < 2
+        or snapshot.get("telemetry_schema_version", 0) != 2
         or not snapshot.get("run_id")
     ):
         raise HTTPException(status_code=409, detail="A current versioned lab leaderboard is required before deployment")
-    progress_run_id = _read_lab_progress_run_id()
+    db_progress_run_id = _read_lab_progress_db_run_id()
+    progress_run_id = (
+        db_progress_run_id
+        if db_progress_run_id is not None
+        else _read_lab_progress_run_id()
+    )
     if progress_run_id and progress_run_id != snapshot.get("run_id"):
         raise HTTPException(status_code=409, detail="Leaderboard does not match the current lab progress run")
     strategies = snapshot.get("strategies", [])

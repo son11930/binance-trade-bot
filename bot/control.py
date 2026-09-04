@@ -7,13 +7,15 @@ as a side effect.
 """
 
 import json
+import hashlib
 import os
+import tempfile
 import threading
 from contextlib import contextmanager
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONTROL_FILE = os.path.join(BASE_DIR, "bot_control.json")
-_lock = threading.Lock()
+_lock = threading.RLock()
 _latch_lock = threading.Lock()
 _fail_closed_latches = set()
 
@@ -115,6 +117,16 @@ def _fail_closed_path(key: str) -> str:
     return f"{CONTROL_FILE}.fail_closed.{key}"
 
 
+def _durable_fail_closed_paths(key: str) -> tuple[str, ...]:
+    """Return shared marker locations, with a host-local fallback directory."""
+    control_identity = hashlib.sha256(os.path.abspath(CONTROL_FILE).encode("utf-8")).hexdigest()[:16]
+    fallback = os.path.join(
+        tempfile.gettempdir(),
+        f"binancetrade_fail_closed_{control_identity}_{key}",
+    )
+    return tuple(dict.fromkeys((_fail_closed_path(key), fallback)))
+
+
 @contextmanager
 def _interprocess_control_lock():
     """Serialize control read/modify/write operations across API and bot processes."""
@@ -170,38 +182,62 @@ def _interprocess_control_lock():
 def execution_control_lock():
     """Hold the shared control lock across an exchange-boundary operation."""
     with _interprocess_control_lock():
-        yield
+        # The file lock serializes API and bot processes; this re-entrant lock
+        # also serializes concurrent exchange calls inside one process.
+        with _lock:
+            yield
 
 
 def _set_fail_closed_latch(market: str, execution_mode: str):
     key = _execution_pause_key(market, execution_mode)
     with _latch_lock:
         _fail_closed_latches.add(key)
-    try:
-        with open(_fail_closed_path(key), "a", encoding="utf-8"):
-            pass
-    except Exception:
-        # The in-process latch still denies execution when the filesystem is
-        # unavailable; the durable marker is best effort for the other process.
-        pass
+    errors = []
+    for marker_path in _durable_fail_closed_paths(key):
+        try:
+            parent = os.path.dirname(marker_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(marker_path, "a", encoding="utf-8"):
+                pass
+            return True
+        except Exception as exc:
+            errors.append(str(exc))
+    # Keep the local latch set, but make the failure visible to the caller.
+    # Without a durable marker another process could otherwise resume this
+    # lane from an apparently-unpaused control file.
+    raise ControlPersistenceError(
+        f"fail-closed marker unavailable for {key}: {errors[-1] if errors else 'unknown error'}"
+    )
 
 
 def _clear_fail_closed_latch(market: str, execution_mode: str):
     key = _execution_pause_key(market, execution_mode)
+    errors = []
+    for marker_path in _durable_fail_closed_paths(key):
+        try:
+            os.remove(marker_path)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            errors.append(str(exc))
+    if errors:
+        with _latch_lock:
+            _fail_closed_latches.add(key)
+        raise ControlPersistenceError(
+            f"fail-closed marker could not be cleared for {key}: {errors[-1]}"
+        )
     with _latch_lock:
         _fail_closed_latches.discard(key)
-    try:
-        os.remove(_fail_closed_path(key))
-    except FileNotFoundError:
-        pass
-    except Exception:
-        pass
 
 
 def _has_fail_closed_latch(market: str, execution_mode: str) -> bool:
     key = _execution_pause_key(market, execution_mode)
     with _latch_lock:
-        return key in _fail_closed_latches or os.path.exists(_fail_closed_path(key))
+        return key in _fail_closed_latches or any(
+            os.path.exists(marker_path)
+            for marker_path in _durable_fail_closed_paths(key)
+        )
 
 
 def _write_state_unlocked(state: dict) -> bool:
@@ -267,19 +303,31 @@ def set_bot_control(
     if not persisted:
         for market in VALID_MARKETS:
             if updates.get(f"{market}_paused") is True:
-                _set_fail_closed_latch(market, "PAPER")
-                _set_fail_closed_latch(market, "LIVE")
+                for mode in VALID_EXECUTION_MODES:
+                    try:
+                        _set_fail_closed_latch(market, mode)
+                    except ControlPersistenceError:
+                        pass
             for mode in VALID_EXECUTION_MODES:
-                if updates.get(_execution_pause_key(market, mode)) is True:
-                    _set_fail_closed_latch(market, mode)
-                if mode == "LIVE" and updates.get("allow_live") is False:
-                    _set_fail_closed_latch(market, mode)
+                if updates.get(_execution_pause_key(market, mode)) is True or (
+                    mode == "LIVE" and updates.get("allow_live") is False
+                ):
+                    try:
+                        _set_fail_closed_latch(market, mode)
+                    except ControlPersistenceError:
+                        pass
     return persisted
 
 
 def set_execution_pause(market: str, execution_mode: str, paused: bool, reason=None) -> dict:
     """Pause/resume exactly one market and execution mode."""
     key = _execution_pause_key(market, execution_mode)
+    if not paused:
+        from .execution_journal import has_pending_execution
+        if has_pending_execution(market, execution_mode):
+            raise ControlPersistenceError(
+                f"pending execution journal must be reconciled before resuming {key}"
+            )
     updates = {key: bool(paused)}
     if reason is not None:
         updates["pause_reason"] = str(reason)

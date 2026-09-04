@@ -6,9 +6,15 @@ from .ai_engine import analyze_sentiment
 from .database import sanitize_text, TradeRepository
 from bot.logger import log_msg
 from bot.state import StateManager, SymbolState
-from bot.control import get_bot_control, is_execution_paused
+from bot.control import get_bot_control, is_execution_paused, set_execution_pause
 from .config import COOLDOWN_MINUTES
-from .trade_executor import execute_trade
+from .trade_executor import (
+    execute_trade,
+    execution_price,
+    execution_quantity,
+    futures_position_is_flat,
+    is_unpersisted_execution,
+)
 from .webhook_notifier import update_bot_state, send_discord_alert
 from .binance_client import get_current_price
 from .state import StateManager
@@ -69,6 +75,45 @@ def _resolve_execution_mode(
         log_msg("ERROR", f"LIVE {market_type} order refused: live execution is locked")
         return None
     return mode == "PAPER"
+
+
+def _pause_unconfirmed_futures_close(state_manager: StateManager, symbol: str, reason: str):
+    """Keep a lane and its local position unresolved until reconciliation."""
+    execution_mode = str(getattr(state_manager, "execution_mode", "PAPER")).upper()
+    try:
+        set_execution_pause(
+            "futures",
+            execution_mode,
+            True,
+            reason=f"{symbol}: {reason}",
+        )
+    except Exception as pause_error:
+        log_msg(
+            "ERROR",
+            f"Could not persist fail-closed futures pause for {symbol}: {pause_error}",
+            market_type="futures",
+        )
+    state_manager.update_state(symbol, active_strategy="CLOSING")
+
+
+def _futures_close_is_confirmed(
+    state_manager: StateManager,
+    symbol: str,
+    position_side: str,
+    is_paper: bool,
+    context=None,
+) -> bool:
+    """Require both native-order cleanup and a flat exchange position."""
+    from .binance_client import futures_cancel_all_orders
+    cleanup_ok = futures_cancel_all_orders(
+        symbol,
+        is_paper=is_paper,
+        state_manager=state_manager,
+        context=context,
+    )
+    return bool(cleanup_ok) and (
+        bool(is_paper) or futures_position_is_flat(symbol, position_side)
+    )
 
 def _check_slippage_guard(state_manager: StateManager, symbol: str, current_price: float, market_type: str) -> float | None:
     state = state_manager.get_state(symbol)
@@ -234,11 +279,15 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
             trade = execute_futures_trade(state_manager, symbol, signal, position_side, qty, current_price, reason=f"{strategy_used} + AI: {reason}", is_paper=is_paper, context=context)
             
             if trade:
+                executed_qty = execution_quantity(trade, qty)
+                if executed_qty <= 0:
+                    _pause_unconfirmed_futures_close(state_manager, symbol, "entry fill quantity was not confirmed")
+                    return
                 send_discord_alert(f"🤖 **[FUTURES] Sniper Entry: {signal} {symbol}**\nReason: {reason}")
                 
                 # Update state immediately
                 state_manager.update_state(symbol, 
-                    position=qty, buy_price=current_price, highest_price=current_price, lowest_price=current_price,
+                    position=executed_qty, buy_price=execution_price(trade, current_price), highest_price=current_price, lowest_price=current_price,
                     last_trade_time=datetime.now(timezone.utc), trade_entry_time=datetime.now(timezone.utc),
                     active_strategy=strategy_used, dynamic_sl=sl_target, dynamic_tp=tp_target, max_time_in_trade=time_limit,
                     position_side=position_side, ai_hold_cooldown_until=None
@@ -250,7 +299,7 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                 if not futures_place_native_stop(symbol, position_side, sl_target, is_paper=is_paper, state_manager=state_manager, context=context):
                     log_msg("ERROR", f"🚨 Native Stop placement failed for {symbol}. FAILING CLOSED immediately.", market_type="futures")
                     close_signal = "SELL" if position_side == "LONG" else "BUY"
-                    close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper, context=context)
+                    close_trade = execute_futures_trade(state_manager, symbol, close_signal, position_side, executed_qty, current_price, reason="FAIL CLOSED (No SL)", is_paper=is_paper, context=context)
                     
                     if not close_trade:
                         try:
@@ -263,6 +312,9 @@ def _evaluate_futures_trade_signal(state_manager: StateManager, symbol: str, cur
                         return
 
                     if close_trade:
+                        if not is_paper and not futures_position_is_flat(symbol, position_side):
+                            _pause_unconfirmed_futures_close(state_manager, symbol, "fail-closed market exit did not confirm a flat exchange position")
+                            return
                         profit_amt = (close_trade.get("pnl_amount") if isinstance(close_trade, dict) else getattr(close_trade, "pnl_amount", 0.0)) or 0.0
                         if profit_amt:
                             state_manager.add_to_balance(profit_amt)
@@ -326,10 +378,16 @@ def _evaluate_buy_signal(state_manager: StateManager, symbol: str, current_price
             
             trade = execute_trade(state_manager, symbol, "BUY", qty, current_price, reason=f"{strategy_used} + AI: {reason}", ai_risk=risk_score, is_paper=is_paper, context=context)
             if trade:
+                executed_qty = execution_quantity(trade, qty)
+                executed_price = execution_price(trade, current_price)
+                if executed_qty <= 0 or executed_price <= 0:
+                    log_msg("ERROR", f"Spot entry fill for {symbol} was not confirmed; keeping the lane paused.", market_type="spot")
+                    return
                 send_discord_alert(f"🤖 **[SPOT] Sniper Entry: BUY {symbol}**\nReason: {reason}")
-                state_manager.add_to_balance(-trade_amount)
+                fee = float(trade.get("fee", trade.get("parsed_commission", 0.0)) or 0.0) if isinstance(trade, dict) else 0.0
+                state_manager.add_to_balance(-(executed_qty * executed_price + fee))
                 state_manager.update_state(symbol, 
-                    position=qty, buy_price=current_price, highest_price=current_price, lowest_price=current_price,
+                    position=executed_qty, buy_price=executed_price, highest_price=executed_price, lowest_price=executed_price,
                     last_trade_time=datetime.now(timezone.utc), trade_entry_time=datetime.now(timezone.utc),
                     active_strategy=strategy_used, dynamic_sl=sl_target, dynamic_tp=tp_target, max_time_in_trade=time_limit
                 )
@@ -432,7 +490,7 @@ def evaluate_strategy_for_symbol(state_manager: StateManager, symbol: str, df, c
         log_msg("ERROR", f"❌ Error processing {symbol}: {sanitize_text(str(e))}")
         state_manager.update_state(symbol, last_trade_time=datetime.now(timezone.utc) - timedelta(minutes=COOLDOWN_MINUTES) + timedelta(minutes=5))
 
-def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float):
+def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: str, df, current_price: float, context=None):
     try:
         execution_mode = _resolve_execution_mode("futures", state_manager=state_manager)
         if execution_mode is None:
@@ -474,10 +532,11 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
                        ("LONG" in strategy_used and state.position_side == "SHORT"):
                         log_msg("INFO", f"📉 FUTURES REVERSAL EXIT for {symbol} via {strategy_used}...", market_type="futures")
                         exit_side = "SELL" if state.position_side == "LONG" else "BUY"
-                        trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper)
+                        trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=is_paper, context=context)
                         if trade:
-                            from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol, is_paper=is_paper, state_manager=state_manager, context=context)
+                            if not _futures_close_is_confirmed(state_manager, symbol, state.position_side, is_paper, context):
+                                _pause_unconfirmed_futures_close(state_manager, symbol, "reversal cleanup or flat-position verification failed")
+                                return
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:
@@ -560,10 +619,11 @@ def evaluate_futures_strategy_for_symbol(state_manager: StateManager, symbol: st
             elif "EXIT" in strategy_used:
                 if state.position > 0 and state.position_side == position_side:
                     log_msg("INFO", f"📉 FUTURES EXIT {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
-                    trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=is_paper)
+                    trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=is_paper, context=context)
                     if trade:
-                        from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol, is_paper=is_paper, state_manager=state_manager, context=context)
+                        if not _futures_close_is_confirmed(state_manager, symbol, state.position_side, is_paper, context):
+                            _pause_unconfirmed_futures_close(state_manager, symbol, "exit cleanup or flat-position verification failed")
+                            return
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -767,8 +827,9 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                     log_msg("INFO", f"📉 FUTURES EXIT {signal} {position_side} for {symbol} via {strategy_used}...", market_type="futures")
                     trade = execute_futures_trade(state_manager, symbol, signal, position_side, state.position, current_price, reason=strategy_used, is_paper=data['is_paper'], context=context)
                     if trade:
-                        from .binance_client import futures_cancel_all_orders
-                        futures_cancel_all_orders(symbol, is_paper=data['is_paper'], state_manager=state_manager, context=context)
+                        if not _futures_close_is_confirmed(state_manager, symbol, state.position_side, data['is_paper'], context):
+                            _pause_unconfirmed_futures_close(state_manager, symbol, "exit cleanup or flat-position verification failed")
+                            continue
                         profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                         profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                         if profit_pct > 0:
@@ -785,8 +846,9 @@ def evaluate_all_futures_strategies_single_pass(state_manager: StateManager, sym
                         exit_side = "SELL" if state.position_side == "LONG" else "BUY"
                         trade = execute_futures_trade(state_manager, symbol, exit_side, state.position_side, state.position, current_price, reason=f"Reversal: {strategy_used}", is_paper=data['is_paper'], context=context)
                         if trade:
-                            from .binance_client import futures_cancel_all_orders
-                            futures_cancel_all_orders(symbol, is_paper=data['is_paper'], state_manager=state_manager, context=context)
+                            if not _futures_close_is_confirmed(state_manager, symbol, state.position_side, data['is_paper'], context):
+                                _pause_unconfirmed_futures_close(state_manager, symbol, "reversal cleanup or flat-position verification failed")
+                                continue
                             profit_pct = (trade.get("pnl_percent") if isinstance(trade, dict) else getattr(trade, "pnl_percent", 0.0)) or 0.0
                             profit_amt = (trade.get("pnl_amount") if isinstance(trade, dict) else getattr(trade, "pnl_amount", 0.0)) or 0.0
                             if profit_pct > 0:

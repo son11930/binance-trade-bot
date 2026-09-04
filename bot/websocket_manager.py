@@ -14,6 +14,7 @@ from .signal_evaluator import (
     evaluate_strategy_for_symbol,
     evaluate_futures_strategy_for_symbol,
     _resolve_execution_mode,
+    _futures_close_is_confirmed,
 )
 from .logger import log_msg
 from .webhook_notifier import send_discord_alert
@@ -142,7 +143,7 @@ class WebSocketManager:
                             )
                             if execution_mode is None:
                                 log_msg("ERROR", f"Risk close refused for {symbol}: execution mode is not validated", market_type="spot")
-                                self.state_manager.update_state(symbol, active_strategy="NONE")
+                                self.state_manager.update_state(symbol, active_strategy="CLOSING")
                                 return
                             trade = execute_trade(self.state_manager, symbol, "SELL", state.position, current_price, reason=rm_signal, is_paper=execution_mode)
                             if trade:
@@ -186,12 +187,19 @@ class WebSocketManager:
                             )
                             if execution_mode is None:
                                 log_msg("ERROR", f"Futures risk close refused for {symbol}: execution mode is not validated", market_type="futures")
-                                self.state_manager.update_state(symbol, active_strategy="NONE")
+                                self.state_manager.update_state(symbol, active_strategy="CLOSING")
                                 return
                             trade = execute_futures_trade(self.state_manager, symbol, close_side, state.position_side, state.position, current_price, reason=rm_signal, is_paper=execution_mode)
                             if trade:
-                                from .binance_client import futures_cancel_all_orders
-                                futures_cancel_all_orders(symbol, is_paper=execution_mode, state_manager=self.state_manager)
+                                if not _futures_close_is_confirmed(self.state_manager, symbol, state.position_side, execution_mode):
+                                    try:
+                                        from .control import set_execution_pause
+                                        set_execution_pause("futures", "PAPER" if execution_mode else "LIVE", True, reason=f"{symbol}: risk-close cleanup or flat-position verification failed")
+                                    except Exception as pause_error:
+                                        log_msg("ERROR", f"Could not persist fail-closed futures pause for {symbol}: {pause_error}", market_type="futures")
+                                    self.state_manager.update_state(symbol, active_strategy="CLOSING")
+                                    send_discord_alert(f"⚠️ **[FAIL CLOSED] {symbol}**\nRisk close completed but order cleanup/position verification failed. Futures lane paused.")
+                                    return
                                 _, pnl_amt = _notify_profitable_close(trade, symbol, rm_signal, "futures")
                                 if pnl_amt:
                                     self.state_manager.add_to_balance(pnl_amt)

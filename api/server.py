@@ -304,9 +304,24 @@ def get_public_bot_control() -> dict:
     control = get_bot_control()
     active_strategy = get_active_strategy()
     active_stage = active_strategy.get("stage", "PAPER") if active_strategy else "PAPER"
+    execution_controls = {
+        market: {
+            mode: get_execution_control(market, mode, control=control)
+            for mode in ("PAPER", "LIVE")
+        }
+        for market in ("spot", "futures")
+    }
     # ``active_stage`` is display metadata only.  Every execution mutation
     # still validates the live unlock and manifest server-side.
-    return {**control, "active_stage": active_stage}
+    # The effective lane state is included here because the dashboard control
+    # endpoint is also used to render the pause/resume buttons.  Returning
+    # only the lane flag would incorrectly show PAPER as running while a
+    # market-wide kill switch still blocks the scheduler.
+    return {
+        **control,
+        "active_stage": active_stage,
+        "execution_controls": execution_controls,
+    }
 
 db_poll_event = None
 
@@ -391,6 +406,10 @@ class ToggleExecutionModeRequest(BaseModel):
     allow_live: Optional[bool] = None
     paper_trading: Optional[bool] = None
 
+class ClearPaperSafetyPauseRequest(BaseModel):
+    market: Literal["spot", "futures"]
+    confirmation: Literal["CLEAR PAPER SAFETY PAUSE"]
+
 def verify_jwt(auth_header: str = Security(APIKeyHeader(name="Authorization", auto_error=False))):
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization Header")
@@ -469,6 +488,57 @@ async def toggle_execution_pause_endpoint(req: ToggleExecutionPauseRequest, auth
     expected_key = f"{req.market}_{mode.lower()}_paused"
     if bool(new_state.get(expected_key, not req.paused)) is not bool(req.paused):
         raise HTTPException(status_code=503, detail="Execution control could not be persisted; state remains fail-closed.")
+    await manager.broadcast({"type": "status_update", "data": get_bot_status()})
+    await manager.broadcast({"type": "bot_control_update", "data": new_state})
+    return {"status": "success", "data": new_state}
+
+@app.post("/api/clear_paper_safety_pause")
+async def clear_paper_safety_pause_endpoint(req: ClearPaperSafetyPauseRequest, auth: bool = Depends(verify_jwt)):
+    """Explicitly release one market-wide kill switch for PAPER only.
+
+    A normal lane Resume must not clear a market-wide safety stop.  This
+    endpoint requires an exact operator confirmation, keeps LIVE paused, and
+    clears the Paper fail-closed latch before releasing the market switch.
+    """
+    current = get_bot_control()
+    if current.get("allow_live", False):
+        raise HTTPException(status_code=403, detail="Disable the server-side LIVE unlock before clearing a PAPER safety pause.")
+
+    active = get_active_strategy()
+    if active and active.get("stage") != "PAPER":
+        raise HTTPException(status_code=409, detail="The active strategy is not staged for PAPER execution.")
+
+    live_key = f"{req.market}_live_paused"
+    if not current.get(live_key, True):
+        raise HTTPException(status_code=409, detail="PAPER safety recovery requires the corresponding LIVE lane to remain paused.")
+
+    try:
+        # Clear the Paper latch first.  If the market-wide write fails after
+        # this point, the kill switch remains active and execution stays safe.
+        set_execution_pause(req.market, "PAPER", False, reason=None)
+    except ControlPersistenceError as exc:
+        raise HTTPException(status_code=503, detail="PAPER safety latch could not be cleared; execution remains paused.") from exc
+
+    other_market = "spot" if req.market == "futures" else "futures"
+    remaining_reason = current.get("pause_reason", "") if current.get(f"{other_market}_paused", False) else ""
+    persisted = set_bot_control(
+        **{f"{req.market}_paused": False},
+        pause_reason=remaining_reason,
+    )
+    if not persisted:
+        raise HTTPException(status_code=503, detail="PAPER market safety pause could not be persisted; execution remains paused.")
+
+    new_state = get_public_bot_control()
+    paper_lane = new_state.get("execution_controls", {}).get(req.market, {}).get("PAPER", {})
+    live_lane = new_state.get("execution_controls", {}).get(req.market, {}).get("LIVE", {})
+    if (
+        bool(paper_lane.get("market_kill_switch", True))
+        or bool(paper_lane.get("effective_paused", True))
+        or not bool(live_lane.get("paused", True))
+        or bool(new_state.get("allow_live", False))
+    ):
+        raise HTTPException(status_code=503, detail="PAPER safety state could not be verified; execution remains fail-closed.")
+
     await manager.broadcast({"type": "status_update", "data": get_bot_status()})
     await manager.broadcast({"type": "bot_control_update", "data": new_state})
     return {"status": "success", "data": new_state}

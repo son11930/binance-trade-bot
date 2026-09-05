@@ -3,7 +3,7 @@ title AI Strategy Lab GPU - RTX 3070 Controller (Windows Launcher)
 cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
 
-REM ── CUDA PATH SETUP (ลง CUDA Toolkit ที่ E:\Cuda toolkit) ──
+REM CUDA PATH SETUP (CUDA Toolkit: E:\Cuda toolkit)
 set "CUDA_PATH=E:\Cuda toolkit"
 set "CUDA_HOME=E:\Cuda toolkit"
 set "PATH=%CUDA_PATH%\bin\x64;%CUDA_PATH%\bin;%PATH%"
@@ -65,8 +65,8 @@ echo.
 echo [*] Starting GPU Strategy Lab (100 Trials)...
 echo [*] Output logged to logs\gpu_lab.log
 if not exist logs mkdir logs
-start "AI_GPU_Strategy_Lab" /D "%~dp0" /min cmd /c "python bot_strategy_synthesizer_gpu.py 100 > logs\gpu_lab.log 2>&1"
-echo [+] GPU Lab launched in background!
+call "%~dp0run_strategy_lab_gpu_child.bat" 100
+echo [+] GPU Lab finished. Check logs\gpu_lab.log for the full run.
 echo [i] Check status with [5] or view logs with [6].
 echo.
 pause
@@ -75,9 +75,8 @@ goto MENU
 :START_DEFAULT_AUTO
 echo [*] Starting GPU Strategy Lab (100 Trials)...
 if not exist logs mkdir logs
-start "AI_GPU_Strategy_Lab" /D "%~dp0" /min cmd /c "python bot_strategy_synthesizer_gpu.py 100 > logs\gpu_lab.log 2>&1"
-echo [+] GPU Lab launched!
-timeout /t 2 >nul
+call "%~dp0run_strategy_lab_gpu_child.bat" 100
+echo [+] GPU Lab finished. Check logs\gpu_lab.log for the full run.
 exit /b 0
 
 :START_CUSTOM
@@ -94,8 +93,8 @@ echo [*] Your RTX 3070 will evolve millions of strategy genomes overnight!
 :START_CUSTOM_LAUNCH
 echo [*] Output logged to logs\gpu_lab.log
 if not exist logs mkdir logs
-start "AI_GPU_Strategy_Lab" /D "%~dp0" /min cmd /c "python bot_strategy_synthesizer_gpu.py %trials% > logs\gpu_lab.log 2>&1"
-echo [+] GPU Lab launched in background!
+call "%~dp0run_strategy_lab_gpu_child.bat" %trials%
+echo [+] GPU Lab finished. Check logs\gpu_lab.log for the full run.
 echo.
 pause
 goto MENU
@@ -108,9 +107,8 @@ goto START_CUSTOM_AUTO_LAUNCH
 echo [*] Starting GPU Lab in INFINITE EVOLUTION MODE...
 :START_CUSTOM_AUTO_LAUNCH
 if not exist logs mkdir logs
-start "AI_GPU_Strategy_Lab" /D "%~dp0" /min cmd /c "python bot_strategy_synthesizer_gpu.py %trials% > logs\gpu_lab.log 2>&1"
-echo [+] GPU Lab launched!
-timeout /t 2 >nul
+call "%~dp0run_strategy_lab_gpu_child.bat" %trials%
+echo [+] GPU Lab finished. Check logs\gpu_lab.log for the full run.
 exit /b 0
 
 :STOP_LAB
@@ -131,8 +129,8 @@ taskkill /f /fi "WINDOWTITLE eq AI_GPU_Strategy_Lab*" >nul 2>&1
 powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*bot_strategy_synthesizer_gpu*' } | Invoke-CimMethod -MethodName Terminate" >nul 2>&1
 timeout /t 2 >nul
 if not exist logs mkdir logs
-start "AI_GPU_Strategy_Lab" /D "%~dp0" /min cmd /c "python bot_strategy_synthesizer_gpu.py 100 > logs\gpu_lab.log 2>&1"
-echo [+] GPU Lab restarted with 100 trials!
+call "%~dp0run_strategy_lab_gpu_child.bat" 100
+echo [+] GPU Lab finished with 100 trials!
 echo.
 pause
 goto MENU

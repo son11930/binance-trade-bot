@@ -402,7 +402,14 @@ def get_deduplicated_top10_gpu(lb_map: dict) -> list:
     # promotion artifacts. Keep only candidates with complete metrics here.
     all_items = sorted(
         [item for item in lb_map.values() if item.get("full_evaluated", False)],
-        key=lambda x: (bool(x.get("qualified", False)), float(x.get("fitness_score", -1e9))),
+        # Qualification remains an OOS gate, but ordering among qualified
+        # candidates uses the independent IS search score to reduce repeated
+        # selection pressure on the same OOS observations.
+        key=lambda x: (
+            bool(x.get("qualified", False)),
+            float(x.get("search_score", x.get("fitness_score", -1e9))),
+            float(x.get("fitness_score", -1e9)),
+        ),
         reverse=True,
     )
     unique, seen = [], set()

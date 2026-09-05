@@ -1,5 +1,19 @@
 ## [Unreleased] - 2026-08-26 (GPU Lab Scoring and Candidate Evidence)
 
+### Phase 45 - Paper Runtime Recovery and Robust GPU Search (2026-09-05)
+
+### Added
+- Added an authenticated, exact-confirmation `Clear Paper Safety Pause` path that releases only the selected market's Paper kill switch after verifying that the corresponding Live lane remains paused and Live unlock is off.
+- Added dashboard visibility for effective market-wide pauses and an explicit Paper safety-recovery control; ordinary Paper Resume cannot silently clear a fail-closed safety latch.
+
+### Fixed
+- Separated GPU search ranking from OOS qualification: search retention uses IS-only evidence while full evaluation and OOS gates remain required for qualification and promotion.
+- Hardened the GPU launcher so finite runs execute through a foreground child runner and write one deterministic log stream, avoiding background-window/input-redirection failures during verification.
+
+### Verification
+- Focused execution, dashboard, fee, and Lab regression tests passed after the Paper recovery and search-score changes: 46 passed, 1 skipped. The final RTX 3070 finite run screened 4,096 genomes, full-evaluated 120, qualified 0, covered all 12 strategy families, and completed in about 15 seconds with no Lab runtime errors in the child log.
+- No server deployment or live order was performed in this phase. Futures funding remains explicitly marked as not included in the current Lab cost model.
+
 ### Phase 44 - Paper Promotion Manifest Storage Bootstrap
 
 ### Fixed

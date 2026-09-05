@@ -70,6 +70,7 @@ def _make_screening_result(avg_p_1m: float, avg_p_3m: float, screen_passed: bool
     return {
         "fitness_score": screen_score,  # Search-only score for Optuna ordering.
         "search_score": screen_score,
+        "search_basis": "is_only",
         "screening_score": screen_score,
         "evaluation_stage": "screening",
         "screened": True,
@@ -166,7 +167,11 @@ def _mark_full_evaluation(
     marked["screen_passed"] = bool(screen_passed)
     marked["full_evaluated"] = True
     marked["screening_score"] = screening_score
-    marked["search_score"] = float(marked.get("fitness_score", -1e9))
+    try:
+        marked["search_score"] = float(marked.get("search_score", -1e9))
+    except (TypeError, ValueError):
+        marked["search_score"] = -1e9
+    marked["search_basis"] = str(marked.get("search_basis", "is_only"))
     marked["qualified"] = _is_qualified_result(marked)
     marked["promotion_ready"] = marked["qualified"]
     return marked
@@ -444,8 +449,11 @@ def _mega_batch_gpu_backtest(
                 n_g,
                 n_h_screen,
             )
-            avg_p_1m = raw_screen[:, 0, 0] + raw_screen[:, 0, 8]
-            avg_p_3m = raw_screen[:, 1, 0] + raw_screen[:, 1, 8]
+            # Search ranking must not use the OOS slice.  OOS is reserved for
+            # complete-evaluation qualification after the candidate survives
+            # this cheap IS-only screen.
+            avg_p_1m = raw_screen[:, 0, 0]
+            avg_p_3m = raw_screen[:, 1, 0]
             
             # Keep a continuous top-K rescue set even when the hard gate is empty.
             selected_indices, survivors_mask = _select_screening_indices(avg_p_1m, avg_p_3m)

@@ -103,6 +103,67 @@ def _compute_fitness_from_matrix(raw_gi: np.ndarray, h_names: List[str]) -> Dict
     """Legacy individual compute removed as we fully rely on _vectorized_batch_compute_fitness"""
     pass
 
+
+def _compute_is_search_scores(
+    is_p_1m: np.ndarray,
+    is_p_3m: np.ndarray,
+    is_p_6m: np.ndarray,
+    is_p_1y: np.ndarray,
+    is_win_rate_1y: np.ndarray,
+    is_max_dd_1y: np.ndarray,
+    is_trades_1y: np.ndarray,
+) -> np.ndarray:
+    """Score search candidates from IS data only.
+
+    The 30% OOS slice is an evidence gate, not an optimizer feedback channel.
+    Keeping this score separate prevents repeated Optuna/mutation selection
+    from tuning directly against the same OOS observations later used for
+    qualification.
+    """
+    total_profit = is_p_1m + is_p_3m + is_p_6m + is_p_1y
+    max_dd = np.maximum(np.asarray(is_max_dd_1y, dtype=np.float32), 0.0)
+    trades = np.asarray(is_trades_1y, dtype=np.float32)
+    win_rate = np.asarray(is_win_rate_1y, dtype=np.float32)
+
+    dd_factor = np.minimum(1.0, (25.0 / np.maximum(1.0, max_dd)) ** 1.5)
+    profit_score = np.minimum(total_profit, 40000.0) * dd_factor * 3.0
+    all_horizon_bonus = np.where(
+        (is_p_1y >= 3.0)
+        & (is_p_6m >= 1.5)
+        & (is_p_3m >= 0.7)
+        & (is_p_1m >= 0.2),
+        1000.0,
+        0.0,
+    )
+    penalty_profit = np.where((is_p_1y <= 0.0) & (trades > 0), -2500.0, 0.0)
+
+    penalty_win = np.zeros_like(win_rate, dtype=np.float32)
+    kill_mask = (win_rate < 28.0) & (trades > 0)
+    hurdle_mask = (win_rate >= 28.0) & (win_rate < 38.0) & (trades > 0)
+    penalty_win[kill_mask] = -9999.0
+    penalty_win[hurdle_mask] = -1500.0 * ((38.0 - win_rate[hurdle_mask]) / 38.0) ** 2
+
+    score_trades = np.zeros_like(trades, dtype=np.float32)
+    score_trades[trades < 365.0] = -3000.0 * ((365.0 - trades[trades < 365.0]) / 365.0)
+    under_mask = (trades >= 365.0) & (trades < 500.0)
+    sweet_mask = (trades >= 500.0) & (trades <= 2500.0)
+    over_mask = trades > 2500.0
+    score_trades[under_mask] = -500.0 * ((500.0 - trades[under_mask]) / 135.0)
+    score_trades[sweet_mask] = 100.0
+    score_trades[over_mask] = 100.0 - 2.0 * (trades[over_mask] - 2500.0)
+
+    dd_penalty = (max_dd * 2.5) + (np.maximum(0.0, max_dd - 30.0) ** 2 * 15.0)
+    return np.round(
+        profit_score
+        + all_horizon_bonus
+        + (win_rate * 3.0)
+        + score_trades
+        - dd_penalty
+        + penalty_win
+        + penalty_profit,
+        2,
+    )
+
 def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[str, Any]]:
     """
     Ultra-fast vectorized NumPy calculation of 4-Pillar Practical Fitness across ALL genomes in a batch.
@@ -149,6 +210,16 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
     is_fee_paid_1y = np.maximum(raw[:, 3, 7], 0.0)
     oos_fee_paid_1y = np.maximum(raw[:, 3, 15], 0.0)
     fee_paid_1y = is_fee_paid_1y + oos_fee_paid_1y
+
+    search_score_arr = _compute_is_search_scores(
+        is_p_1m,
+        is_p_3m,
+        is_p_6m,
+        is_p_1y,
+        is_win_rate_1y,
+        is_max_dd_1y,
+        is_trades_1y,
+    )
     
     total_gross_profit_1y = is_gross_profit_1y + oos_gross_profit_1y
     total_gross_loss_1y = is_gross_loss_1y + oos_gross_loss_1y
@@ -258,6 +329,8 @@ def _vectorized_batch_compute_fitness(raw: np.ndarray, n_g: int) -> List[Dict[st
             "profit_factor": round(float(pf_1y[gi]), 2),
             "oos_profit_factor": round(float(oos_pf_1y[gi]), 2),
             "oos_expectancy": round(float(oos_expectancy[gi]), 3),
+            "search_score": float(search_score_arr[gi]),
+            "search_basis": "is_only",
             "fitness_score": float(fitness_arr[gi]),
             **fee_metadata,
         })

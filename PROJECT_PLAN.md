@@ -628,3 +628,25 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Authenticated browser smoke confirmed the qualified candidate can be staged to PAPER on the deployed server; the manifest is in PAPER stage, the page remained healthy, and no old path-leaking error appeared
   - Post-test controls remained `paper_trading=true`, `allow_live=false`, and both Live lanes paused; no live order was placed
 - **Status**: **Completed - fresh-deployment manifest storage and safe Paper Review error handling verified; Live remained disarmed**
+
+### Phase 45: Paper Runtime Recovery and Robust GPU Search
+
+- **Objective**: Restore truthful Futures Paper operation when an effective market pause is active, and improve Lab throughput only where the speed change does not weaken cost-aware, out-of-sample validation.
+- **Scope**: effective Paper/Live pause visibility, explicit Paper recovery behavior, GPU Lab benchmark instrumentation, search-vs-holdout separation, cost/regime/stability evidence, and regression coverage. Live execution remains locked and no live orders are permitted.
+- **Required behavior**:
+  1. The dashboard must show the effective execution state used by the scheduler, including a market-wide kill switch, rather than only the lane flag.
+  2. Paper recovery must be explicit and authenticated; it may not clear Live pause/lock state or silently bypass safety controls.
+  3. Lab search scores must not be presented as untouched OOS evidence; promotion evidence must remain full-evaluation, cost-aware, and holdout/fold aware.
+  4. Any throughput optimization must preserve causal fills, fees/slippage/funding assumptions, full-evaluation coverage, family coverage, and reproducible run telemetry.
+  5. Future-profit claims must be framed as uncertainty-managed evidence; no backtest result may be treated as a guarantee of future profit.
+- **TDD/verification**:
+  - tests for effective pause state, Paper-only recovery, Live fail-closed behavior, and stale/ambiguous controls
+  - tests for search-score versus untouched holdout separation and cost-aware qualification
+  - fixed-seed finite GPU benchmark with `Screened`, `Full`, `Qualified`, `Best full`, and per-family counters
+  - focused execution/Lab tests, syntax checks, and no-live-order audit
+- **Exit gates**:
+  - Paper cannot be reported as running while the scheduler is effectively paused
+  - Live remains locked and no live order is placed during verification
+  - speed changes do not remove full validation or hide fee/slippage effects
+  - no deployment is performed without an explicit deploy/restart request
+- **Status**: **Completed locally - effective Paper recovery, IS-only search separation, launcher hardening, focused tests, and finite GPU verification passed; remote deployment remains a separate operator-approved step**

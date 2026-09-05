@@ -105,7 +105,29 @@ def _mutate_genome(
 
 
 def _is_usable_parent(result: Dict[str, Any]) -> bool:
-    """Only complete, positive candidates may seed evolutionary mutations."""
+    """Use full IS evidence for mutation parents, not repeatedly selected OOS."""
+    if (
+        isinstance(result, dict)
+        and isinstance(result.get("parameters"), dict)
+        and result.get("full_evaluated", False)
+        and "search_score" in result
+    ):
+        try:
+            is_profit = float(result.get("is_profit_1y", 0.0))
+            is_trades = int(result.get("is_trades_1y", 0))
+            search_score = float(result.get("search_score"))
+        except (TypeError, ValueError, OverflowError):
+            return False
+        return bool(
+            np.isfinite(search_score)
+            and search_score > 0.0
+            and np.isfinite(is_profit)
+            and is_profit > 0.0
+            and is_trades > 0
+        )
+
+    # Backward-compatible validation for old in-memory/unit-test rows. Any
+    # persisted candidate is re-evaluated before it can reach this fallback.
     return (
         isinstance(result, dict)
         and isinstance(result.get("parameters"), dict)
@@ -161,6 +183,7 @@ def _leaderboard_sort_key(item: Dict[str, Any]) -> tuple:
     return (
         int(item.get("full_evaluated", False)),
         int(item.get("qualified", False)),
+        float(item.get("search_score", item.get("fitness_score", -1e9))),
         float(item.get("fitness_score", -1e9)),
     )
 

@@ -41,9 +41,22 @@ function updateExecutionLaneUI(mode, lane, data) {
     const paused = lane && (Object.prototype.hasOwnProperty.call(lane, 'effective_paused')
         ? asBoolean(lane.effective_paused)
         : asBoolean(lane.paused));
+    const marketKillSwitch = lane && asBoolean(lane.market_kill_switch);
+    const clearSafetyButton = !isLive
+        ? document.getElementById('clear-paper-safety-btn')
+        : null;
 
-    button.disabled = locked;
-    button.setAttribute('aria-disabled', String(locked));
+    if (clearSafetyButton) {
+        clearSafetyButton.classList.toggle('hidden', !marketKillSwitch);
+        clearSafetyButton.disabled = !marketKillSwitch;
+        clearSafetyButton.title = marketKillSwitch
+            ? 'Explicitly clear the market-wide safety pause after reviewing the server reason.'
+            : '';
+    }
+
+    const disabled = locked || (!isLive && marketKillSwitch);
+    button.disabled = disabled;
+    button.setAttribute('aria-disabled', String(disabled));
     if (locked) {
         button.className = 'execution-lane-button execution-lane-button--live';
         textSpan.innerText = 'LOCKED';
@@ -55,14 +68,60 @@ function updateExecutionLaneUI(mode, lane, data) {
         button.className = isLive
             ? 'execution-lane-button execution-lane-button--live animate-pulse'
             : 'execution-lane-button animate-pulse';
-        textSpan.innerText = `RESUME ${mode}`;
-        if (status) status.innerText = 'PAUSED';
+        textSpan.innerText = marketKillSwitch ? 'CLEAR SAFETY FIRST' : `RESUME ${mode}`;
+        if (status) status.innerText = marketKillSwitch ? 'PAUSED · MARKET SAFETY' : 'PAUSED';
+        button.title = marketKillSwitch
+            ? 'A market-wide safety pause is active; review the server safety reason before resuming this lane.'
+            : `Resume ${mode} execution`;
     } else {
         button.className = isLive
             ? 'execution-lane-button execution-lane-button--live'
             : 'execution-lane-button';
         textSpan.innerText = `PAUSE ${mode}`;
         if (status) status.innerText = 'RUNNING';
+        button.title = `Pause ${mode} execution`;
+    }
+}
+
+async function clearPaperSafetyPause() {
+    const targetMarket = getTradingMarket();
+    const lane = getExecutionLane(window.lastBotControl || {}, targetMarket, 'PAPER');
+    if (!targetMarket || !asBoolean(lane && lane.market_kill_switch)) return;
+
+    const reason = String(window.lastBotControl && window.lastBotControl.pause_reason || '').trim();
+    const suffix = reason ? `\n\nServer reason: ${reason.slice(0, 240)}` : '';
+    const confirmed = window.confirm(
+        `Clear the ${targetMarket.toUpperCase()} market-wide safety pause for PAPER only?` +
+        '\nLive trading will remain paused and locked.' + suffix,
+    );
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch('/api/clear_paper_safety_pause', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+            body: JSON.stringify({
+                market: targetMarket,
+                confirmation: 'CLEAR PAPER SAFETY PAUSE',
+            }),
+        });
+        if (!response.ok) {
+            let detail = 'PAPER safety pause could not be cleared.';
+            try {
+                const errorData = await response.json();
+                if (typeof errorData.detail === 'string') detail = errorData.detail;
+            } catch (error) {
+                // Keep the generic message when the server does not return JSON.
+            }
+            if (typeof showToast === 'function') showToast(detail, 'error');
+            else window.alert(detail);
+            return;
+        }
+        if (typeof showToast === 'function') showToast('PAPER safety pause cleared; PAPER may now evaluate entries.', 'success');
+        await fetchBotControl();
+    } catch (error) {
+        console.error('Error clearing PAPER safety pause:', error);
+        await fetchBotControl();
     }
 }
 
@@ -253,6 +312,12 @@ function bindDashboardActions() {
     if (liveButton && !liveButton.dataset.bound) {
         liveButton.addEventListener('click', () => setViewMode('LIVE'));
         liveButton.dataset.bound = 'true';
+    }
+
+    const clearSafetyButton = document.getElementById('clear-paper-safety-btn');
+    if (clearSafetyButton && !clearSafetyButton.dataset.bound) {
+        clearSafetyButton.addEventListener('click', clearPaperSafetyPause);
+        clearSafetyButton.dataset.bound = 'true';
     }
 
     document.querySelectorAll('[data-action="logout"]').forEach((logoutButton) => {

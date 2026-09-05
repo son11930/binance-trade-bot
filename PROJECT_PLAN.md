@@ -649,4 +649,4 @@ Based on direct audits by dedicated Code, Security, and Performance subagents, t
   - Live remains locked and no live order is placed during verification
   - speed changes do not remove full validation or hide fee/slippage effects
   - no deployment is performed without an explicit deploy/restart request
-- **Status**: **Completed locally - effective Paper recovery, IS-only search separation, launcher hardening, focused tests, and finite GPU verification passed; remote deployment remains a separate operator-approved step**
+- **Status**: **Completed - effective Paper recovery, IS-only search separation, launcher hardening, focused tests, finite GPU verification, and operator-approved remote deployment/restart verification passed; Live remains disarmed**

@@ -12,7 +12,7 @@
 
 ### Verification
 - Focused execution, dashboard, fee, and Lab regression tests passed after the Paper recovery and search-score changes: 46 passed, 1 skipped. The final RTX 3070 finite run screened 4,096 genomes, full-evaluated 120, qualified 0, covered all 12 strategy families, and completed in about 15 seconds with no Lab runtime errors in the child log.
-- No server deployment or live order was performed in this phase. Futures funding remains explicitly marked as not included in the current Lab cost model.
+- Deployment verification: commit `4aea56c` was pushed and the restart workflow completed; the remote HEAD matches, `binance-bot.service` is active, all dashboard pages/assets returned HTTP 200, and unauthenticated bot-control access remained HTTP 401. No live order was placed. Futures funding remains explicitly marked as not included in the current Lab cost model.
 
 ### Phase 44 - Paper Promotion Manifest Storage Bootstrap
 
